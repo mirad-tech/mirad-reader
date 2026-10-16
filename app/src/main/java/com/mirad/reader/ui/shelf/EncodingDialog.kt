@@ -52,7 +52,14 @@ fun EncodingDialog(
 
     LaunchedEffect(book.id) {
         loading = true
-        previews = runCatching { container.maintenance.previews(book) }.getOrDefault(emptyList())
+        // 失败不能静默：旧实现直接 getOrDefault(emptyList())，用户只看到一个空列表，
+        // 无从判断是"没有候选"还是"正文读不出来"。
+        previews = runCatching { container.maintenance.previews(book) }
+            .onFailure { error = "读取候选编码失败：${it.message ?: it::class.simpleName}" }
+            .getOrDefault(emptyList())
+        if (previews.isEmpty()) {
+            error = error ?: "没能读出正文内容（文件可能已缺失或损坏），可尝试重新导入"
+        }
         loading = false
     }
 
