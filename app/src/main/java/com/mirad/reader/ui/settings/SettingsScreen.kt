@@ -361,6 +361,11 @@ fun SettingsScreen(
                     checked = config.ttsAutoNextChapter,
                     onCheckedChange = { value -> update { it.copy(ttsAutoNextChapter = value) } }
                 )
+                SettingNavRow(
+                    label = "选择朗读语音 / 引擎",
+                    subtitle = "打开系统语音设置，装中文语音包或切换引擎",
+                    onClick = { com.mirad.reader.ui.reader.openTtsSettings(context) }
+                )
             }
 
             SettingCard(title = "书架管理") {

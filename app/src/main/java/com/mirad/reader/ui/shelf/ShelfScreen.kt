@@ -265,6 +265,42 @@ fun ShelfScreen(
                 )
             }
 
+            // 继续阅读：省得每次都要在书架里翻找上次那本
+            val continueReading = remember(shelf) {
+                shelf.filter { it.lastReadAt > 0L }.maxByOrNull { it.lastReadAt }
+            }
+            continueReading?.let { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .clickable { onOpenBook(item.book.id) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "继续阅读 · 已读 ${(item.percent * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = item.book.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = formatRelative(item.lastReadAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
             if (groups.isNotEmpty() || hiddenCount > 0) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),

@@ -516,6 +516,13 @@ fun ReaderSettingsSheet(
                     checked = config.ttsAutoNextChapter,
                     onCheckedChange = { value -> onChange { it.copy(ttsAutoNextChapter = value) } }
                 )
+                // 朗读读不出声/读错音，多半是系统 TTS 引擎或中文语音没装/没选对。
+                // 这里直接把你送到系统设置，不自己管引擎列表。
+                com.mirad.reader.ui.common.SettingNavRow(
+                    label = "选择朗读语音 / 引擎",
+                    subtitle = "打开系统语音设置，装中文语音包或切换引擎",
+                    onClick = { openTtsSettings(context) }
+                )
             }
 
             OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) {
@@ -758,6 +765,22 @@ fun SearchSheet(
 }
 
 // ---------------------------------------------------------------- 朗读
+
+/** 跳到系统 TTS 设置；老机型没有该页面时退回应用详情页。 */
+fun openTtsSettings(context: android.content.Context) {
+    val candidates = listOf(
+        android.content.Intent("com.android.settings.TTS_SETTINGS"),
+        android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS),
+        android.content.Intent(
+            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            android.net.Uri.fromParts("package", context.packageName, null)
+        )
+    )
+    for (intent in candidates) {
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (runCatching { context.startActivity(intent) }.isSuccess) return
+    }
+}
 
 @Composable
 fun TtsSheet(
