@@ -1,0 +1,28 @@
+# Android Studio, Gradle and local SDK state
+*.iml
+/.idea/
+/.gradle/
+/.gradle-home/
+/.kotlin/
+/.android-home/
+**/build/
+/.externalNativeBuild/
+/.cxx/
+/local.properties
+
+# Local signing material
+/keystore.properties
+/*.keystore
+
+# Local artifacts and diagnostics
+*.apk
+*.aab
+/dist/
+/downloads/
+/logs/
+/verification/
+/verification-tmp/
+
+# Operating system files
+.DS_Store
+Thumbs.db

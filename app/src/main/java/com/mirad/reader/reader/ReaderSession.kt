@@ -1,0 +1,602 @@
+package com.mirad.reader.reader
+
+import android.annotation.SuppressLint
+import android.graphics.Color
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import com.mirad.reader.AppContainer
+import com.mirad.reader.core.model.EpubLayoutMode
+import com.mirad.reader.core.model.PageAnim
+import com.mirad.reader.core.model.PageMode
+import com.mirad.reader.core.model.ProgressMath
+import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.model.ThemePaletteResolver
+import com.mirad.reader.core.reader.ReaderCss
+import com.mirad.reader.data.db.entity.BookEntity
+import com.mirad.reader.data.db.entity.BookmarkEntity
+import com.mirad.reader.data.db.entity.ChapterEntity
+import com.mirad.reader.data.db.entity.HighlightEntity
+import com.mirad.reader.data.db.entity.ProgressEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import java.io.File
+import kotlin.coroutines.resume
+
+/** 阅读器状态。 */
+data class ReaderSessionState(
+    val chapterIndex: Int = 0,
+    val chapterCount: Int = 0,
+    val chapterTitle: String = "",
+    val page: Int = 0,
+    val pages: Int = 1,
+    val offset: Int = 0,
+    val textLength: Int = 0,
+    val percent: Float = 0f,
+    val ready: Boolean = false,
+    val selection: TextSelection? = null,
+    val config: ReaderConfig = ReaderConfig.DEFAULT,
+    val hasBookmarkHere: Boolean = false,
+    val highlightCount: Int = 0
+)
+
+data class TextSelection(val start: Int, val end: Int, val text: String)
+
+/**
+ * 阅读会话：负责 WebView 配置、章节加载、配置注入、进度保存、标注渲染与阅读统计。
+ */
+class ReaderSession(
+    private val container: AppContainer,
+    val book: BookEntity,
+    private val scope: CoroutineScope
+) {
+
+    private val books = container.books
+    private val notes = container.notes
+    private val settings = container.settings
+    private val stats = container.stats
+
+    val resources = ReaderResourceProvider(container.context, container.textProvider)
+
+    private val _state = MutableStateFlow(ReaderSessionState())
+    val state: StateFlow<ReaderSessionState> = _state.asStateFlow()
+
+    var chapters: List<ChapterEntity> = emptyList()
+        private set
+
+    var webView: ReaderWebView? = null
+        private set
+
+    private var chapterCharCounts: List<Long> = emptyList()
+    private var saveJob: Job? = null
+    private var restoreOffset: Int = 0
+    private var systemDark: Boolean = false
+
+    private var sessionStartedAt: Long = 0L
+    private var sessionStartAbsolute: Long = 0L
+
+    private val bridge = ReaderJsBridge(
+        onReady = { pages, textLength ->
+            _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
+        },
+        onState = { page, pages, offset, textLength ->
+            _state.update {
+                it.copy(
+                    page = page,
+                    pages = pages.coerceAtLeast(1),
+                    offset = offset,
+                    textLength = textLength,
+                    ready = true
+                )
+            }
+            recomputePercent()
+            scheduleProgressSave()
+            refreshBookmarkFlag()
+        },
+        onSelection = { start, end, text ->
+            _state.update { it.copy(selection = TextSelection(start, end, text)) }
+        }
+    )
+
+    // ------------------------------------------------------------------ 生命周期
+
+    suspend fun prepare(config: ReaderConfig, systemDark: Boolean) {
+        this.systemDark = systemDark
+        chapters = withContext(Dispatchers.IO) { books.getChapters(book.id) }
+        chapterCharCounts = chapters.map { it.charCount.coerceAtLeast(1L) }
+        resources.bind(book, chapters)
+        updateConfig(config)
+        val progress = withContext(Dispatchers.IO) { books.getProgress(book.id) }
+        val chapterIndex = (progress?.chapterIndex ?: 0).coerceIn(0, (chapters.size - 1).coerceAtLeast(0))
+        restoreOffset = progress?.charOffset ?: 0
+        val highlightCount = withContext(Dispatchers.IO) {
+            notes.highlightsForChapter(book.id, chapterIndex).size
+        }
+        _state.update {
+            it.copy(
+                chapterCount = chapters.size,
+                chapterIndex = chapterIndex,
+                chapterTitle = chapters.getOrNull(chapterIndex)?.title.orEmpty(),
+                highlightCount = highlightCount
+            )
+        }
+        startSession()
+    }
+
+    /**
+     * 绑定 WebView：只允许读取拦截器提供的虚拟源，外部请求一律拒绝。
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    fun attach(view: ReaderWebView) {
+        webView = view
+        view.settings.apply {
+            javaScriptEnabled = true
+            domStorageEnabled = false
+            allowFileAccess = false
+            allowContentAccess = false
+            loadsImagesAutomatically = true
+            blockNetworkImage = false
+            builtInZoomControls = false
+            displayZoomControls = false
+            setSupportZoom(false)
+            textZoom = 100
+            cacheMode = WebSettings.LOAD_NO_CACHE
+            mediaPlaybackRequiresUserGesture = true
+        }
+        view.setBackgroundColor(Color.TRANSPARENT)
+        view.isVerticalScrollBarEnabled = false
+        view.isHorizontalScrollBarEnabled = false
+        view.addJavascriptInterface(bridge, "MiradBridge")
+        view.webViewClient = object : WebViewClient() {
+            override fun shouldInterceptRequest(
+                view: WebView,
+                request: WebResourceRequest
+            ): WebResourceResponse? {
+                val uri = request.url
+                if (uri.host == ReaderResourceProvider.HOST) {
+                    return resources.intercept(uri)
+                }
+                // 阻断一切外部网络请求（EPUB 中的外链图片/脚本也不会联网）
+                return WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(ByteArray(0)))
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView,
+                request: WebResourceRequest
+            ): Boolean = true
+
+            override fun onPageFinished(view: WebView, url: String) {
+                // about:blank 等中间页面会先触发回调，必须按 URL 过滤
+                if (url.startsWith(ReaderResourceProvider.ORIGIN)) {
+                    onChapterRendered()
+                }
+            }
+        }
+        view.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+                android.util.Log.i(
+                    "MiradWebView",
+                    "${message.message()} @${message.sourceId()}:${message.lineNumber()}"
+                )
+                return true
+            }
+        }
+        view.onTap = { x, y -> onTap?.invoke(x, y) }
+        loadCurrentChapter(initial = true)
+    }
+
+    var onTap: ((x: Float, y: Float) -> Unit)? = null
+
+    private var chapterRendered = false
+    private var renderAttempts = 0
+
+    private fun loadCurrentChapter(initial: Boolean) {
+        val index = _state.value.chapterIndex
+        chapterRendered = false
+        renderAttempts = 0
+        _state.update { it.copy(ready = false) }
+        val offset = if (initial) restoreOffset else 0
+        restoreOffset = offset
+        webView?.loadUrl(ReaderResourceProvider.chapterUrl(book.id, index))
+    }
+
+    /** 等 reader.js 就绪后再初始化，避免在空白页上误调用。 */
+    private fun onChapterRendered() {
+        if (chapterRendered) return
+        val view = webView ?: return
+        view.evaluateJavascript("typeof MiradReader !== 'undefined'") { result ->
+            if (result == "true") {
+                if (chapterRendered) return@evaluateJavascript
+                chapterRendered = true
+                val configJson = jsConfig()
+                val offset = restoreOffset.coerceAtLeast(0)
+                evaluate("MiradReader.init($configJson); MiradReader.gotoOffset($offset, false); true;")
+                renderHighlights()
+                scope.launch { refreshBookmarkFlagNow() }
+            } else if (renderAttempts < 8) {
+                renderAttempts++
+                view.postDelayed({ onChapterRendered() }, 150)
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 配置
+
+    /** 更新配置：仅注入样式，不重载章节（保留当前位置）。 */
+    fun updateConfig(config: ReaderConfig) {
+        val palette = ThemePaletteResolver.resolve(config, systemDark)
+        val bgImageUrl = if (config.backgroundType == com.mirad.reader.core.model.BackgroundType.IMAGE) {
+            config.backgroundImageUri?.takeIf { File(it).exists() }?.let {
+                resources.backgroundImagePath = it
+                ReaderResourceProvider.backgroundUrl(book.id)
+            }
+        } else {
+            resources.backgroundImagePath = null
+            null
+        }
+        val fontUrl = config.customFontPath?.takeIf { it.isNotBlank() && File(it).exists() }?.let {
+            resources.fontFilePath = it
+            ReaderResourceProvider.fontUrl(book.id)
+        }
+        if (fontUrl == null) resources.fontFilePath = null
+
+        val css = ReaderCss.themeCss(
+            config = config,
+            palette = palette,
+            customFontUrl = fontUrl,
+            backgroundImageUrl = bgImageUrl
+        )
+        resources.updateTheme(css, bgImageUrl, fontUrl)
+        _state.update { it.copy(config = config) }
+    }
+
+    /** 配置变更后刷新 WebView 中的样式（不重载章节）。 */
+    fun applyConfigToWebView(config: ReaderConfig, systemDark: Boolean) {
+        this.systemDark = systemDark
+        updateConfig(config)
+        val anchor = _state.value.offset
+        val css = jsQuote(resources.currentThemeCss())
+        evaluate(
+            "if (window.MiradReader) {" +
+                "MiradReader.setThemeCss($css);" +
+                "MiradReader.applyConfig(${jsConfig()});" +
+                "MiradReader.gotoOffset($anchor, false);" +
+                "}"
+        )
+        renderHighlights()
+    }
+
+    private fun jsQuote(value: String): String = org.json.JSONObject.quote(value)
+
+    private fun jsConfig(): String {
+        val config = _state.value.config
+        val density = container.context.resources.displayMetrics.density
+        val gap = (config.horizontalPaddingDp * 2 * density).toInt()
+        val mode = if (config.pageMode == PageMode.SCROLL) "SCROLL" else "PAGED"
+        val anim = when (config.pageAnim) {
+            PageAnim.NONE -> "NONE"
+            PageAnim.COVER -> "COVER"
+            PageAnim.CURL -> "CURL"
+            else -> "SLIDE"
+        }
+        return """{mode:"$mode",gap:$gap,anim:"$anim"}"""
+    }
+
+    // ------------------------------------------------------------------ 翻页与跳转
+
+    /** 统一翻页：章内翻页，边界处跨章。返回是否发生了跨章切换。 */
+    fun turnPage(delta: Int): Boolean {
+        val current = _state.value
+        if (!current.ready) return false
+        val target = current.page + delta
+        if (target in 0 until current.pages) {
+            evaluate(if (delta > 0) "MiradReader.nextPage();" else "MiradReader.prevPage();")
+            return false
+        }
+        val nextChapter = current.chapterIndex + delta
+        if (nextChapter in chapters.indices) {
+            gotoChapter(nextChapter, if (delta > 0) 0 else Int.MAX_VALUE)
+            return true
+        }
+        return false
+    }
+
+    fun gotoChapter(index: Int, offset: Int = 0) {
+        val chapter = chapters.getOrNull(index) ?: return
+        saveProgressNow()
+        restoreOffset = if (offset == Int.MAX_VALUE) Int.MAX_VALUE else offset
+        _state.update {
+            it.copy(chapterIndex = index, chapterTitle = chapter.title, page = 0, pages = 1, offset = 0)
+        }
+        scope.launch {
+            val count = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, index).size }
+            _state.update { it.copy(highlightCount = count) }
+        }
+        loadCurrentChapter(initial = false)
+    }
+
+    fun jumpToOffset(offset: Int, mark: Boolean = false) {
+        restoreOffset = offset
+        evaluate("MiradReader.gotoOffset($offset, true);")
+        if (mark) evaluate("MiradReader.markSearch($offset, ${offset + 1});")
+    }
+
+    fun jumpToPercent(percent: Float) {
+        val total = chapterCharCounts.sum()
+        if (total <= 0L) return
+        val locator = ProgressMath.fromPercent(chapterCharCounts, percent)
+        if (locator.chapterIndex != _state.value.chapterIndex) {
+            gotoChapter(locator.chapterIndex, locator.charOffset)
+        } else {
+            jumpToOffset(locator.charOffset)
+        }
+    }
+
+    fun scrollBy(deltaY: Float) {
+        evaluate("window.scrollBy(0, ${deltaY.toInt()});")
+    }
+
+    // ------------------------------------------------------------------ 标注
+
+    fun renderHighlights() {
+        val chapterIndex = _state.value.chapterIndex
+        scope.launch {
+            val list = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, chapterIndex) }
+            val payload = list.joinToString(prefix = "[", postfix = "]") { highlight ->
+                """{"start":${highlight.startOffset},"end":${highlight.endOffset},"note":${highlight.note != null}}"""
+            }
+            evaluate("MiradReader.renderHighlights($payload);")
+            _state.update { it.copy(highlightCount = list.size) }
+        }
+    }
+
+    fun addHighlight(
+        start: Int,
+        end: Int,
+        text: String,
+        color: Int = DEFAULT_HIGHLIGHT_COLOR,
+        note: String? = null,
+        onResult: (Boolean) -> Unit = {}
+    ) {
+        if (end <= start || text.isBlank()) {
+            onResult(false)
+            return
+        }
+        val chapterIndex = _state.value.chapterIndex
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                notes.addHighlight(
+                    HighlightEntity(
+                        bookId = book.id,
+                        chapterIndex = chapterIndex,
+                        startOffset = start,
+                        endOffset = end,
+                        text = text,
+                        color = color,
+                        note = note,
+                        createdAt = System.currentTimeMillis()
+                    )
+                )
+            }
+            renderHighlights()
+            _state.update { it.copy(selection = null) }
+            onResult(true)
+        }
+    }
+
+    suspend fun deleteHighlight(highlight: HighlightEntity) {
+        withContext(Dispatchers.IO) { notes.deleteHighlight(highlight) }
+        renderHighlights()
+    }
+
+    fun clearSearchMark() {
+        evaluate("MiradReader.markSearch(0, 0);")
+    }
+
+    // ------------------------------------------------------------------ 书签
+
+    fun toggleBookmark(onResult: (Boolean) -> Unit = {}) {
+        val current = _state.value
+        val offset = current.offset
+        scope.launch {
+            val existing = withContext(Dispatchers.IO) {
+                notes.findBookmark(book.id, current.chapterIndex, offset)
+            }
+            if (existing != null) {
+                withContext(Dispatchers.IO) { notes.deleteBookmark(existing) }
+                _state.update { it.copy(hasBookmarkHere = false) }
+                onResult(false)
+            } else {
+                val snippet = withContext(Dispatchers.IO) { snippetAt(current.chapterIndex, offset) }
+                withContext(Dispatchers.IO) {
+                    notes.addBookmark(
+                        BookmarkEntity(
+                            bookId = book.id,
+                            chapterIndex = current.chapterIndex,
+                            charOffset = offset,
+                            chapterTitle = current.chapterTitle,
+                            snippet = snippet,
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+                _state.update { it.copy(hasBookmarkHere = true) }
+                onResult(true)
+            }
+        }
+    }
+
+    private fun refreshBookmarkFlag() {
+        scope.launch { refreshBookmarkFlagNow() }
+    }
+
+    private suspend fun refreshBookmarkFlagNow() {
+        val current = _state.value
+        val existing = withContext(Dispatchers.IO) {
+            notes.findBookmark(book.id, current.chapterIndex, current.offset)
+        }
+        _state.update { it.copy(hasBookmarkHere = existing != null) }
+    }
+
+    private fun snippetAt(chapterIndex: Int, offset: Int): String {
+        val chapter = chapters.firstOrNull { it.index == chapterIndex } ?: return ""
+        val text = container.textProvider.readText(book, chapter).replace('\n', ' ')
+        if (text.isEmpty()) return ""
+        val start = (offset - 20).coerceAtLeast(0)
+        val end = (offset + 40).coerceAtMost(text.length)
+        return text.substring(start, end).trim()
+    }
+
+    /** 当前章节纯文本（TTS 与搜索用）。 */
+    suspend fun currentChapterText(): String {
+        val chapter = chapters.firstOrNull { it.index == _state.value.chapterIndex } ?: return ""
+        return withContext(Dispatchers.IO) { container.textProvider.readText(book, chapter) }
+    }
+
+    suspend fun chapterText(index: Int): String {
+        val chapter = chapters.firstOrNull { it.index == index } ?: return ""
+        return withContext(Dispatchers.IO) { container.textProvider.readText(book, chapter) }
+    }
+
+    // ------------------------------------------------------------------ 进度与统计
+
+    private fun recomputePercent() {
+        val current = _state.value
+        val percent = ProgressMath.percent(chapterCharCounts, current.chapterIndex, current.offset)
+        _state.update { it.copy(percent = percent) }
+    }
+
+    private fun scheduleProgressSave() {
+        saveJob?.cancel()
+        saveJob = scope.launch {
+            delay(600)
+            saveProgressNow()
+        }
+    }
+
+    fun saveProgressNow() {
+        val current = _state.value
+        if (chapters.isEmpty()) return
+        // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢
+        container.appScope.launch {
+            withContext(Dispatchers.IO) {
+                books.saveProgress(
+                    ProgressEntity(
+                        bookId = book.id,
+                        chapterIndex = current.chapterIndex,
+                        charOffset = current.offset,
+                        pageIndex = current.page,
+                        pageCount = current.pages,
+                        percent = current.percent,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                books.touchLastRead(book.id)
+            }
+        }
+    }
+
+    private fun absoluteOffset(): Long {
+        val current = _state.value
+        var sum = 0L
+        for (i in 0 until current.chapterIndex.coerceAtMost(chapterCharCounts.size)) {
+            sum += chapterCharCounts[i]
+        }
+        return sum + current.offset
+    }
+
+    fun startSession() {
+        sessionStartedAt = System.currentTimeMillis()
+        sessionStartAbsolute = absoluteOffset()
+    }
+
+    /** 进入后台或退出阅读时结算统计。 */
+    fun endSession() {
+        val started = sessionStartedAt
+        if (started <= 0L) return
+        sessionStartedAt = 0L
+        val chars = (absoluteOffset() - sessionStartAbsolute).coerceAtLeast(0L)
+        val endedAt = System.currentTimeMillis()
+        // 同样使用应用级作用域，保证退出时也写入
+        container.appScope.launch { stats.record(book.id, started, endedAt, chars) }
+    }
+
+    fun release() {
+        saveJob?.cancel()
+        saveProgressNow()
+        endSession()
+        webView?.let { view ->
+            view.removeJavascriptInterface("MiradBridge")
+            view.stopLoading()
+            view.destroy()
+        }
+        webView = null
+        resources.release()
+    }
+
+    // ------------------------------------------------------------------ 工具
+
+    private fun evaluate(script: String) {
+        webView?.evaluateJavascript(script, null)
+    }
+
+    fun evaluatePublic(script: String) = evaluate(script)
+
+    fun applySearchMark(start: Int, end: Int) {
+        evaluate("MiradReader.markSearch($start, $end);")
+    }
+
+    /**
+     * 读取 WebView 内的章节文本（reader.js 的文本模型）。
+     * 朗读与定位都以它为准，避免与磁盘侧文本的换行差异导致偏移错位。
+     */
+    suspend fun jsText(): String? = suspendCancellableCoroutine { continuation ->
+        val view = webView
+        if (view == null) {
+            continuation.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        runCatching {
+            view.evaluateJavascript("MiradReader.getText()") { value ->
+                val decoded = runCatching {
+                    org.json.JSONTokener(value).nextValue() as? String
+                }.getOrNull()
+                if (continuation.isActive) continuation.resume(decoded)
+            }
+        }.onFailure {
+            if (continuation.isActive) continuation.resume(null)
+        }
+    }
+
+    /** 就近查找文本并跳转（跨端偏移不一致时更准确）。 */
+    fun findTextAndJump(needle: String, approxOffset: Int, mark: Boolean = true): Boolean {
+        if (needle.isBlank()) return false
+        val quoted = org.json.JSONObject.quote(needle)
+        evaluate("MiradReader.findText($quoted, $approxOffset, $mark);")
+        return true
+    }
+
+    fun clearSelection() {
+        _state.update { it.copy(selection = null) }
+        evaluate("window.getSelection().removeAllRanges();")
+    }
+
+    val isEpubLayoutUnified: Boolean
+        get() = _state.value.config.epubLayoutMode == EpubLayoutMode.UNIFIED
+
+    companion object {
+        const val DEFAULT_HIGHLIGHT_COLOR = 0x8C_FFD666.toInt()
+    }
+}

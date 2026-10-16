@@ -1,0 +1,62 @@
+/* 墨读阅读器结构样式：只负责与视口无关的结构规则，主题与排版由阅读器注入的样式表负责。 */
+
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+#mirad-content {
+    box-sizing: border-box;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+
+/* 图片/表格尽量不跨列断开 */
+img, svg, image, figure, table, pre, blockquote {
+    break-inside: avoid;
+    page-break-inside: avoid;
+}
+
+img, svg, image {
+    max-width: 100%;
+    height: auto;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    break-after: avoid;
+    page-break-after: avoid;
+}
+
+h2.mirad-chapter-title {
+    text-align: center;
+    text-indent: 0;
+    margin: 0.2em 0 1em 0;
+    font-weight: 700;
+}
+
+/* 选中与标注 */
+mark.mirad-hl {
+    background: rgba(255, 214, 102, 0.55);
+    color: inherit;
+    padding: 0;
+}
+
+mark.mirad-hl.mirad-note {
+    background: rgba(140, 200, 255, 0.55);
+}
+
+mark.mirad-search {
+    background: rgba(255, 120, 120, 0.5);
+    color: inherit;
+}
+
+span.mirad-tts {
+    background: rgba(255, 180, 80, 0.35);
+    border-radius: 2px;
+}
+
+/* 隐藏原书中可能出现的浮动定位元素，避免破坏分列 */
+[style*="position:fixed"], [style*="position: fixed"] {
+    position: static !important;
+}
