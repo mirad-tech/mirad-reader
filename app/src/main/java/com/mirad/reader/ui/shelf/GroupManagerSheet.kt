@@ -1,0 +1,135 @@
+package com.mirad.reader.ui.shelf
+
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import com.mirad.reader.AppContainer
+import com.mirad.reader.data.db.entity.GroupEntity
+import com.mirad.reader.ui.common.EmptyState
+import com.mirad.reader.ui.common.ListRow
+import com.mirad.reader.ui.common.RowDivider
+import com.mirad.reader.ui.common.SheetScaffold
+import com.mirad.reader.ui.design.Spacing
+import kotlinx.coroutines.launch
+
+/**
+ * 分组管理：集中重命名与删除分组。
+ *
+ * 之前只能靠"长按书架上的分组胶囊"，功能存在但没人猜得到；这里给出可见入口，
+ * 从书架的「⋯ → 分组管理」进入。
+ */
+@Composable
+fun GroupManagerSheet(
+    container: AppContainer,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
+    val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    var renameTarget by remember { mutableStateOf<GroupEntity?>(null) }
+    var renameDraft by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<GroupEntity?>(null) }
+
+    SheetScaffold(
+        title = "分组管理",
+        subtitle = if (groups.isEmpty()) "还没有分组" else "共 ${groups.size} 个分组",
+        onDismiss = onDismiss,
+        fillHeight = true
+    ) {
+        if (groups.isEmpty()) {
+            EmptyState(
+                title = "还没有分组",
+                badge = "组",
+                description = "在书架上长按选中的书，选「移入分组」即可新建分组",
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            Text(
+                text = "重命名或删除分组。删除分组不会删书，组内书籍会回到「未分组」。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = Spacing.xl)
+            )
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(groups, key = { it.id }) { group ->
+                    val count = shelf.count { it.book.groupId == group.id }
+                    ListRow(
+                        title = group.name,
+                        meta = "$count 本",
+                        trailing = {
+                            Column {
+                                TextButton(onClick = {
+                                    renameTarget = group
+                                    renameDraft = group.name
+                                }) { Text("重命名") }
+                                TextButton(onClick = { deleteTarget = group }) { Text("删除") }
+                            }
+                        }
+                    )
+                    RowDivider()
+                }
+            }
+        }
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名分组") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    label = { Text("分组名称") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = renameDraft.trim()
+                    renameTarget = null
+                    if (name.isNotEmpty() && name != target.name) {
+                        scope.launch { container.groups.rename(target, name) }
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } }
+        )
+    }
+
+    deleteTarget?.let { target ->
+        val count = shelf.count { it.book.groupId == target.id }
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除分组「${target.name}」") },
+            text = {
+                Text(
+                    if (count > 0) "组内 $count 本书会回到「未分组」，书本身不会被删除。"
+                    else "这个分组是空的。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    deleteTarget = null
+                    scope.launch { container.groups.delete(target) }
+                }) { Text("删除") }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+        )
+    }
+}

@@ -543,6 +543,8 @@ fun NotesSheet(
     var tab by remember { mutableStateOf(0) }
     var pendingExport by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
+    // 删除划线/书签是破坏性操作，先确认再执行（保留动作供确认后调用）
+    var pendingDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
 
     val exporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown")
@@ -587,6 +589,24 @@ fun NotesSheet(
         }
     }
 
+    pendingDelete?.let { pending ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除${pending.first}") },
+            text = { Text("删除后无法恢复，确定要删除吗？") },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    val action = pending.second
+                    pendingDelete = null
+                    action()
+                }) { Text("删除") }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            }
+        )
+    }
+
     SheetScaffold(
         title = "笔记与书签",
         subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}" + (message?.let { " · $it" } ?: ""),
@@ -614,7 +634,9 @@ fun NotesSheet(
                             subtitle = highlight.note,
                             meta = "第 ${highlight.chapterIndex + 1} 章",
                             trailing = {
-                                SheetActionButton("删除", onClick = { scope.launch { session.deleteHighlight(highlight) } })
+                                SheetActionButton("删除", onClick = {
+                                    pendingDelete = "划线" to { scope.launch { session.deleteHighlight(highlight) } }
+                                })
                             },
                             onClick = { onJump(highlight.chapterIndex, highlight.startOffset) }
                         )
@@ -632,7 +654,11 @@ fun NotesSheet(
                             trailing = {
                                 SheetActionButton(
                                     "删除",
-                                    onClick = { scope.launch { container.notes.deleteBookmark(bookmark) } }
+                                    onClick = {
+                                        pendingDelete = "书签" to {
+                                            scope.launch { container.notes.deleteBookmark(bookmark) }
+                                        }
+                                    }
                                 )
                             },
                             onClick = { onJump(bookmark.chapterIndex, bookmark.charOffset) }

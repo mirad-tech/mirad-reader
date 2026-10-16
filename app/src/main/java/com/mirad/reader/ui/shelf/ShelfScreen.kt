@@ -139,6 +139,7 @@ fun ShelfScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
+    var showGroupManager by remember { mutableStateOf(false) }
     var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameDraft by remember { mutableStateOf("") }
@@ -189,6 +190,7 @@ fun ShelfScreen(
                 onSettings = onOpenSettings,
                 onNotes = onOpenNotes,
                 onHidden = onOpenHidden,
+                onManageGroups = { showGroupManager = true },
                 onExitSelection = { selection = emptySet() },
                 onPinSelected = {
                     scope.launch {
@@ -453,6 +455,10 @@ fun ShelfScreen(
         )
     }
 
+    if (showGroupManager) {
+        GroupManagerSheet(container = container, onDismiss = { showGroupManager = false })
+    }
+
     encodingBook?.let { book ->
         EncodingDialog(
             container = container,
@@ -655,6 +661,7 @@ private fun ShelfHeader(
     onSettings: () -> Unit,
     onNotes: () -> Unit,
     onHidden: () -> Unit,
+    onManageGroups: () -> Unit,
     onExitSelection: () -> Unit,
     onPinSelected: () -> Unit,
     onGroupSelected: () -> Unit,
@@ -722,6 +729,10 @@ private fun ShelfHeader(
                         DropdownMenuItem(
                             text = { Text("隐藏的书籍") },
                             onClick = { menu = false; onHidden() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("分组管理") },
+                            onClick = { menu = false; onManageGroups() }
                         )
                     }
                 }
