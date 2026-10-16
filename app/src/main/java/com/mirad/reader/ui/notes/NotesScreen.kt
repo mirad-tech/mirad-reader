@@ -183,7 +183,11 @@ fun NotesScreen(
                         ListRow(
                             title = item.chapterTitle,
                             subtitle = item.snippet,
-                            meta = titles[item.bookId] ?: "未知书籍",
+                            // 书签行原本连章号都不显示；这里与划线行同构，并同样标注失效锚点
+                            meta = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章" +
+                                if (anchorStale(item.bookId, item.chapterIndex, item.charOffset)) {
+                                    " · ${com.mirad.reader.core.model.NoteAnchor.STALE_HINT}"
+                                } else "",
                             trailing = {
                                 TextButton(onClick = {
                                     scope.launch {
