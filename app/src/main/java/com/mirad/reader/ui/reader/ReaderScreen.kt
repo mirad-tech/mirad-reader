@@ -457,6 +457,10 @@ private fun ReaderContent(
                 onToc = { showToc = true },
                 onProgress = { showProgress = true },
                 onSettings = { showSettings = true },
+                onNotes = { showNotes = true },
+                onSearch = { showSearch = true },
+                onTts = { if (tts.isSpeaking) tts.pause() else showTts = true },
+                speaking = tts.isSpeaking,
                 onSliderChange = { session.jumpToPercent(it) }
             )
         }

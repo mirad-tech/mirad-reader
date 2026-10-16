@@ -87,65 +87,77 @@ fun FontSection(
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        SectionTitle("字体")
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            ReadingFonts.PRESETS.chunked(4).forEach { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    row.forEach { font ->
-                        ChoiceChip(
-                            text = font.label,
-                            selected = config.fontFamily == font.systemKey,
-                            onClick = {
-                                onChange { it.copy(fontFamily = font.systemKey ?: FontFamilyKey.SYSTEM) }
-                            }
+        SettingCard(title = "字体") {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReadingFonts.PRESETS.chunked(4).forEach { row ->
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { font ->
+                            ChoiceChip(
+                                text = font.label,
+                                selected = config.fontFamily == font.systemKey,
+                                onClick = {
+                                    onChange { it.copy(fontFamily = font.systemKey ?: FontFamilyKey.SYSTEM) }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            CardDivider()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "我的字体",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                if (customFonts.isEmpty()) {
+                    Text(
+                        text = "还没有导入",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            if (customFonts.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(customFonts, key = { it.filePath ?: it.assetName ?: it.label }) { font ->
+                        val selected = config.fontFamily == FontFamilyKey.CUSTOM &&
+                            ((font.assetName != null && config.customFontAsset == font.assetName) ||
+                                (font.filePath != null && config.customFontPath == font.filePath))
+                        CustomFontChip(
+                            font = font,
+                            selected = selected,
+                            onSelect = {
+                                onChange {
+                                    it.copy(
+                                        fontFamily = FontFamilyKey.CUSTOM,
+                                        customFontAsset = font.assetName,
+                                        customFontPath = font.filePath
+                                    )
+                                }
+                            },
+                            onDelete = if (font.filePath != null) ({ onDelete(font) }) else null
                         )
                     }
                 }
             }
-        }
-
-        Spacer(modifier = Modifier.height(10.dp))
-        Text(
-            text = "我的字体" + if (customFonts.isEmpty()) "（还没有，可导入 .ttf / .otf）" else "",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        if (customFonts.isNotEmpty()) {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(customFonts, key = { it.filePath ?: it.assetName ?: it.label }) { font ->
-                    val selected = config.fontFamily == FontFamilyKey.CUSTOM &&
-                        ((font.assetName != null && config.customFontAsset == font.assetName) ||
-                            (font.filePath != null && config.customFontPath == font.filePath))
-                    CustomFontChip(
-                        font = font,
-                        selected = selected,
-                        onSelect = {
-                            onChange {
-                                it.copy(
-                                    fontFamily = FontFamilyKey.CUSTOM,
-                                    customFontAsset = font.assetName,
-                                    customFontPath = font.filePath
-                                )
-                            }
-                        },
-                        onDelete = if (font.filePath != null) ({ onDelete(font) }) else null
-                    )
-                }
+            OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+                Text("导入字体文件（.ttf / .otf / .ttc）")
             }
-            Spacer(modifier = Modifier.height(6.dp))
-        }
-        OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-            Text("导入字体文件（.ttf / .otf / .ttc）")
-        }
-        if (config.fontFamily == FontFamilyKey.CUSTOM) {
-            Text(
-                text = "当前使用：" + (config.customFontAsset?.substringAfterLast('/')
-                    ?: config.customFontPath?.substringAfterLast('/') ?: "未选择，已回退系统字体"),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            if (config.fontFamily == FontFamilyKey.CUSTOM) {
+                Text(
+                    text = "当前使用：" + (config.customFontAsset?.substringAfterLast('/')
+                        ?: config.customFontPath?.substringAfterLast('/') ?: "未选择，已回退系统字体"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
@@ -195,87 +207,86 @@ fun BackgroundSection(
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        SectionTitle("背景与主题")
-        ChoiceRow(
-            label = "主题",
-            options = listOf(
-                ThemeKey.LIGHT to "白",
-                ThemeKey.PAPER to "纸色",
-                ThemeKey.SEPIA to "米黄",
-                ThemeKey.GREEN to "护眼",
-                ThemeKey.DARK to "夜间",
-                ThemeKey.BLACK to "纯黑",
-                ThemeKey.SYSTEM to "跟随系统"
-            ),
-            selected = config.theme,
-            onSelect = { key -> onChange { it.copy(theme = key) } },
-            columns = 4
-        )
-        ChoiceRow(
-            label = "背景类型",
-            options = listOf(BackgroundType.COLOR to "纯色", BackgroundType.IMAGE to "图片"),
-            selected = config.backgroundType,
-            onSelect = { key -> onChange { it.copy(backgroundType = key) } },
-            columns = 2
-        )
-
-        if (config.backgroundType == BackgroundType.IMAGE) {
-            Text(
-                text = "内置背景",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
+        SettingCard(title = "背景与主题") {
+            ChoiceRow(
+                label = "主题",
+                options = listOf(
+                    ThemeKey.LIGHT to "白",
+                    ThemeKey.PAPER to "纸色",
+                    ThemeKey.SEPIA to "米黄",
+                    ThemeKey.GREEN to "护眼",
+                    ThemeKey.DARK to "夜间",
+                    ThemeKey.BLACK to "纯黑",
+                    ThemeKey.SYSTEM to "跟随系统"
+                ),
+                selected = config.theme,
+                onSelect = { key -> onChange { it.copy(theme = key) } },
+                columns = 4
             )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(BuiltinBackgrounds.ALL, key = { it.key }) { preset ->
-                    BackgroundPresetTile(
-                        preset = preset,
-                        selected = config.backgroundImageUri == preset.uri,
-                        onClick = {
-                            onChange {
-                                it.copy(
-                                    backgroundType = BackgroundType.IMAGE,
-                                    backgroundImageUri = preset.uri,
-                                    theme = preset.suggestedTheme,
-                                    backgroundImageAlpha = 1f
-                                )
+
+            CardDivider()
+
+            SegmentedRow(
+                options = listOf(BackgroundType.COLOR to "纯色背景", BackgroundType.IMAGE to "图片背景"),
+                selected = config.backgroundType,
+                onSelect = { key -> onChange { it.copy(backgroundType = key) } }
+            )
+
+            if (config.backgroundType == BackgroundType.IMAGE) {
+                Text(
+                    text = "内置背景",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(BuiltinBackgrounds.ALL, key = { it.key }) { preset ->
+                        BackgroundPresetTile(
+                            preset = preset,
+                            selected = config.backgroundImageUri == preset.uri,
+                            onClick = {
+                                onChange {
+                                    it.copy(
+                                        backgroundType = BackgroundType.IMAGE,
+                                        backgroundImageUri = preset.uri,
+                                        theme = preset.suggestedTheme,
+                                        backgroundImageAlpha = 1f
+                                    )
+                                }
                             }
-                        }
+                        )
+                    }
+                }
+                OutlinedButton(onClick = onPickImage, modifier = Modifier.fillMaxWidth()) {
+                    Text("选择本机图片作为背景")
+                }
+                val current = config.backgroundImageUri
+                if (!current.isNullOrBlank() && BuiltinBackgrounds.fromUri(current) == null) {
+                    Text(
+                        text = "当前：${current.substringAfterLast('/')}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            OutlinedButton(onClick = onPickImage, modifier = Modifier.fillMaxWidth()) {
-                Text("选择本机图片作为背景")
-            }
-            val current = config.backgroundImageUri
-            if (!current.isNullOrBlank() && BuiltinBackgrounds.fromUri(current) == null) {
-                Text(
-                    text = "当前：${current.substringAfterLast('/')}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp)
+                LabeledSlider(
+                    label = "背景不透明度",
+                    value = config.backgroundImageAlpha,
+                    valueText = "${(config.backgroundImageAlpha * 100).toInt()}%",
+                    range = 0.1f..1f,
+                    onChange = { value -> onChange { it.copy(backgroundImageAlpha = value) } }
+                )
+            } else {
+                ColorDotRow(
+                    colors = listOf(
+                        0xFFFFFFFF.toInt(), 0xFFF5F1E6.toInt(), 0xFFEDE0C8.toInt(),
+                        0xFFCCE8CF.toInt(), 0xFFB8D8E8.toInt(), 0xFF1A1C1E.toInt(),
+                        0xFF000000.toInt()
+                    ),
+                    selected = config.backgroundColor,
+                    onSelect = { color ->
+                        onChange { it.copy(backgroundColor = color, theme = ThemeKey.CUSTOM) }
+                    }
                 )
             }
-            LabeledSlider(
-                label = "背景不透明度",
-                value = config.backgroundImageAlpha,
-                valueText = "${(config.backgroundImageAlpha * 100).toInt()}%",
-                range = 0.1f..1f,
-                onChange = { value -> onChange { it.copy(backgroundImageAlpha = value) } }
-            )
-        } else {
-            ColorDotRow(
-                colors = listOf(
-                    0xFFFFFFFF.toInt(), 0xFFF5F1E6.toInt(), 0xFFEDE0C8.toInt(),
-                    0xFFCCE8CF.toInt(), 0xFFB8D8E8.toInt(), 0xFF1A1C1E.toInt(),
-                    0xFF000000.toInt()
-                ),
-                selected = config.backgroundColor,
-                onSelect = { color ->
-                    onChange { it.copy(backgroundColor = color, theme = ThemeKey.CUSTOM) }
-                }
-            )
         }
     }
 }

@@ -1,7 +1,11 @@
 package com.mirad.reader.ui.shelf
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -10,13 +14,16 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -24,7 +31,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -38,43 +44,45 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.documentfile.provider.DocumentFile
 import com.mirad.reader.AppContainer
 import com.mirad.reader.BuildConfig
 import com.mirad.reader.data.db.entity.BookEntity
-import com.mirad.reader.data.db.entity.BookFormat
+import com.mirad.reader.data.imports.ImportItem
 import com.mirad.reader.data.imports.ImportSource
 import com.mirad.reader.data.imports.ImportSources
 import com.mirad.reader.data.imports.ImportStage
 import com.mirad.reader.data.repo.ShelfBook
-import com.mirad.reader.ui.common.ChoiceRow
+import com.mirad.reader.ui.common.ChoiceChip
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -83,9 +91,9 @@ import java.io.File
 enum class ShelfSort(val label: String) {
     RECENT("最近阅读"),
     ADDED("添加时间"),
-    TITLE("书名"),
-    AUTHOR("作者"),
-    SIZE("文件大小")
+    TITLE("按书名"),
+    AUTHOR("按作者"),
+    SIZE("按大小")
 }
 
 private enum class ShelfLayout { GRID, LIST }
@@ -115,11 +123,12 @@ fun ShelfScreen(
     var sortMenu by remember { mutableStateOf(false) }
     var importMenu by remember { mutableStateOf(false) }
     var groupDialog by remember { mutableStateOf(false) }
-    var newGroupName by remember { mutableStateOf("") }
     var editing by remember { mutableStateOf<BookEntity?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var editAuthor by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var actionBook by remember { mutableStateOf<BookEntity?>(null) }
+    var toast by remember { mutableStateOf<String?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -137,124 +146,84 @@ fun ShelfScreen(
                             ?: emptyList()
                     }.getOrDefault(emptyList())
                 }
-                if (sources.isEmpty()) {
-                    container.importer.import(emptyList())
-                } else {
-                    container.importer.import(sources)
-                }
+                if (sources.isEmpty()) toast = "所选文件夹里没有 txt / epub" else container.importer.import(sources)
             }
         }
     }
 
     val visible = remember(shelf, sort, selectedGroup, query) {
         shelf
-            .filter { !it.book.isHidden }
-            .filter { selectedGroup == null || it.book.groupId == selectedGroup }
-            .filter { query.isBlank() || it.book.title.contains(query, true) || (it.book.author?.contains(query, true) == true) }
+            .filter { !it.book.isHidden || selection.isNotEmpty() }
+            .filter {
+                when (selectedGroup) {
+                    null -> true
+                    -1L -> it.book.groupId == null
+                    else -> it.book.groupId == selectedGroup
+                }
+            }
+            .filter {
+                query.isBlank() ||
+                    it.book.title.contains(query, true) ||
+                    (it.book.author?.contains(query, true) == true)
+            }
             .sortedWith(
                 when (sort) {
-                    ShelfSort.RECENT -> compareByDescending<ShelfBook> { it.book.isPinned }
-                        .thenByDescending { it.lastReadAt }
-                    ShelfSort.ADDED -> compareByDescending<ShelfBook> { it.book.isPinned }
-                        .thenByDescending { it.book.addedAt }
-                    ShelfSort.TITLE -> compareByDescending<ShelfBook> { it.book.isPinned }
-                        .thenBy { it.book.title }
-                    ShelfSort.AUTHOR -> compareByDescending<ShelfBook> { it.book.isPinned }
-                        .thenBy { it.book.author.orEmpty() }
-                    ShelfSort.SIZE -> compareByDescending<ShelfBook> { it.book.isPinned }
-                        .thenByDescending { it.book.fileSize }
+                    ShelfSort.RECENT -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.lastReadAt }
+                    ShelfSort.ADDED -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.book.addedAt }
+                    ShelfSort.TITLE -> compareByDescending<ShelfBook> { it.book.isPinned }.thenBy { it.book.title }
+                    ShelfSort.AUTHOR -> compareByDescending<ShelfBook> { it.book.isPinned }.thenBy { it.book.author.orEmpty() }
+                    ShelfSort.SIZE -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.book.fileSize }
                 }
             )
     }
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            if (selection.isEmpty()) {
-                TopAppBar(
-                    title = { Text(if (query.isBlank()) "墨读" else "搜索：$query") },
-                    actions = {
-                        IconButton(onClick = { showSearch = !showSearch }) {
-                            Icon(Icons.Default.Search, contentDescription = "搜索书架")
+            ShelfHeader(
+                total = shelf.count { !it.book.isHidden },
+                selectionCount = selection.size,
+                searchVisible = showSearch,
+                onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
+                onStats = onOpenStats,
+                onSettings = onOpenSettings,
+                onExitSelection = { selection = emptySet() },
+                onPinSelected = {
+                    scope.launch {
+                        selection.forEach { id ->
+                            val pinned = shelf.firstOrNull { it.book.id == id }?.book?.isPinned == true
+                            container.books.setPinned(id, !pinned)
                         }
-                        IconButton(onClick = onOpenStats) {
-                            Icon(Icons.Default.Star, contentDescription = "阅读统计")
-                        }
-                        IconButton(onClick = onOpenSettings) {
-                            Icon(Icons.Default.Settings, contentDescription = "设置")
-                        }
-                        IconButton(onClick = { sortMenu = true }) {
-                            Icon(Icons.Default.MoreVert, contentDescription = "排序")
-                        }
-                        DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                            ShelfSort.values().forEach { option ->
-                                DropdownMenuItem(
-                                    text = { Text(option.label + if (option == sort) "  ✓" else "") },
-                                    onClick = {
-                                        sort = option
-                                        sortMenu = false
-                                    }
-                                )
-                            }
-                            DropdownMenuItem(
-                                text = { Text(if (layout == ShelfLayout.GRID) "切换为列表" else "切换为网格") },
-                                onClick = {
-                                    layout = if (layout == ShelfLayout.GRID) ShelfLayout.LIST else ShelfLayout.GRID
-                                    sortMenu = false
-                                }
-                            )
-                        }
+                        selection = emptySet()
                     }
-                )
-            } else {
-                TopAppBar(
-                    title = { Text("已选择 ${selection.size} 本") },
-                    navigationIcon = {
-                        IconButton(onClick = { selection = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "退出多选")
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            scope.launch {
-                                selection.forEach { id ->
-                                    val pinned = shelf.firstOrNull { it.book.id == id }?.book?.isPinned == true
-                                    container.books.setPinned(id, !pinned)
-                                }
-                                selection = emptySet()
-                            }
-                        }) { Icon(Icons.Default.Star, contentDescription = "置顶") }
-                        IconButton(onClick = { groupDialog = true }) {
-                            Icon(Icons.Default.Add, contentDescription = "移入分组")
-                        }
-                        IconButton(onClick = { confirmDelete = true }) {
-                            Icon(Icons.Default.Delete, contentDescription = "删除")
-                        }
-                    }
-                )
-            }
+                },
+                onGroupSelected = { groupDialog = true },
+                onDeleteSelected = { confirmDelete = true }
+            )
         },
         floatingActionButton = {
             if (selection.isEmpty()) {
                 Box {
                     ExtendedFloatingActionButton(
                         onClick = { importMenu = true },
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = RoundedCornerShape(18.dp),
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 2.dp,
+                            pressedElevation = 4.dp
+                        ),
                         icon = { Icon(Icons.Default.Add, contentDescription = null) },
                         text = { Text("导入") }
                     )
                     DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
                         DropdownMenuItem(
                             text = { Text("导入文件（txt / epub）") },
-                            onClick = {
-                                importMenu = false
-                                filePicker.launch(arrayOf("*/*"))
-                            }
+                            onClick = { importMenu = false; filePicker.launch(arrayOf("*/*")) }
                         )
                         DropdownMenuItem(
                             text = { Text("导入文件夹") },
-                            onClick = {
-                                importMenu = false
-                                folderPicker.launch(null)
-                            }
+                            onClick = { importMenu = false; folderPicker.launch(null) }
                         )
                         if (BuildConfig.DEBUG) {
                             DropdownMenuItem(
@@ -263,15 +232,8 @@ fun ShelfScreen(
                                     importMenu = false
                                     scope.launch {
                                         val result = withContext(Dispatchers.IO) { scanSamples(container) }
-                                        if (result.sources.isNotEmpty()) {
-                                            container.importer.import(result.sources)
-                                        } else {
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                "未找到样书：${result.directory}\n存在=${result.exists} 文件数=${result.count}",
-                                                android.widget.Toast.LENGTH_LONG
-                                            ).show()
-                                        }
+                                        if (result.sources.isNotEmpty()) container.importer.import(result.sources)
+                                        else toast = "未找到样书：${result.directory}"
                                     }
                                 }
                             )
@@ -290,43 +252,77 @@ fun ShelfScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
-                    label = { Text("书架搜索（书名 / 作者）") },
+                    placeholder = { Text("搜索书名或作者") },
                     singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp)
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
                 )
             }
 
-            if (groups.isNotEmpty() || selectedGroup != null) {
-                ChoiceRow(
-                    label = "",
-                    options = buildList {
-                        add(null as Long? to "全部")
-                        add(-1L to "未分组")
-                        groups.forEach { add(it.id to it.name) }
-                    },
-                    selected = selectedGroup,
-                    onSelect = { selectedGroup = if (it == -1L) -1L else it },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    columns = 4
-                )
+            if (groups.isNotEmpty()) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        ChoiceChip("全部", selectedGroup == null) { selectedGroup = null }
+                    }
+                    item {
+                        ChoiceChip("未分组", selectedGroup == -1L) { selectedGroup = -1L }
+                    }
+                    items(groups, key = { it.id }) { group ->
+                        ChoiceChip(group.name, selectedGroup == group.id) { selectedGroup = group.id }
+                    }
+                }
             }
 
-            if (visible.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box {
+                    TextButton(onClick = { sortMenu = true }) {
+                        Text("${sort.label}  ▾", style = MaterialTheme.typography.labelLarge)
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        ShelfSort.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = { sort = option; sortMenu = false },
+                                trailingIcon = {
+                                    if (option == sort) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                TextButton(onClick = {
+                    layout = if (layout == ShelfLayout.GRID) ShelfLayout.LIST else ShelfLayout.GRID
+                }) {
                     Text(
-                        text = "书架还是空的\n点右下角「导入」添加 txt / epub",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        text = if (layout == ShelfLayout.GRID) "网格" else "列表",
+                        style = MaterialTheme.typography.labelLarge
                     )
                 }
-            } else if (layout == ShelfLayout.GRID) {
-                LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 108.dp),
-                    contentPadding = PaddingValues(12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
+            }
+
+            when {
+                visible.isEmpty() -> EmptyShelf(
+                    searching = query.isNotBlank() || selectedGroup != null,
+                    onImport = { filePicker.launch(arrayOf("*/*")) }
+                )
+                layout == ShelfLayout.GRID -> LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(visible, key = { it.book.id }) { item ->
@@ -339,21 +335,15 @@ fun ShelfScreen(
                                 else selection = toggle(selection, item.book.id)
                             },
                             onLongClick = {
-                                selection = if (selection.isEmpty()) setOf(item.book.id) else toggle(selection, item.book.id)
-                            },
-                            onEdit = {
-                                editing = item.book
-                                editTitle = item.book.title
-                                editAuthor = item.book.author.orEmpty()
-                            },
-                            onDelete = { selection = setOf(item.book.id); confirmDelete = true }
+                                if (selection.isEmpty()) actionBook = item.book
+                                else selection = toggle(selection, item.book.id)
+                            }
                         )
                     }
                 }
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                else -> LazyColumn(
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(visible, key = { it.book.id }) { item ->
@@ -365,7 +355,8 @@ fun ShelfScreen(
                                 else selection = toggle(selection, item.book.id)
                             },
                             onLongClick = {
-                                selection = if (selection.isEmpty()) setOf(item.book.id) else toggle(selection, item.book.id)
+                                if (selection.isEmpty()) actionBook = item.book
+                                else selection = toggle(selection, item.book.id)
                             }
                         )
                     }
@@ -376,30 +367,54 @@ fun ShelfScreen(
         }
     }
 
-    // ---------------- 对话框 ----------------
+    // ---------------- 弹层 ----------------
+
+    actionBook?.let { book ->
+        BookActionSheet(
+            book = book,
+            canGroup = groups.isNotEmpty(),
+            onDismiss = { actionBook = null },
+            onOpen = { actionBook = null; onOpenBook(book.id) },
+            onEdit = {
+                actionBook = null
+                editing = book
+                editTitle = book.title
+                editAuthor = book.author.orEmpty()
+            },
+            onTogglePin = {
+                actionBook = null
+                scope.launch { container.books.setPinned(book.id, !book.isPinned) }
+            },
+            onHide = {
+                actionBook = null
+                scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏，可在设置里恢复" }
+            },
+            onGroup = { actionBook = null; selection = setOf(book.id); groupDialog = true },
+            onDelete = { actionBook = null; selection = setOf(book.id); confirmDelete = true }
+        )
+    }
+
+    toast?.let { message ->
+        ShelfToast(message = message, onDismiss = { toast = null })
+    }
 
     if (summary != null) {
-        val s = summary!!
+        val result = summary!!
         AlertDialog(
             onDismissRequest = { container.importer.clearSummary() },
             title = { Text("导入完成") },
             text = {
                 Column {
-                    Text("成功 ${s.success} 本，跳过 ${s.skipped} 本，失败 ${s.failed} 本")
-                    s.messages.take(6).forEach { message ->
+                    Text(
+                        text = "成功 ${result.success} 本 · 跳过 ${result.skipped} 本 · 失败 ${result.failed} 本",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    result.messages.take(6).forEach { message ->
                         Text(
                             text = "· $message",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                    if (s.skipped > 0) {
-                        Text(
-                            text = "重复书籍已跳过；如需再次导入，可删除原书后重新导入。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
                 }
@@ -417,50 +432,41 @@ fun ShelfScreen(
             title = { Text("移入分组") },
             text = {
                 Column {
+                    TextButton(onClick = {
+                        scope.launch {
+                            selection.forEach { container.books.setGroup(it, null) }
+                            selection = emptySet(); groupDialog = false
+                        }
+                    }) { Text("移出分组") }
                     groups.forEach { group ->
                         TextButton(onClick = {
                             scope.launch {
                                 selection.forEach { container.books.setGroup(it, group.id) }
-                                selection = emptySet()
-                                groupDialog = false
+                                selection = emptySet(); groupDialog = false
                             }
                         }) { Text(group.name) }
                     }
-                    TextButton(onClick = {
-                        scope.launch {
-                            selection.forEach { container.books.setGroup(it, null) }
-                            selection = emptySet()
-                            groupDialog = false
-                        }
-                    }) { Text("移出分组") }
                     OutlinedTextField(
                         value = nameDraft,
                         onValueChange = { nameDraft = it },
                         label = { Text("新建分组") },
-                        singleLine = true
+                        singleLine = true,
+                        modifier = Modifier.padding(top = 8.dp)
                     )
                 }
             },
             confirmButton = {
-                TextButton(
-                    onClick = {
-                        val name = nameDraft.trim()
-                        if (name.isNotEmpty()) {
-                            scope.launch {
-                                val id = container.groups.create(name)
-                                selection.forEach { container.books.setGroup(it, id) }
-                                selection = emptySet()
-                                groupDialog = false
-                            }
-                        } else {
-                            groupDialog = false
-                        }
+                TextButton(onClick = {
+                    val name = nameDraft.trim()
+                    if (name.isEmpty()) { groupDialog = false; return@TextButton }
+                    scope.launch {
+                        val id = container.groups.create(name)
+                        selection.forEach { container.books.setGroup(it, id) }
+                        selection = emptySet(); groupDialog = false
                     }
-                ) { Text("新建并移入") }
+                }) { Text("新建并移入") }
             },
-            dismissButton = {
-                TextButton(onClick = { groupDialog = false }) { Text("取消") }
-            }
+            dismissButton = { TextButton(onClick = { groupDialog = false }) { Text("取消") } }
         )
     }
 
@@ -468,21 +474,16 @@ fun ShelfScreen(
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
             title = { Text("删除书籍") },
-            text = { Text("将删除所选 ${selection.size} 本书及其阅读记录、书签与笔记，且不可恢复。") },
+            text = { Text("将删除所选 ${selection.size} 本书及其阅读记录、书签与笔记，无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
-                        selection.forEach { id ->
-                            container.books.getBook(id)?.let { container.books.deleteBook(it) }
-                        }
-                        selection = emptySet()
-                        confirmDelete = false
+                        selection.forEach { id -> container.books.getBook(id)?.let { container.books.deleteBook(it) } }
+                        selection = emptySet(); confirmDelete = false
                     }
-                }) { Text("删除") }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = {
-                TextButton(onClick = { confirmDelete = false }) { Text("取消") }
-            }
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } }
         )
     }
 
@@ -491,14 +492,13 @@ fun ShelfScreen(
             onDismissRequest = { editing = null },
             title = { Text("编辑书籍信息") },
             text = {
-                Column {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = editTitle,
                         onValueChange = { editTitle = it },
                         label = { Text("书名") },
                         singleLine = true
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
                     OutlinedTextField(
                         value = editAuthor,
                         onValueChange = { editAuthor = it },
@@ -519,48 +519,96 @@ fun ShelfScreen(
                     }
                 }) { Text("保存") }
             },
-            dismissButton = {
-                TextButton(onClick = { editing = null }) { Text("取消") }
-            }
+            dismissButton = { TextButton(onClick = { editing = null }) { Text("取消") } }
         )
     }
 }
 
-private fun isSupported(name: String): Boolean {
-    val lower = name.lowercase()
-    return lower.endsWith(".txt") || lower.endsWith(".epub")
-}
+// ---------------------------------------------------------------- 顶栏
 
-private data class SampleScan(
-    val sources: List<ImportSource>,
-    val directory: String,
-    val exists: Boolean,
-    val count: Int
-)
-
-/** 调试用：扫描 samples 目录（外部私有目录优先，其次内部私有目录）。 */
-private fun scanSamples(container: AppContainer): SampleScan {
-    val candidates = listOf(
-        container.paths.samplesDir,
-        File(container.paths.root, "samples")
-    )
-    for (dir in candidates) {
-        val files = dir.listFiles()?.filter { it.isFile && isSupported(it.name) }.orEmpty()
-        android.util.Log.i(
-            "MiradDebug",
-            "scanSamples dir=${dir.absolutePath} exists=${dir.exists()} supported=${files.size}"
-        )
-        if (files.isNotEmpty()) {
-            return SampleScan(files.map { ImportSource.FromFile(it) }, dir.absolutePath, true, files.size)
+@Composable
+private fun ShelfHeader(
+    total: Int,
+    selectionCount: Int,
+    searchVisible: Boolean,
+    onToggleSearch: () -> Unit,
+    onStats: () -> Unit,
+    onSettings: () -> Unit,
+    onExitSelection: () -> Unit,
+    onPinSelected: () -> Unit,
+    onGroupSelected: () -> Unit,
+    onDeleteSelected: () -> Unit
+) {
+    Surface(
+        color = MaterialTheme.colorScheme.background,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (selectionCount > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onExitSelection) {
+                    Icon(Icons.Default.Close, contentDescription = "退出多选")
+                }
+                Text(
+                    text = "已选 $selectionCount 本",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onPinSelected) {
+                    Icon(Icons.Default.Star, contentDescription = "置顶")
+                }
+                IconButton(onClick = onGroupSelected) {
+                    Icon(Icons.Default.Add, contentDescription = "移入分组")
+                }
+                IconButton(onClick = onDeleteSelected) {
+                    Icon(Icons.Default.Delete, contentDescription = "删除")
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+                    .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "墨读",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    Text(
+                        text = if (total == 0) "本地离线阅读" else "书架共 $total 本",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onToggleSearch) {
+                    Icon(
+                        Icons.Default.Search,
+                        contentDescription = "搜索",
+                        tint = if (searchVisible) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = onStats) {
+                    Icon(Icons.Default.Star, contentDescription = "阅读统计", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = onSettings) {
+                    Icon(Icons.Default.Settings, contentDescription = "设置", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
     }
-    val first = candidates.first()
-    val all = first.listFiles()?.size ?: 0
-    return SampleScan(emptyList(), first.absolutePath, first.exists(), all)
 }
 
-private fun toggle(selection: Set<Long>, id: Long): Set<Long> =
-    if (id in selection) selection - id else selection + id
+// ---------------------------------------------------------------- 书籍卡片
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -569,101 +617,77 @@ private fun BookGridCard(
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+    onLongClick: () -> Unit
 ) {
-    var menu by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(MaterialTheme.shapes.medium)
             .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
+                if (selected) MaterialTheme.colorScheme.primaryContainer else Color.Transparent
             )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(6.dp)
+            .padding(4.dp)
     ) {
-        Box {
-            BookCover(
-                book = item.book,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(0.72f)
-            )
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(0.72f)
+                .shadow(2.dp, MaterialTheme.shapes.small)
+                .clip(MaterialTheme.shapes.small)
+        ) {
+            BookCover(book = item.book, modifier = Modifier.fillMaxSize())
+            CoverProgress(item.percent)
             if (item.book.isPinned) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(4.dp)
-                ) {
-                    Text(
-                        text = "置顶",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                    )
-                }
+                Badge(text = "置顶", modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
             }
-            if (selected) {
-                Surface(
-                    color = MaterialTheme.colorScheme.primary,
-                    shape = RoundedCornerShape(10.dp),
+            if (selectionMode) {
+                Box(
                     modifier = Modifier
                         .align(Alignment.TopStart)
-                        .padding(4.dp)
+                        .padding(5.dp)
+                        .size(22.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(
+                            if (selected) MaterialTheme.colorScheme.primary
+                            else Color.Black.copy(alpha = 0.35f)
+                        ),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    if (selected) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(15.dp)
+                        )
+                    }
                 }
             }
         }
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = item.book.title,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onBackground,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Text(
-            text = buildString {
-                append(item.book.author ?: "未知作者")
-                append(" · ")
-                append(formatSize(item.book.fileSize))
-            },
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(modifier = Modifier.height(4.dp))
-        LinearProgressIndicator(
-            progress = { item.percent.coerceIn(0f, 1f) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-        )
         Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = "已读 ${(item.percent * 100).toInt()}% · ${item.book.format}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (!selectionMode) {
-            Box {
-                TextButton(onClick = { menu = true }) { Text("更多") }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("编辑信息") }, onClick = { menu = false; onEdit() })
-                    DropdownMenuItem(text = { Text("删除") }, onClick = { menu = false; onDelete() })
-                }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = item.book.format,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            if (item.percent > 0f) {
+                Text(
+                    text = "${(item.percent * 100).toInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
+                )
             }
         }
     }
@@ -677,93 +701,294 @@ private fun BookListRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
-    Row(
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface
-            )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically
     ) {
-        BookCover(
-            book = item.book,
-            modifier = Modifier
-                .width(52.dp)
-                .height(70.dp)
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = item.book.title,
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = "${item.book.author ?: "未知作者"} · ${item.book.totalChapters} 章 · ${item.book.format}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            LinearProgressIndicator(
-                progress = { item.percent.coerceIn(0f, 1f) },
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            BookCover(
+                book = item.book,
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(2.dp))
+                    .width(48.dp)
+                    .height(66.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = item.book.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = "${item.book.author ?: "未知作者"} · ${item.book.totalChapters} 章",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                InlineProgress(item.percent)
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = "${(item.percent * 100).toInt()}%",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Medium
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
+    }
+}
+
+/** 网格卡片：进度贴在封面底部。 */
+@Composable
+private fun androidx.compose.foundation.layout.BoxScope.CoverProgress(percent: Float) {
+    if (percent <= 0f) return
+    Box(
+        modifier = Modifier
+            .align(Alignment.BottomStart)
+            .fillMaxWidth()
+            .height(4.dp)
+            .background(Color.Black.copy(alpha = 0.22f))
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(percent.coerceIn(0f, 1f))
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.primary)
+        )
+    }
+}
+
+/** 列表模式：独立细进度条。 */
+@Composable
+private fun InlineProgress(percent: Float) {
+    LinearProgressIndicator(
+        progress = { percent.coerceIn(0f, 1f) },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(3.dp)
+            .clip(RoundedCornerShape(2.dp)),
+        color = MaterialTheme.colorScheme.primary,
+        trackColor = MaterialTheme.colorScheme.surfaceVariant
+    )
+}
+
+@Composable
+private fun Badge(text: String, modifier: Modifier = Modifier) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary,
+        shape = RoundedCornerShape(6.dp),
+        modifier = modifier
+    ) {
         Text(
-            text = "${(item.percent * 100).toInt()}%",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
         )
     }
 }
 
 @Composable
-private fun ImportBar(items: List<com.mirad.reader.data.imports.ImportItem>, running: Boolean) {
+private fun EmptyShelf(searching: Boolean, onImport: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(32.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(96.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .border(
+                        width = 1.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant,
+                        shape = RoundedCornerShape(24.dp)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (searching) "空" else "书",
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            Spacer(modifier = Modifier.height(18.dp))
+            Text(
+                text = if (searching) "没有匹配的书籍" else "书架还是空的",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = if (searching) "换个关键词或分组试试" else "导入本机的 txt / epub 就能开始阅读",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            if (!searching) {
+                Spacer(modifier = Modifier.height(18.dp))
+                OutlinedButton(onClick = onImport) { Text("导入 txt / epub") }
+            }
+        }
+    }
+}
+
+/** 长按书籍后的操作面板。 */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BookActionSheet(
+    book: BookEntity,
+    canGroup: Boolean,
+    onDismiss: () -> Unit,
+    onOpen: () -> Unit,
+    onEdit: () -> Unit,
+    onTogglePin: () -> Unit,
+    onHide: () -> Unit,
+    onGroup: () -> Unit,
+    onDelete: () -> Unit
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                BookCover(
+                    book = book,
+                    modifier = Modifier
+                        .width(44.dp)
+                        .height(60.dp)
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column {
+                    Text(text = book.title, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        text = "${book.author ?: "未知作者"} · ${book.totalChapters} 章 · ${book.format}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+            SheetAction("继续阅读", onOpen)
+            SheetAction("编辑书名 / 作者", onEdit)
+            SheetAction(if (book.isPinned) "取消置顶" else "置顶", onTogglePin)
+            if (canGroup) SheetAction("移入分组", onGroup)
+            SheetAction("在书架隐藏", onHide)
+            SheetAction("删除这本书", onDelete, danger = true)
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun SheetAction(text: String, onClick: () -> Unit, danger: Boolean = false) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodyLarge,
+        color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.small)
+            .clickable(onClick = onClick)
+            .padding(vertical = 14.dp)
+    )
+}
+
+@Composable
+private fun ShelfToast(message: String, onDismiss: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shape = MaterialTheme.shapes.small,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp, vertical = 84.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.inverseOnSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDismiss) { Text("知道了") }
+        }
+    }
+}
+
+@Composable
+private fun ImportBar(items: List<ImportItem>, running: Boolean) {
     if (items.isEmpty()) return
     val active = items.lastOrNull {
         it.stage == ImportStage.COPYING || it.stage == ImportStage.PARSING || it.stage == ImportStage.INDEXING
     }
     if (active == null && !running) return
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "正在导入：${active?.displayName ?: "处理中"}",
-                style = MaterialTheme.typography.bodySmall,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "正在导入 ${active?.displayName ?: ""}",
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LinearProgressIndicator(
+                    progress = { active?.progress ?: 0f },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                )
+            }
         }
-        Spacer(modifier = Modifier.height(6.dp))
-        LinearProgressIndicator(
-            progress = { active?.progress ?: 0f },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(2.dp))
-        )
     }
 }
 
-private fun formatSize(bytes: Long): String = when {
-    bytes <= 0 -> "未知大小"
-    bytes < 1024 -> "$bytes B"
-    bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-    else -> String.format("%.1f MB", bytes / 1024.0 / 1024.0)
+// ---------------------------------------------------------------- 工具
+
+private fun isSupported(name: String): Boolean {
+    val lower = name.lowercase()
+    return lower.endsWith(".txt") || lower.endsWith(".epub")
 }
+
+private data class SampleScan(
+    val sources: List<ImportSource>,
+    val directory: String,
+    val exists: Boolean,
+    val count: Int
+)
+
+private fun scanSamples(container: AppContainer): SampleScan {
+    val candidates = listOf(container.paths.samplesDir, File(container.paths.root, "samples"))
+    for (dir in candidates) {
+        val files = dir.listFiles()?.filter { it.isFile && isSupported(it.name) }.orEmpty()
+        if (files.isNotEmpty()) {
+            return SampleScan(files.map { ImportSource.FromFile(it) }, dir.absolutePath, true, files.size)
+        }
+    }
+    val first = candidates.first()
+    val all = first.listFiles()?.size ?: 0
+    return SampleScan(emptyList(), first.absolutePath, first.exists(), all)
+}
+
+private fun toggle(selection: Set<Long>, id: Long): Set<Long> =
+    if (id in selection) selection - id else selection + id

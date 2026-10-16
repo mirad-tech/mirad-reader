@@ -3,6 +3,7 @@ package com.mirad.reader.data
 import android.content.Context
 import android.net.Uri
 import com.mirad.reader.core.model.ReadingFont
+import com.mirad.reader.core.model.ReadingFonts
 import java.io.File
 import java.util.Locale
 
@@ -29,9 +30,9 @@ class FontManager(
             .sorted()
             .map { name ->
                 ReadingFont(
-                    label = name.substringBeforeLast('.'),
+                    label = ReadingFonts.bundledLabel(name),
                     assetName = "$BUNDLED_DIR/$name",
-                    note = "内置"
+                    note = ReadingFonts.bundledNote(name)
                 )
             }
     }

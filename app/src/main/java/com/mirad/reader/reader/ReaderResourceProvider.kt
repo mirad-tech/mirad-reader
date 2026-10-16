@@ -129,14 +129,8 @@ class ReaderResourceProvider(
     }
 
     private fun assetResponse(name: String): WebResourceResponse {
-        val mime = when (name.substringAfterLast('.', "").lowercase()) {
-            "js" -> "application/javascript"
-            "css" -> "text/css"
-            "json" -> "application/json"
-            else -> "application/octet-stream"
-        }
-        val bytes = context.assets.open("reader/$name").use { it.readBytes() }
-        return response(mime, bytes)
+        val stream = context.assets.open("reader/$name")
+        return WebResourceResponse(guessMime(name), null, stream)
     }
 
     private fun bookResponse(path: String, uri: Uri): WebResourceResponse? {
@@ -161,12 +155,11 @@ class ReaderResourceProvider(
         }
     }
 
-    /** 从 assets 读取素材（内置背景 / 内置字体）。 */
+    /** 从 assets 读取素材（内置背景 / 内置字体），直接流式返回，避免把几 MB 字体读进内存。 */
     private fun assetResponseOrNull(assetName: String?): WebResourceResponse? {
         if (assetName.isNullOrBlank()) return null
-        val bytes = runCatching { context.assets.open(assetName).use { it.readBytes() } }.getOrNull()
-            ?: return null
-        return WebResourceResponse(guessMime(assetName), null, ByteArrayInputStream(bytes))
+        val stream = runCatching { context.assets.open(assetName) }.getOrNull() ?: return null
+        return WebResourceResponse(guessMime(assetName), null, stream)
     }
 
     private fun chapterResponse(index: Int): WebResourceResponse? {

@@ -77,11 +77,11 @@ object OrientationKey {
 @Serializable
 data class ReaderConfig(
     // ---- 字体与排版 ----
-    val fontFamily: String = FontFamilyKey.SYSTEM,
+    val fontFamily: String = FontFamilyKey.CUSTOM,
     /** 用户导入的字体文件路径（fontFamily = CUSTOM 时生效）。 */
     @SerialName("customFontPath") val customFontPath: String? = null,
     /** 内置在 assets/fonts 下的字体（fontFamily = CUSTOM 时生效）。 */
-    val customFontAsset: String? = null,
+    val customFontAsset: String? = ReadingFonts.DEFAULT_CUSTOM_FONT,
     val fontSizeSp: Float = 18f,
     val lineHeightMultiplier: Float = 1.7f,
     val paragraphSpacingEm: Float = 0.55f,
