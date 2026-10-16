@@ -6,6 +6,7 @@ import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.FontManager
 import com.mirad.reader.data.db.AppDatabase
 import com.mirad.reader.data.imports.ImportPipeline
+import com.mirad.reader.data.repo.BookMaintenance
 import com.mirad.reader.data.repo.BookRepository
 import com.mirad.reader.data.repo.ChapterTextProvider
 import com.mirad.reader.data.repo.GroupRepository
@@ -54,6 +55,9 @@ class AppContainer(app: Application) {
     val groups: GroupRepository = GroupRepository(database.groupDao())
 
     val textProvider: ChapterTextProvider = ChapterTextProvider(paths)
+
+    /** 已导入书籍的维护：重新识别编码、重新分章（TXT 需要重写正文文件）。 */
+    val maintenance: BookMaintenance = BookMaintenance(books, paths)
 
     val fonts: FontManager = FontManager(app, paths)
 

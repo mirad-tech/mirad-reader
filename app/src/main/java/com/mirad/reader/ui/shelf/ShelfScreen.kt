@@ -138,6 +138,7 @@ fun ShelfScreen(
     var editAuthor by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
+    var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
     var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameDraft by remember { mutableStateOf("") }
@@ -442,7 +443,24 @@ fun ShelfScreen(
                         scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏，可从分组行的「已隐藏」找回" }
                     })
                 }
+                if (book.format == com.mirad.reader.data.db.entity.BookFormat.TXT) {
+                    add(ActionItem("文字乱码？重新识别编码…", hint = "当前识别为 ${book.encoding ?: "未知"}") {
+                        encodingBook = book
+                    })
+                }
                 add(ActionItem("删除这本书", danger = true) { selection = setOf(book.id); confirmDelete = true })
+            }
+        )
+    }
+
+    encodingBook?.let { book ->
+        EncodingDialog(
+            container = container,
+            book = book,
+            onDismiss = { encodingBook = null },
+            onApplied = { message ->
+                encodingBook = null
+                toast = message
             }
         )
     }

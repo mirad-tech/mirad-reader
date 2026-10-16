@@ -66,6 +66,12 @@ object TextCodec {
             }
         }
 
+        // UTF-16 无 BOM（记事本另存为"Unicode"时可能丢 BOM）必须排在严格 UTF-8 之前：
+        // UTF-16 中文里的 0x00 字节在 UTF-8 下是合法的 NUL，严格校验拦不住，会解出一堆控制字符。
+        guessUtf16WithoutBom(bytes)?.let { charset ->
+            return DecodedText(clean(String(bytes, charset)), charset.name(), "utf16-heuristic")
+        }
+
         // UTF-8 自带校验能力：全篇严格可解就是最强证据，必须排在 GB18030 之前。
         if (canDecodeStrict(bytes, Charsets.UTF_8)) {
             return DecodedText(clean(String(bytes, Charsets.UTF_8)), "UTF-8", "utf8-strict")
@@ -84,6 +90,51 @@ object TextCodec {
 
         val gb = Charset.forName("GB18030")
         return DecodedText(clean(String(bytes, gb)), gb.name(), "fallback")
+    }
+
+    /**
+     * 无 BOM 的 UTF-16 识别：拉丁字符为主的 UTF-16LE 文本每隔一个字节就是 0x00，
+     * 这个模式非常特征化。中文 UTF-16 没有这种规律，退化为"控制字符比例"判断。
+     */
+    private fun guessUtf16WithoutBom(bytes: ByteArray): Charset? {
+        val n = minOf(bytes.size, 4096)
+        if (n < 8) return null
+        var evenZero = 0
+        var oddZero = 0
+        var pairs = 0
+        var i = 0
+        while (i + 1 < n) {
+            if (bytes[i] == 0.toByte()) evenZero++
+            if (bytes[i + 1] == 0.toByte()) oddZero++
+            pairs++
+            i += 2
+        }
+        if (pairs < 4) return null
+        val evenRatio = evenZero.toDouble() / pairs
+        val oddRatio = oddZero.toDouble() / pairs
+        if (oddRatio > 0.3 && oddRatio > evenRatio * 3) return Charsets.UTF_16LE
+        if (evenRatio > 0.3 && evenRatio > oddRatio * 3) return Charsets.UTF_16BE
+
+        // 没有 0x00 交替时（中文 UTF-16），用"解出来是不是一堆控制字符"来判断。
+        val le = controlRatio(String(bytes, 0, n - n % 2, Charsets.UTF_16LE))
+        val be = controlRatio(String(bytes, 0, n - n % 2, Charsets.UTF_16BE))
+        return when {
+            le < 0.02 && be > 0.10 -> Charsets.UTF_16LE
+            be < 0.02 && le > 0.10 -> Charsets.UTF_16BE
+            else -> null
+        }
+    }
+
+    private fun controlRatio(text: String): Double {
+        if (text.isEmpty()) return 1.0
+        var bad = 0
+        for (ch in text) {
+            val code = ch.code
+            val ok = code == 0x09 || code == 0x0A || code == 0x0D || code in 0x20..0x7E ||
+                code in 0x4E00..0x9FFF || code in 0x3000..0x303F || code in 0xFF00..0xFFEF
+            if (!ok) bad++
+        }
+        return bad.toDouble() / text.length
     }
 
     /** 从文件头解析声明编码（EPUB 的 XHTML / OPF / NCX）。 */
