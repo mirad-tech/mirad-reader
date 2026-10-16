@@ -103,6 +103,13 @@ class ImportPipeline(
 
     // ------------------------------------------------------------------ 单个文件
 
+    /** 内容指纹一致才算重复；任一侧读不出来就保守地**不判定为重复**（宁可多导入一份，也不静默丢书）。 */
+    private fun sameContent(incoming: File, existing: com.mirad.reader.data.db.entity.BookEntity): Boolean {
+        val mine = FileFingerprint.of(incoming) ?: return false
+        val theirs = FileFingerprint.of(books.originalFileOf(existing)) ?: return false
+        return mine == theirs
+    }
+
     private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean) {
         val token = UUID.randomUUID().toString()
         var insertedBookId: Long? = null
@@ -119,12 +126,14 @@ class ImportPipeline(
 
             if (!force) {
                 val duplicate = books.findDuplicate(displayTitle, size)
-                if (duplicate != null) {
+                // 同名同大小**不足以**判定重复：还要内容指纹一致，
+                // 否则"同名同长度的不同书"会被静默跳过，用户以为导入失败。
+                if (duplicate != null && sameContent(target, duplicate)) {
                     paths.deleteBookFiles(token, null)
                     updateItem(itemId) {
                         it.copy(
                             stage = ImportStage.SKIPPED,
-                            message = "书架中已有同名同大小书籍《${duplicate.title}》",
+                            message = "书架中已有同一本书《${duplicate.title}》",
                             progress = 1f
                         )
                     }
