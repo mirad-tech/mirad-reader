@@ -289,6 +289,11 @@ private fun ReaderContent(
     var animating by remember { mutableStateOf(false) }
 
     fun performTurn(delta: Int) {
+        // 上下滚动模式：点击左右两侧按屏平滑滚动，不整页跳（翻页动画也不适用）
+        if (config.pageMode == PageMode.SCROLL) {
+            session.scrollStep(delta)
+            return
+        }
         val view = session.webView
         val useOverlay = config.pageAnim == PageAnim.COVER && view != null && state.ready && !animating
         if (!useOverlay) {

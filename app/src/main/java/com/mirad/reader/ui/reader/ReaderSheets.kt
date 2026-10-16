@@ -268,53 +268,20 @@ fun ReaderSettingsSheet(
         }
     }
 
-    SheetScaffold(title = "阅读设置", subtitle = "只对当前这本书生效", onDismiss = onDismiss, fillHeight = true) {
+    // 只占屏幕下半部分：调字号/行距时上半屏还能看到正文，改了立刻能看出效果。
+    SheetScaffold(
+        title = "阅读设置",
+        subtitle = "只对当前这本书生效",
+        onDismiss = onDismiss,
+        fillHeight = true,
+        maxHeightFraction = 0.62f
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.xl)
         ) {
-            // 亮度放最前：调亮度是最频繁的操作，不该让人翻到底
-            SettingCard(title = "亮度") {
-                SettingSwitchRow(
-                    label = "跟随系统亮度",
-                    subtitle = "关闭后可单独调节阅读时的屏幕亮度",
-                    checked = config.brightness < 0f,
-                    onCheckedChange = { follow ->
-                        onChange { it.copy(brightness = if (follow) -1f else 0.65f) }
-                    }
-                )
-                if (config.brightness >= 0f) {
-                    LabeledSlider(
-                        label = "屏幕亮度",
-                        value = config.brightness,
-                        valueText = "${(config.brightness * 100).toInt()}%",
-                        range = 0.05f..1f,
-                        onChange = { value -> onChange { it.copy(brightness = value) } }
-                    )
-                }
-            }
-
-            SettingCard(title = "阅读方式") {
-                SegmentedRow(
-                    options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
-                    selected = config.pageMode,
-                    onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
-                )
-                ChoiceRow(
-                    label = "翻页动画",
-                    options = listOf(
-                        PageAnim.NONE to "无动画",
-                        PageAnim.SLIDE to "滑动",
-                        PageAnim.COVER to "覆盖"
-                    ),
-                    selected = config.pageAnim,
-                    onSelect = { anim -> onChange { it.copy(pageAnim = anim) } },
-                    columns = 3
-                )
-            }
-
             FontSection(
                 config = config,
                 customFonts = fonts,
@@ -385,6 +352,46 @@ fun ReaderSettingsSheet(
                     label = "加粗正文",
                     checked = config.boldText,
                     onCheckedChange = { value -> onChange { it.copy(boldText = value) } }
+                )
+            }
+
+            // 亮度与阅读方式放在排版之后：先看得见字，再管看的方式
+            SettingCard(title = "亮度") {
+                SettingSwitchRow(
+                    label = "跟随系统亮度",
+                    subtitle = "关闭后可单独调节阅读时的屏幕亮度",
+                    checked = config.brightness < 0f,
+                    onCheckedChange = { follow ->
+                        onChange { it.copy(brightness = if (follow) -1f else 0.65f) }
+                    }
+                )
+                if (config.brightness >= 0f) {
+                    LabeledSlider(
+                        label = "屏幕亮度",
+                        value = config.brightness,
+                        valueText = "${(config.brightness * 100).toInt()}%",
+                        range = 0.05f..1f,
+                        onChange = { value -> onChange { it.copy(brightness = value) } }
+                    )
+                }
+            }
+
+            SettingCard(title = "阅读方式") {
+                SegmentedRow(
+                    options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
+                    selected = config.pageMode,
+                    onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
+                )
+                ChoiceRow(
+                    label = "翻页动画",
+                    options = listOf(
+                        PageAnim.NONE to "无动画",
+                        PageAnim.SLIDE to "滑动",
+                        PageAnim.COVER to "覆盖"
+                    ),
+                    selected = config.pageAnim,
+                    onSelect = { anim -> onChange { it.copy(pageAnim = anim) } },
+                    columns = 3
                 )
             }
 

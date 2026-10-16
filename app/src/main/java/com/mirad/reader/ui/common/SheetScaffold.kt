@@ -45,11 +45,13 @@ fun SheetScaffold(
     modifier: Modifier = Modifier,
     /** true：内容撑满弹层剩余高度（适合列表）；false：按内容高度收缩（适合操作面板）。 */
     fillHeight: Boolean = false,
+    /** 弹层最大高度占屏幕比例；阅读设置这类需要"边调边看"的面板要调小。 */
+    maxHeightFraction: Float = Sizes.sheetMaxHeightFraction,
     content: @Composable ColumnScope.() -> Unit
 ) {
     // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * Sizes.sheetMaxHeightFraction
+    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = modifier

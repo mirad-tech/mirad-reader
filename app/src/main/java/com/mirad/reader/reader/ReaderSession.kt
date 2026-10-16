@@ -95,7 +95,16 @@ class ReaderSession(
         onReady = { pages, textLength ->
             _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
         },
-        onState = { page, pages, offset, textLength ->
+        onState = state@{ page, pages, offset, textLength ->
+            val current = _state.value
+            // 上下滚动模式下，JS 滚到本章底部时会报 page == pages：接下一章，别把越界页号写进状态。
+            if (current.config.pageMode == PageMode.SCROLL && pages > 1 && page >= pages) {
+                if (current.chapterIndex < chapters.size - 1) {
+                    gotoChapter(current.chapterIndex + 1, 0)
+                }
+                return@state
+            }
+            val pageChanged = current.page != page
             _state.update {
                 it.copy(
                     page = page,
@@ -107,7 +116,8 @@ class ReaderSession(
             }
             recomputePercent()
             scheduleProgressSave()
-            refreshBookmarkFlag()
+            // 书签标记要查库；滚动时页号会频繁变化，只在页号真的变了时才查，否则滚动会顿。
+            if (pageChanged || !current.ready) refreshBookmarkFlag()
         },
         onSelection = { start, end, text ->
             _state.update { it.copy(selection = TextSelection(start, end, text)) }
@@ -396,6 +406,18 @@ class ReaderSession(
 
     fun scrollBy(deltaY: Float) {
         evaluate("window.scrollBy(0, ${deltaY.toInt()});")
+    }
+
+    /**
+     * 「翻一屏」：上下滚动模式下平滑滚动，左右翻页模式下翻页。
+     * 点击左右两侧时按模式分流，避免上下滚动时还在整页跳。
+     */
+    fun scrollStep(direction: Int) {
+        if (_state.value.config.pageMode != PageMode.SCROLL) {
+            turnPage(direction)
+            return
+        }
+        evaluate("if (window.MiradReader) { MiradReader.scrollStep($direction); }")
     }
 
     // ------------------------------------------------------------------ 标注

@@ -38,7 +38,8 @@ object ReaderCss {
         }
         sb.append(":root{--mirad-bg:").append(bg).append(";--mirad-fg:").append(fg)
             .append(";--mirad-fg-2:").append(secondary).append(";}\n")
-        sb.append("html{background:").append(bg).append(" !important;}\n")
+        sb.append("html{background:").append(bg).append(" !important;}")
+            .append("-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;}\n")
         sb.append("body{background:transparent !important;color:").append(fg).append(" !important;")
         sb.append("font-size:").append(config.fontSizeSp).append("px;")
         sb.append("line-height:").append(config.lineHeightMultiplier).append(";")

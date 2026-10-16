@@ -487,13 +487,44 @@
     }
 
     var scrollTimer = null;
+    var lastReportedPage = -1;
+    var bottomSent = false;
+
+    /** 是否已经滚到本章底部（留 8px 容差，避免小数像素永远差一点）。 */
+    function atBottom() {
+        var top = window.scrollY || 0;
+        var view = viewportHeight();
+        var bodyHeight = document.body ? document.body.scrollHeight : 0;
+        var total = Math.max(document.documentElement.scrollHeight, bodyHeight);
+        return total > 0 && top + view >= total - 8;
+    }
+
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
-            state.page = Math.floor((window.scrollY || 0) / viewportHeight());
+            if (atBottom()) {
+                // 本章到底：通知原生层接下一章，只发一次，避免反复触发。
+                if (!bottomSent) {
+                    bottomSent = true;
+                    var b = bridge();
+                    if (b) {
+                        try {
+                            b.onState(state.pages, state.pages, state.textLength, state.textLength, window.scrollY || 0);
+                        } catch (e) {
+                        }
+                    }
+                }
+                return;
+            }
+            bottomSent = false;
+            var page = Math.floor((window.scrollY || 0) / viewportHeight());
+            // 页号没变就不回报，滚动过程不打扰原生层（否则每帧穿透到 Compose 会顿）。
+            if (page === lastReportedPage) return;
+            lastReportedPage = page;
+            state.page = page;
             reportState();
-        }, 120);
+        }, 140);
     }
 
     document.addEventListener('scroll', onScroll, true);
@@ -617,6 +648,18 @@
 
         prevPage: function () {
             return window.MiradReader.gotoPage(state.page - 1, true);
+        },
+
+        /**
+         * 上下滚动模式下的"翻一屏"：按 85% 屏高平滑滚动，而不是整页跳，
+         * 这样点击左右两侧的体感与手指滑动一致。
+         */
+        scrollStep: function (direction) {
+            var h = viewportHeight();
+            var max = Math.max(0, document.documentElement.scrollHeight - h);
+            var target = (window.scrollY || 0) + (direction >= 0 ? 1 : -1) * h * 0.85;
+            animateScrollTop(Math.max(0, Math.min(target, max)));
+            return true;
         },
 
         gotoPage: function (page, animate) {
