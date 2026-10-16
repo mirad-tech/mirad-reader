@@ -54,6 +54,7 @@ fun NotesScreen(
     var highlights by remember { mutableStateOf<List<HighlightEntity>>(emptyList()) }
     var bookmarks by remember { mutableStateOf<List<BookmarkEntity>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var chapterTotals by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var pendingExport by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -61,6 +62,18 @@ fun NotesScreen(
         highlights = container.notes.allHighlights().sortedByDescending { it.createdAt }
         bookmarks = container.notes.allBookmarks().sortedByDescending { it.createdAt }
         titles = container.books.observeShelf().first().associate { it.book.id to it.book.title }
+        chapterTotals = container.books.observeShelf().first()
+            .associate { it.book.id to it.book.totalChapters }
+    }
+
+    /**
+     * 章号越界 = 这本书重新识别编码/重新分章过，笔记记的是旧章号。
+     * 全局列表里过去对此毫无提示，用户点进去只会落到不相干的位置。
+     * （更细的"偏移漂移"需要每章长度，待接入章节长度接口后再补。）
+     */
+    fun anchorOutOfRange(bookId: Long, chapterIndex: Int): Boolean {
+        val total = chapterTotals[bookId] ?: return false
+        return chapterIndex < 0 || chapterIndex >= total
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -139,7 +152,10 @@ fun NotesScreen(
                         ListRow(
                             title = item.text,
                             subtitle = item.note,
-                            meta = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章",
+                            meta = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章" +
+                                if (anchorOutOfRange(item.bookId, item.chapterIndex)) {
+                                    " · ${com.mirad.reader.core.model.NoteAnchor.STALE_HINT}"
+                                } else "",
                             trailing = {
                                 TextButton(onClick = {
                                     scope.launch {
