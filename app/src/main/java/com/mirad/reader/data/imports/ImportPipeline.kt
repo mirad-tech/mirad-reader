@@ -117,6 +117,19 @@ class ImportPipeline(
             updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
             val extension = guessExtension(source)
             val target = paths.originalFile(token, extension)
+            // 拷前预检：旧实现是整份拷贝完成后才在 prepareTxt 里校验大小，
+            // 于是一个超大 TXT 会先把内部存储写满、再报"文件过大"。
+            val declaredSize = withContext(Dispatchers.IO) { runCatching { sizeOf(source) }.getOrDefault(0L) }
+            if (declaredSize > MAX_TXT_BYTES) {
+                updateItem(itemId) {
+                    it.copy(
+                        stage = ImportStage.FAILED,
+                        message = "文件过大（上限 ${MAX_TXT_BYTES / 1024 / 1024}MB），未开始导入",
+                        progress = 1f
+                    )
+                }
+                return
+            }
             val size = withContext(Dispatchers.IO) {
                 copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
             }
@@ -367,6 +380,11 @@ class ImportPipeline(
                     if (read <= 0) break
                     output.write(buffer, 0, read)
                     copied += read
+                    // 来源大小不可信（querySize 可能返回 0）时也要兜住：超限立即中止并删掉半截文件
+                    if (copied > MAX_TXT_BYTES) {
+                        runCatching { target.delete() }
+                        throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
+                    }
                     if (total > 0) onProgress((copied.toFloat() / total).coerceIn(0f, 1f))
                 }
             }
