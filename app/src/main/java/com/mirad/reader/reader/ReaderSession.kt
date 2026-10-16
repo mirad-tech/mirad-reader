@@ -9,7 +9,10 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.mirad.reader.AppContainer
+import com.mirad.reader.core.model.BackgroundType
+import com.mirad.reader.core.model.BuiltinBackgrounds
 import com.mirad.reader.core.model.EpubLayoutMode
+import com.mirad.reader.core.model.FontFamilyKey
 import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ProgressMath
@@ -237,20 +240,60 @@ class ReaderSession(
     /** 更新配置：仅注入样式，不重载章节（保留当前位置）。 */
     fun updateConfig(config: ReaderConfig) {
         val palette = ThemePaletteResolver.resolve(config, systemDark)
-        val bgImageUrl = if (config.backgroundType == com.mirad.reader.core.model.BackgroundType.IMAGE) {
-            config.backgroundImageUri?.takeIf { File(it).exists() }?.let {
-                resources.backgroundImagePath = it
-                ReaderResourceProvider.backgroundUrl(book.id)
+
+        // 背景：内置素材优先，其次用户选的图片
+        val bgImageUrl = if (config.backgroundType == BackgroundType.IMAGE) {
+            val builtin = BuiltinBackgrounds.fromUri(config.backgroundImageUri)
+            val filePath = config.backgroundImageUri?.takeIf { it.isNotBlank() && File(it).exists() }
+            when {
+                builtin != null -> {
+                    resources.backgroundAssetName = builtin.assetName
+                    resources.backgroundImagePath = null
+                    ReaderResourceProvider.backgroundUrl(book.id)
+                }
+                filePath != null -> {
+                    resources.backgroundImagePath = filePath
+                    resources.backgroundAssetName = null
+                    ReaderResourceProvider.backgroundUrl(book.id)
+                }
+                else -> {
+                    resources.backgroundAssetName = null
+                    resources.backgroundImagePath = null
+                    null
+                }
             }
         } else {
+            resources.backgroundAssetName = null
             resources.backgroundImagePath = null
             null
         }
-        val fontUrl = config.customFontPath?.takeIf { it.isNotBlank() && File(it).exists() }?.let {
-            resources.fontFilePath = it
-            ReaderResourceProvider.fontUrl(book.id)
+
+        // 字体：内置字体优先，其次用户导入的字体文件
+        val fontUrl = if (config.fontFamily == FontFamilyKey.CUSTOM) {
+            val asset = config.customFontAsset?.takeIf { it.isNotBlank() }
+            val path = config.customFontPath?.takeIf { it.isNotBlank() && File(it).exists() }
+            when {
+                asset != null -> {
+                    resources.fontAssetName = asset
+                    resources.fontFilePath = null
+                    ReaderResourceProvider.fontUrl(book.id)
+                }
+                path != null -> {
+                    resources.fontFilePath = path
+                    resources.fontAssetName = null
+                    ReaderResourceProvider.fontUrl(book.id)
+                }
+                else -> {
+                    resources.fontAssetName = null
+                    resources.fontFilePath = null
+                    null
+                }
+            }
+        } else {
+            resources.fontAssetName = null
+            resources.fontFilePath = null
+            null
         }
-        if (fontUrl == null) resources.fontFilePath = null
 
         val css = ReaderCss.themeCss(
             config = config,

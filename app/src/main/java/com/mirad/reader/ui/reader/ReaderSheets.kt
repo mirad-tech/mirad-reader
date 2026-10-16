@@ -66,8 +66,10 @@ import com.mirad.reader.data.repo.SearchProgress
 import com.mirad.reader.reader.ReaderSession
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
+import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.ChoiceRow
 import com.mirad.reader.ui.common.ColorDotRow
+import com.mirad.reader.ui.common.FontSection
 import com.mirad.reader.ui.common.LabeledSlider
 import com.mirad.reader.ui.common.SectionTitle
 import kotlinx.coroutines.Dispatchers
@@ -182,6 +184,26 @@ fun ReaderSettingsSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
+    var fonts by remember { mutableStateOf(container.fonts.available()) }
+
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
+                if (imported != null) {
+                    fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+                    onChange {
+                        it.copy(
+                            fontFamily = FontFamilyKey.CUSTOM,
+                            customFontAsset = null,
+                            customFontPath = imported.filePath
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -275,17 +297,17 @@ fun ReaderSettingsSheet(
                 steps = 16,
                 onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
             )
-            ChoiceRow(
-                label = "字体",
-                options = listOf(
-                    FontFamilyKey.SYSTEM to "系统",
-                    FontFamilyKey.SERIF to "宋体",
-                    FontFamilyKey.SANS to "黑体",
-                    FontFamilyKey.MONO to "等宽"
-                ),
-                selected = config.fontFamily,
-                onSelect = { key -> onChange { it.copy(fontFamily = key) } },
-                columns = 4
+            FontSection(
+                config = config,
+                customFonts = fonts,
+                onChange = onChange,
+                onImport = { fontPicker.launch(arrayOf("*/*")) },
+                onDelete = { font ->
+                    scope.launch {
+                        withContext(Dispatchers.IO) { container.fonts.delete(font) }
+                        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+                    }
+                }
             )
             ChoiceRow(
                 label = "对齐",
@@ -306,58 +328,11 @@ fun ReaderSettingsSheet(
                 )
             }
 
-            SectionTitle("背景与主题")
-            ChoiceRow(
-                label = "主题",
-                options = listOf(
-                    ThemeKey.LIGHT to "白",
-                    ThemeKey.PAPER to "纸色",
-                    ThemeKey.SEPIA to "米黄",
-                    ThemeKey.GREEN to "护眼",
-                    ThemeKey.DARK to "夜间",
-                    ThemeKey.BLACK to "纯黑",
-                    ThemeKey.SYSTEM to "跟随系统"
-                ),
-                selected = config.theme,
-                onSelect = { key -> onChange { it.copy(theme = key) } },
-                columns = 4
+            BackgroundSection(
+                config = config,
+                onChange = onChange,
+                onPickImage = { imagePicker.launch(arrayOf("image/*")) }
             )
-            ChoiceRow(
-                label = "背景类型",
-                options = listOf(
-                    BackgroundType.COLOR to "纯色",
-                    BackgroundType.IMAGE to "图片"
-                ),
-                selected = config.backgroundType,
-                onSelect = { key -> onChange { it.copy(backgroundType = key) } },
-                columns = 2
-            )
-            if (config.backgroundType == BackgroundType.IMAGE) {
-                OutlinedButton(
-                    onClick = { imagePicker.launch(arrayOf("image/*")) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("选择背景图片") }
-                Spacer(modifier = Modifier.height(8.dp))
-                LabeledSlider(
-                    label = "背景不透明度",
-                    value = config.backgroundImageAlpha,
-                    valueText = String.format("%.2f", config.backgroundImageAlpha),
-                    range = 0.1f..1f,
-                    onChange = { value -> onChange { it.copy(backgroundImageAlpha = value) } }
-                )
-            } else {
-                ColorDotRow(
-                    colors = listOf(
-                        0xFFFFFFFF.toInt(), 0xFFF5F1E6.toInt(), 0xFFEDE0C8.toInt(),
-                        0xFFCCE8CF.toInt(), 0xFFB8D8E8.toInt(), 0xFF1A1C1E.toInt(),
-                        0xFF000000.toInt()
-                    ),
-                    selected = config.backgroundColor,
-                    onSelect = { color ->
-                        onChange { it.copy(backgroundColor = color, theme = ThemeKey.CUSTOM) }
-                    }
-                )
-            }
 
             SectionTitle("屏幕")
             Row(verticalAlignment = Alignment.CenterVertically) {

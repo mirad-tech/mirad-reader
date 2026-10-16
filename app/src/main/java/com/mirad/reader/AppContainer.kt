@@ -3,6 +3,7 @@ package com.mirad.reader
 import android.app.Application
 import androidx.room.Room
 import com.mirad.reader.data.AppPaths
+import com.mirad.reader.data.FontManager
 import com.mirad.reader.data.db.AppDatabase
 import com.mirad.reader.data.imports.ImportPipeline
 import com.mirad.reader.data.repo.BookRepository
@@ -53,6 +54,8 @@ class AppContainer(app: Application) {
     val groups: GroupRepository = GroupRepository(database.groupDao())
 
     val textProvider: ChapterTextProvider = ChapterTextProvider(paths)
+
+    val fonts: FontManager = FontManager(app, paths)
 
     val search: SearchRepository = SearchRepository(textProvider)
 

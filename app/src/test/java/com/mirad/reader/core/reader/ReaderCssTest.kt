@@ -64,6 +64,52 @@ class ReaderCssTest {
     }
 
     @Test
+    fun readingFontPresetsAreMappedIntoTheStylesheet() {
+        val kaiti = ReaderCss.themeCss(ReaderConfig.DEFAULT.copy(fontFamily = FontFamilyKey.KAITI), palette)
+        assertTrue(kaiti.contains("KaiTi"))
+
+        val light = ReaderCss.themeCss(ReaderConfig.DEFAULT.copy(fontFamily = FontFamilyKey.LIGHT), palette)
+        assertTrue(light.contains("font-weight:300"))
+
+        val serif = ReaderCss.themeCss(ReaderConfig.DEFAULT.copy(fontFamily = FontFamilyKey.SERIF), palette)
+        assertTrue(!serif.contains("font-weight:300"))
+    }
+
+    @Test
+    fun backgroundImageOpacityIsWiredIntoTheOverlay() {
+        val transparent = ReaderCss.themeCss(
+            ReaderConfig.DEFAULT.copy(
+                backgroundType = com.mirad.reader.core.model.BackgroundType.IMAGE,
+                backgroundImageUri = "builtin:paper",
+                backgroundImageAlpha = 1f
+            ),
+            palette,
+            backgroundImageUrl = "https://mirad.local/book/1/bg"
+        )
+        // 100% 不透明度 → 覆盖层完全透明
+        assertTrue(transparent.contains("rgba(245,241,230,0.0)"))
+
+        val faded = ReaderCss.themeCss(
+            ReaderConfig.DEFAULT.copy(
+                backgroundType = com.mirad.reader.core.model.BackgroundType.IMAGE,
+                backgroundImageUri = "builtin:paper",
+                backgroundImageAlpha = 0.25f
+            ),
+            palette,
+            backgroundImageUrl = "https://mirad.local/book/1/bg"
+        )
+        // 25% 不透明度 → 主题底色覆盖 75%
+        assertTrue(faded.contains("rgba(245,241,230,0.75)"))
+        assertTrue(faded.contains("background-image:url('https://mirad.local/book/1/bg')"))
+    }
+
+    @Test
+    fun rgbTripletHelper() {
+        assertEquals("31,111,92", ReaderCss.argbToRgbTriplet(0xFF1F6F5C.toInt()))
+        assertEquals("245,241,230", ReaderCss.argbToRgbTriplet(0xFFF5F1E6.toInt()))
+    }
+
+    @Test
     fun colorIsConvertedToRgb() {
         assertEquals("rgb(31,111,92)", ReaderCss.argbToCss(0xFF1F6F5C.toInt()))
     }

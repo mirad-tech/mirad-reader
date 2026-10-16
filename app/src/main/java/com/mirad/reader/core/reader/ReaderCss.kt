@@ -1,8 +1,8 @@
 package com.mirad.reader.core.reader
 
 import com.mirad.reader.core.model.EpubLayoutMode
-import com.mirad.reader.core.model.FontFamilyKey
 import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.model.ReadingFonts
 import com.mirad.reader.core.model.TextAlignKey
 import com.mirad.reader.core.model.ThemePalette
 
@@ -44,12 +44,20 @@ object ReaderCss {
         sb.append("line-height:").append(config.lineHeightMultiplier).append(";")
         sb.append("letter-spacing:").append(config.letterSpacingEm).append("em;")
         sb.append("font-family:").append(fontStack(config, customFontUrl)).append(";")
+        ReadingFonts.weightOf(config.fontFamily)?.let { weight ->
+            sb.append("font-weight:").append(weight).append(";")
+        }
         sb.append("margin:0;padding:0;")
         sb.append("-webkit-text-size-adjust:100%;word-wrap:break-word;}\n")
 
         if (useImageBg) {
             sb.append("html{background-image:url('").append(backgroundImageUrl).append("') !important;")
                 .append("background-size:cover;background-position:center;background-repeat:no-repeat;}\n")
+            // 用主题底色按不透明度做一层半透明覆盖：1 表示图片完全可见，0 表示退化为纯色
+            val overlay = (1f - config.backgroundImageAlpha.coerceIn(0f, 1f))
+            val rgb = argbToRgbTriplet(palette.background)
+            sb.append("body{background:rgba(").append(rgb).append(",").append(overlay).append(") !important;}\n")
+        } else {
             sb.append("body{background:transparent !important;}\n")
         }
 
@@ -97,22 +105,21 @@ object ReaderCss {
         return sb.toString()
     }
 
-    /** 字体栈。 */
-    fun fontStack(config: ReaderConfig, customFontUrl: String?): String {
-        val fallback = "\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif"
-        return when (config.fontFamily) {
-            FontFamilyKey.SERIF -> "\"Noto Serif CJK SC\",\"Source Han Serif SC\",\"Songti SC\",serif,$fallback"
-            FontFamilyKey.SANS -> fallback
-            FontFamilyKey.MONO -> "monospace,\"Noto Sans Mono CJK SC\",$fallback"
-            FontFamilyKey.CUSTOM ->
-                if (!customFontUrl.isNullOrBlank()) "\"MiradCustom\",$fallback" else fallback
-            else -> "\"Noto Sans CJK SC\",\"Source Han Sans SC\",\"PingFang SC\",\"Microsoft YaHei\",sans-serif"
-        }
-    }
+    /** 字体栈（委托给 [ReadingFonts]，便于统一维护与测试）。 */
+    fun fontStack(config: ReaderConfig, customFontUrl: String?): String =
+        ReadingFonts.stackOf(config.fontFamily, customFontUrl)
 
     /** 自定义字体的 @font-face 片段。 */
     fun fontFaceCss(url: String): String =
         "@font-face{font-family:'MiradCustom';src:url('$url');font-display:swap;}\n"
+
+    /** "r,g,b" 三元组，供 rgba() 拼装使用。 */
+    fun argbToRgbTriplet(argb: Int): String {
+        val r = (argb shr 16) and 0xFF
+        val g = (argb shr 8) and 0xFF
+        val b = argb and 0xFF
+        return "$r,$g,$b"
+    }
 
     fun argbToCss(argb: Int): String {
         val r = (argb shr 16) and 0xFF

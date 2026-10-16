@@ -37,6 +37,10 @@ object FontFamilyKey {
     const val SYSTEM = "SYSTEM"
     const val SERIF = "SERIF"
     const val SANS = "SANS"
+    const val KAITI = "KAITI"
+    const val FANGSONG = "FANGSONG"
+    const val ROUND = "ROUND"
+    const val LIGHT = "LIGHT"
     const val MONO = "MONO"
     const val CUSTOM = "CUSTOM"
 }
@@ -74,7 +78,10 @@ object OrientationKey {
 data class ReaderConfig(
     // ---- 字体与排版 ----
     val fontFamily: String = FontFamilyKey.SYSTEM,
+    /** 用户导入的字体文件路径（fontFamily = CUSTOM 时生效）。 */
     @SerialName("customFontPath") val customFontPath: String? = null,
+    /** 内置在 assets/fonts 下的字体（fontFamily = CUSTOM 时生效）。 */
+    val customFontAsset: String? = null,
     val fontSizeSp: Float = 18f,
     val lineHeightMultiplier: Float = 1.7f,
     val paragraphSpacingEm: Float = 0.55f,

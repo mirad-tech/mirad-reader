@@ -45,8 +45,10 @@ import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.TapZoneKey
 import com.mirad.reader.core.model.TextAlignKey
 import com.mirad.reader.core.model.ThemeKey
+import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.ChoiceRow
 import com.mirad.reader.ui.common.ColorDotRow
+import com.mirad.reader.ui.common.FontSection
 import com.mirad.reader.ui.common.LabeledSlider
 import com.mirad.reader.ui.common.SectionTitle
 import kotlinx.coroutines.Dispatchers
@@ -63,15 +65,35 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var config by remember { mutableStateOf(ReaderConfig.DEFAULT) }
+    var fonts by remember { mutableStateOf(container.fonts.available()) }
 
     LaunchedEffect(Unit) {
         config = container.settings.currentGlobal()
+        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
     }
 
     fun update(transform: (ReaderConfig) -> ReaderConfig) {
         val updated = transform(config)
         config = updated
         scope.launch { container.settings.saveGlobal(updated) }
+    }
+
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
+                if (imported != null) {
+                    fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+                    update {
+                        it.copy(
+                            fontFamily = FontFamilyKey.CUSTOM,
+                            customFontAsset = null,
+                            customFontPath = imported.filePath
+                        )
+                    }
+                }
+            }
+        }
     }
 
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -178,17 +200,17 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
                 steps = 16,
                 onChange = { value -> update { it.copy(horizontalPaddingDp = value.toInt()) } }
             )
-            ChoiceRow(
-                label = "字体",
-                options = listOf(
-                    FontFamilyKey.SYSTEM to "系统",
-                    FontFamilyKey.SERIF to "宋体",
-                    FontFamilyKey.SANS to "黑体",
-                    FontFamilyKey.MONO to "等宽"
-                ),
-                selected = config.fontFamily,
-                onSelect = { key -> update { it.copy(fontFamily = key) } },
-                columns = 4
+            FontSection(
+                config = config,
+                customFonts = fonts,
+                onChange = { transform -> update(transform) },
+                onImport = { fontPicker.launch(arrayOf("*/*")) },
+                onDelete = { font ->
+                    scope.launch {
+                        withContext(Dispatchers.IO) { container.fonts.delete(font) }
+                        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+                    }
+                }
             )
             ChoiceRow(
                 label = "对齐",
@@ -202,45 +224,11 @@ fun SettingsScreen(container: AppContainer, onBack: () -> Unit) {
                 columns = 3
             )
 
-            SectionTitle("默认主题与背景")
-            ChoiceRow(
-                label = "主题",
-                options = listOf(
-                    ThemeKey.LIGHT to "白",
-                    ThemeKey.PAPER to "纸色",
-                    ThemeKey.SEPIA to "米黄",
-                    ThemeKey.GREEN to "护眼",
-                    ThemeKey.DARK to "夜间",
-                    ThemeKey.BLACK to "纯黑",
-                    ThemeKey.SYSTEM to "跟随系统"
-                ),
-                selected = config.theme,
-                onSelect = { key -> update { it.copy(theme = key) } },
-                columns = 4
+            BackgroundSection(
+                config = config,
+                onChange = { transform -> update(transform) },
+                onPickImage = { imagePicker.launch(arrayOf("image/*")) }
             )
-            ChoiceRow(
-                label = "背景类型",
-                options = listOf(BackgroundType.COLOR to "纯色", BackgroundType.IMAGE to "图片"),
-                selected = config.backgroundType,
-                onSelect = { key -> update { it.copy(backgroundType = key) } },
-                columns = 2
-            )
-            if (config.backgroundType == BackgroundType.IMAGE) {
-                OutlinedButton(
-                    onClick = { imagePicker.launch(arrayOf("image/*")) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("选择默认背景图片") }
-            } else {
-                ColorDotRow(
-                    colors = listOf(
-                        0xFFFFFFFF.toInt(), 0xFFF5F1E6.toInt(), 0xFFEDE0C8.toInt(),
-                        0xFFCCE8CF.toInt(), 0xFFB8D8E8.toInt(), 0xFF1A1C1E.toInt(),
-                        0xFF000000.toInt()
-                    ),
-                    selected = config.backgroundColor,
-                    onSelect = { color -> update { it.copy(backgroundColor = color, theme = ThemeKey.CUSTOM) } }
-                )
-            }
 
             SectionTitle("自动夜间")
             Row(verticalAlignment = Alignment.CenterVertically) {

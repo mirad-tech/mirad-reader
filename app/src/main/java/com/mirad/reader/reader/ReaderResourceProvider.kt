@@ -47,9 +47,17 @@ class ReaderResourceProvider(
     @Volatile
     var backgroundImagePath: String? = null
 
+    /** 内置背景素材（assets 内相对路径，如 backgrounds/paper.jpg）。 */
+    @Volatile
+    var backgroundAssetName: String? = null
+
     /** 自定义字体的本地绝对路径。 */
     @Volatile
     var fontFilePath: String? = null
+
+    /** 内置字体（assets 内相对路径，如 fonts/霞鹜文楷.ttf）。 */
+    @Volatile
+    var fontAssetName: String? = null
 
     fun bind(book: BookEntity, chapters: List<ChapterEntity>) {
         this.book = book
@@ -147,10 +155,18 @@ class ReaderResourceProvider(
                 assetFromZip(zipPath)
             }
             "cover" -> fileResponse(current.coverPath)
-            "bg" -> fileResponse(backgroundImagePath)
-            "font" -> fileResponse(fontFilePath)
+            "bg" -> assetResponseOrNull(backgroundAssetName) ?: fileResponse(backgroundImagePath)
+            "font" -> assetResponseOrNull(fontAssetName) ?: fileResponse(fontFilePath)
             else -> notFound()
         }
+    }
+
+    /** 从 assets 读取素材（内置背景 / 内置字体）。 */
+    private fun assetResponseOrNull(assetName: String?): WebResourceResponse? {
+        if (assetName.isNullOrBlank()) return null
+        val bytes = runCatching { context.assets.open(assetName).use { it.readBytes() } }.getOrNull()
+            ?: return null
+        return WebResourceResponse(guessMime(assetName), null, ByteArrayInputStream(bytes))
     }
 
     private fun chapterResponse(index: Int): WebResourceResponse? {
