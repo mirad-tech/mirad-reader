@@ -55,6 +55,7 @@ fun NotesScreen(
     var bookmarks by remember { mutableStateOf<List<BookmarkEntity>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var chapterTotals by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
+    var chapterLengths by remember { mutableStateOf<Map<Long, List<Int>>>(emptyMap()) }
     var pendingExport by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
 
@@ -64,16 +65,23 @@ fun NotesScreen(
         titles = container.books.observeShelf().first().associate { it.book.id to it.book.title }
         chapterTotals = container.books.observeShelf().first()
             .associate { it.book.id to it.book.totalChapters }
+        // 每章字符数：用于识别"章号仍在范围内、但正文重排后偏移已漂移"的旧锚点
+        chapterLengths = container.books.observeShelf().first().associate { shelfBook ->
+            shelfBook.book.id to container.books.getChapters(shelfBook.book.id).map { it.charCount.toInt() }
+        }
     }
 
     /**
-     * 章号越界 = 这本书重新识别编码/重新分章过，笔记记的是旧章号。
-     * 全局列表里过去对此毫无提示，用户点进去只会落到不相干的位置。
-     * （更细的"偏移漂移"需要每章长度，待接入章节长度接口后再补。）
+     * 旧锚点判定，两层：
+     * ① 章号越界——这本书重新识别编码/重新分章后，旧章号已不存在；
+     * ② 偏移超出该章当前长度——章号还在但正文重排过，锚点已漂移。
+     * 判定逻辑复用 NoteAnchor.isStale（阅读器内面板用的是同一套，文案与口径一致）。
      */
-    fun anchorOutOfRange(bookId: Long, chapterIndex: Int): Boolean {
+    fun anchorStale(bookId: Long, chapterIndex: Int, charOffset: Int): Boolean {
         val total = chapterTotals[bookId] ?: return false
-        return chapterIndex < 0 || chapterIndex >= total
+        if (chapterIndex < 0 || chapterIndex >= total) return true
+        val lengths = chapterLengths[bookId] ?: return false
+        return com.mirad.reader.core.model.NoteAnchor.isStale(chapterIndex, charOffset, lengths)
     }
 
     LaunchedEffect(Unit) { reload() }
@@ -153,7 +161,7 @@ fun NotesScreen(
                             title = item.text,
                             subtitle = item.note,
                             meta = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章" +
-                                if (anchorOutOfRange(item.bookId, item.chapterIndex)) {
+                                if (anchorStale(item.bookId, item.chapterIndex, item.startOffset)) {
                                     " · ${com.mirad.reader.core.model.NoteAnchor.STALE_HINT}"
                                 } else "",
                             trailing = {
