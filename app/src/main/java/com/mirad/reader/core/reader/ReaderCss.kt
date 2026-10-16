@@ -174,7 +174,9 @@ object ReaderCss {
             return ColumnGeometry(
                 colWidth = colW,
                 inset = ((viewportWidth - colW) / 2).coerceAtLeast(0),
-                gap = pad * 2
+                // 必须与 reader.js 的 columnGeometry() 同源：限宽居中后两侧留白大于 pad，
+                // 列间距要跟着放大，否则右侧那一列会露在留白区里（"两边都显示文字"）。
+                gap = maxOf(pad * 2, viewportWidth - colW)
             )
         }
 

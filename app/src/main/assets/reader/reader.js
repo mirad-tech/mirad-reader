@@ -188,7 +188,9 @@
             c.style.overflow = 'hidden';
             c.style.transform = 'none';
             var flowWidth = Math.max(c.scrollWidth, geo.colW);
-            state.pages = Math.max(1, Math.round((flowWidth + geo.gap) / (geo.colW + geo.gap)));
+            // 用 ceil 而不是 round：末列只要溢出一像素就说明还需要一页，
+            // round 会把"最后只剩一点点"的那一列算没，导致末列不可达。
+            state.pages = Math.max(1, Math.ceil((flowWidth + geo.gap) / (geo.colW + geo.gap)));
         } else {
             document.documentElement.style.overflow = 'auto';
             document.body.style.overflow = 'visible';
@@ -249,7 +251,10 @@
         }
         var point = nearestPoint(offset);
         if (!point) return 0;
-        return Math.max(0, Math.floor((point.pos + 1) / step()));
+        // 与 offsetAtPage 的 `pos >= page*step - PAGE_EPS` 对称：用 round 时
+        // 落在 [k*step - step/2, k*step + step/2) 都归 k，往返（锚点→页→锚点）不再漂移。
+        // 旧实现是 floor((pos+1)/step)，与反向的 -2 容差不对称，每次重排都会退 1 页。
+        return Math.max(0, Math.round(point.pos / step()));
     }
 
     function nearestPoint(offset) {
