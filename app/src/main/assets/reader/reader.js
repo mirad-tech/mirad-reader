@@ -60,6 +60,8 @@
     function columnGeometry() {
         var vw = viewportWidth();
         var pad = Math.max(0, Math.round(CFG.pad || 0));
+        var padTop = Math.max(0, Math.round(CFG.padTop || 0));
+        var padBottom = Math.max(0, Math.round(CFG.padBottom || 0));
         var minCol = 12 * 16;   // 留白不能把正文挤没
         if (vw - pad * 2 < minCol) {
             pad = Math.max(0, Math.floor((vw - minCol) / 2));
@@ -68,7 +70,17 @@
         var max = Math.round(CFG.colMax || 0);
         if (max > 0 && colW > max) colW = max;
         colW = Math.max(1, colW);
-        return { pad: pad, colW: colW, inset: Math.max(0, Math.round((vw - colW) / 2)), gap: pad * 2 };
+        // 列间距必须不小于两侧留白总量，否则限宽居中后，右侧那一列会露出在留白区里
+        // ——表现就是"两边都显示文字"。
+        var gap = Math.max(pad * 2, vw - colW);
+        return {
+            pad: pad,
+            colW: colW,
+            inset: Math.max(0, Math.round((vw - colW) / 2)),
+            gap: gap,
+            padTop: padTop,
+            padBottom: padBottom
+        };
     }
 
     /**
@@ -158,21 +170,24 @@
         if (CFG.mode === 'PAGED') {
             document.documentElement.style.overflow = 'hidden';
             document.body.style.overflow = 'hidden';
-            // 用 padding 做居中：正文列永远从 inset 开始，留白处交给背景层
-            c.style.paddingLeft = geo.inset + 'px';
-            c.style.paddingRight = geo.inset + 'px';
-            c.style.marginLeft = '0px';
-            c.style.marginRight = '0px';
+            // 用 margin 而不是 padding 做居中：
+            // padding 会被算进 scrollWidth，导致最后一页的 scrollLeft 被浏览器夹住，
+            // 视口就正好跨在两列之间——表现就是"两侧都显示文字"。
+            c.style.paddingLeft = '0px';
+            c.style.paddingRight = '0px';
+            c.style.marginLeft = geo.inset + 'px';
+            c.style.marginRight = geo.inset + 'px';
+            c.style.marginTop = geo.padTop + 'px';
             c.style.width = 'auto';
             c.style.maxWidth = 'none';
             c.style.columnWidth = geo.colW + 'px';
             c.style.columnGap = geo.gap + 'px';
             c.style.columnFill = 'auto';
             c.style.minHeight = '0';
-            c.style.height = h + 'px';
+            c.style.height = Math.max(1, h - geo.padTop - geo.padBottom) + 'px';
             c.style.overflow = 'hidden';
             c.style.transform = 'none';
-            var flowWidth = Math.max(c.scrollWidth - geo.inset * 2, geo.colW);
+            var flowWidth = Math.max(c.scrollWidth, geo.colW);
             state.pages = Math.max(1, Math.round((flowWidth + geo.gap) / (geo.colW + geo.gap)));
         } else {
             document.documentElement.style.overflow = 'auto';
@@ -186,11 +201,13 @@
             c.style.maxWidth = geo.colW + 'px';
             c.style.marginLeft = 'auto';
             c.style.marginRight = 'auto';
+            c.style.marginTop = geo.padTop + 'px';
+            c.style.marginBottom = geo.padBottom + 'px';
             c.style.height = 'auto';
             c.style.minHeight = '0';
             c.style.overflow = 'visible';
             c.style.transform = 'none';
-            state.pages = Math.max(1, Math.ceil(c.scrollHeight / h));
+            state.pages = Math.max(1, Math.ceil((c.scrollHeight + geo.padTop + geo.padBottom) / h));
         }
         buildPoints();
         state.page = Math.min(state.page, state.pages - 1);
@@ -204,21 +221,21 @@
         var rootRect = c.getBoundingClientRect();
         var points = [];
         var paged = CFG.mode === 'PAGED';
-        var base = paged ? (c.scrollLeft || 0) : (window.scrollY || 0);
         for (var i = 0; i < state.nodes.length; i++) {
             var entry = state.nodes[i];
             var el = entry.node.parentElement;
             if (!el) continue;
             var rect = el.getBoundingClientRect();
-            var pos = paged ? (rect.left - rootRect.left + (c.scrollLeft || 0))
-                            : (rect.top - rootRect.top + (window.scrollY || 0));
+            // 容器与子元素的 rect 都包含滚动偏移，两者相减即"在流中的位置"，与 scrollLeft 无关。
+            // （旧代码额外加了 scrollLeft，导致跳转后再重排时偏移↔页映射整体漂移。）
+            var pos = paged ? (rect.left - rootRect.left) : (rect.top - rootRect.top);
             if (points.length && points[points.length - 1].pos === pos) {
                 continue;
             }
             points.push({start: entry.start, pos: Math.round(pos)});
         }
         state.points = points;
-        return base;
+        return 0;
     }
 
     function step() {

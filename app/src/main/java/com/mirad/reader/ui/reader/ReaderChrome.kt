@@ -15,7 +15,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
@@ -156,11 +160,16 @@ fun ReaderBottomBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                BarAction("目录", onToc)
-                BarAction("笔记", onNotes)
-                BarAction(if (speaking) "暂停" else "朗读", onTts, active = speaking)
-                BarAction("搜索", onSearch)
-                BarAction("设置", onSettings)
+                BarAction("目录", Icons.Default.List, onToc)
+                BarAction("笔记", Icons.Default.Edit, onNotes)
+                BarAction(
+                    text = if (speaking) "暂停" else "朗读",
+                    icon = if (speaking) Icons.Default.Clear else Icons.Default.PlayArrow,
+                    onClick = onTts,
+                    active = speaking
+                )
+                BarAction("搜索", Icons.Default.Search, onSearch)
+                BarAction("设置", Icons.Default.Settings, onSettings)
             }
             Row(
                 modifier = Modifier
@@ -195,18 +204,30 @@ fun ReaderBottomBar(
 }
 
 @Composable
-private fun BarAction(text: String, onClick: () -> Unit, active: Boolean = false) {
-    Box(
+private fun BarAction(
+    text: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    onClick: () -> Unit,
+    active: Boolean = false
+) {
+    val tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = text,
+            tint = tint,
+            modifier = Modifier.size(20.dp)
+        )
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (active) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = tint
         )
     }
 }

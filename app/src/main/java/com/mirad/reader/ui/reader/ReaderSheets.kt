@@ -300,8 +300,8 @@ fun ReaderSettingsSheet(
                     label = "字号",
                     value = config.fontSizeSp,
                     valueText = "${config.fontSizeSp.toInt()} px",
-                    range = 12f..34f,
-                    steps = 21,
+                    range = 12f..60f,
+                    steps = 47,
                     onChange = { value -> onChange { it.copy(fontSizeSp = value) } }
                 )
                 LabeledSlider(

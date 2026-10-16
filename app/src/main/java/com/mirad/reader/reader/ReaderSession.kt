@@ -91,6 +91,10 @@ class ReaderSession(
     private var sessionStartedAt: Long = 0L
     private var sessionStartAbsolute: Long = 0L
 
+    /** 状态栏 / 手势条预留高度（dp），由界面按 WindowInsets 写入。 */
+    private var insetTopDp = 0
+    private var insetBottomDp = 0
+
     private val bridge = ReaderJsBridge(
         onReady = { pages, textLength ->
             _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
@@ -351,7 +355,19 @@ class ReaderSession(
             PageAnim.CURL -> "CURL"
             else -> "SLIDE"
         }
-        return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,anim:"$anim"}"""
+        return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
+            """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim"}"""
+    }
+
+    /**
+     * 系统栏预留：正文避开状态栏与手势条，但背景层仍然满屏（沉浸式不破坏）。
+     * 由界面按 WindowInsets 计算后传入。
+     */
+    fun updateInsets(topDp: Int, bottomDp: Int) {
+        if (insetTopDp == topDp && insetBottomDp == bottomDp) return
+        insetTopDp = topDp
+        insetBottomDp = bottomDp
+        if (_state.value.ready) applyConfigToWebView(_state.value.config, systemDark)
     }
 
     // ------------------------------------------------------------------ 翻页与跳转

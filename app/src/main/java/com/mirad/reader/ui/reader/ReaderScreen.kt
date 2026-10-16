@@ -77,6 +77,8 @@ import com.mirad.reader.core.model.OrientationKey
 import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ReaderConfig
+import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.systemBars
 import com.mirad.reader.core.reader.ReaderCss
 import androidx.compose.ui.platform.LocalConfiguration
 import kotlin.math.roundToInt
@@ -288,6 +290,12 @@ private fun ReaderContent(
     var overlayX by remember { mutableFloatStateOf(0f) }
     var animating by remember { mutableStateOf(false) }
 
+    fun clearOverlay() {
+        overlay = null
+        overlayX = 0f
+        animating = false
+    }
+
     fun performTurn(delta: Int) {
         // 上下滚动模式：点击左右两侧按屏平滑滚动，不整页跳（翻页动画也不适用）
         if (config.pageMode == PageMode.SCROLL) {
@@ -323,15 +331,27 @@ private fun ReaderContent(
                 addUpdateListener { overlayX = it.animatedValue as Float }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        overlay = null
-                        overlayX = 0f
-                        animating = false
+                        clearOverlay()
                         bitmap.recycle()
+                    }
+
+                    override fun onAnimationCancel(animation: android.animation.Animator) {
+                        clearOverlay()
+                        runCatching { bitmap.recycle() }
                     }
                 })
                 start()
             }
         }
+    }
+
+    // 系统栏预留：正文避开状态栏与底部手势条（沉浸式仍然保留，只是正文不贴边）
+    val systemBarInsets = androidx.compose.foundation.layout.WindowInsets.systemBars
+        .asPaddingValues()
+    val reserveTop = systemBarInsets.calculateTopPadding().value.roundToInt().coerceAtLeast(30)
+    val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt().coerceAtLeast(24)
+    androidx.compose.runtime.LaunchedEffect(reserveTop, reserveBottom) {
+        session.updateInsets(reserveTop, reserveBottom)
     }
 
     session.onTap = tap@{ x, y ->
@@ -481,7 +501,12 @@ private fun ReaderContent(
                 onSearch = { showSearch = true },
                 onTts = { if (tts.isSpeaking) tts.pause() else showTts = true },
                 speaking = tts.isSpeaking,
-                onSliderChange = { session.jumpToPercent(it) }
+                onSliderChange = {
+                    // 拖动进度条是"直接跳转"，不属于翻页：先清掉可能残留的覆盖位图，
+                    // 否则旧页会盖在新位置上，看起来就是两页文字叠在一起。
+                    clearOverlay()
+                    session.jumpToPercent(it)
+                }
             )
         }
 
@@ -569,7 +594,7 @@ private fun ReaderContent(
             chapterTitle = state.chapterTitle,
             page = state.page,
             pages = state.pages,
-            onJump = { session.jumpToPercent(it) },
+            onJump = { clearOverlay(); session.jumpToPercent(it) },
             onJumpChapter = { index ->
                 if (index in session.chapters.indices) session.gotoChapter(index)
             },
