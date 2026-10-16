@@ -92,6 +92,27 @@ class ZipEntryReader(private val zip: ZipFile) : java.io.Closeable {
     companion object {
         const val DEFAULT_MAX_BYTES = 24 * 1024 * 1024
 
+        /** 封面这类不可信来源的读取上限：zip 条目可以声明极小压缩体却解压出巨量数据。 */
+        const val MAX_COVER_BYTES = 12 * 1024 * 1024
+
+        /**
+         * 按上限读取流；超过上限返回 null。
+         * 纯逻辑（不依赖 Android），因此可以直接单测——封面解码本身依赖 BitmapFactory，测不了。
+         */
+        fun readAtMost(input: InputStream, maxBytes: Int): ByteArray? = runCatching {
+            val out = ByteArrayOutputStream()
+            val chunk = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val n = input.read(chunk)
+                if (n <= 0) break
+                total += n
+                if (total > maxBytes) return@runCatching null
+                out.write(chunk, 0, n)
+            }
+            out.toByteArray()
+        }.getOrNull()
+
         fun open(file: File): ZipEntryReader = ZipEntryReader(ZipFile(file))
 
         /** 规范化 zip 内路径。 */

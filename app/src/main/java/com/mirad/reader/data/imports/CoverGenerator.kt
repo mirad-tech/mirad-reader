@@ -71,8 +71,16 @@ object CoverGenerator {
     }.getOrDefault(false)
 
     /** 从输入流转存封面（自动降采样，避免大图 OOM）。 */
-    fun saveCover(input: InputStream, out: File, maxSize: Int = 900): Boolean = runCatching {
-        val bytes = input.use { it.readBytes() }
+    fun saveCover(
+        input: InputStream,
+        out: File,
+        maxSize: Int = 900,
+        maxBytes: Int = com.mirad.reader.core.epub.ZipEntryReader.MAX_COVER_BYTES
+    ): Boolean = runCatching {
+        // 按字节上限读取：封面条目可能"压缩体很小、解压后极大"（zip bomb），
+        // 旧实现直接 readBytes() 会先吃爆内存/写满磁盘。
+        val bytes = input.use { com.mirad.reader.core.epub.ZipEntryReader.readAtMost(it, maxBytes) }
+            ?: return false
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false

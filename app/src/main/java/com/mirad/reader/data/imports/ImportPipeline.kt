@@ -282,8 +282,10 @@ class ImportPipeline(
         if (coverHref != null) {
             runCatching {
                 ZipEntryReader.open(target).use { zipReader ->
-                    zipReader.openStream(coverHref)?.use { input ->
-                        hasCover = CoverGenerator.saveCover(input, coverFile)
+                    if (zipReader.sizeOf(coverHref) in 1..ZipEntryReader.MAX_COVER_BYTES.toLong()) {
+                        zipReader.openStream(coverHref)?.use { input ->
+                            hasCover = CoverGenerator.saveCover(input, coverFile)
+                        }
                     }
                 }
             }
