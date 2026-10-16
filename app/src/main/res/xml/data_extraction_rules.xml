@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用内不保存任何需要随系统备份/换机迁移的内容：书库原文件、正文、进度、笔记都只存本机
+  （见 README「数据只存在你的设备上」）。allowBackup=false 关掉云备份，
+  这里再把「设备间迁移」也一并排除，避免 Android 12+ 通过 D2D 通道把整库带走。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
