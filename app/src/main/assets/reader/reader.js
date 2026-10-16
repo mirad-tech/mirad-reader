@@ -617,6 +617,26 @@
             window.MiradReader.gotoOffset(anchor, false);
         },
 
+        /**
+         * 只替换主题样式（字号/行距/段距/配色等），跳过重建文本模型。
+         * 拖动字号、行距滑杆时走这条快路径，否则每帧重建整章 DOM 文本模型会明显卡顿。
+         */
+        setThemeCssOnly: function (css) {
+            var anchor = offsetAtPage(state.page);
+            var element = document.getElementById('mirad-theme');
+            if (element) {
+                element.textContent = css;
+            } else {
+                element = document.createElement('style');
+                element.id = 'mirad-theme';
+                element.textContent = css;
+                document.head.appendChild(element);
+            }
+            applyLayout();
+            window.MiradReader.gotoOffset(anchor, false);
+            return state.pages;
+        },
+
         /** 替换主题样式表（阅读中改字号/主题/背景时调用）。 */
         setThemeCss: function (css) {
             var anchor = offsetAtPage(state.page);

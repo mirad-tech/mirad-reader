@@ -322,17 +322,25 @@ class ReaderSession(
 
     /** 配置变更后刷新 WebView 中的样式（不重载章节）。 */
     fun applyConfigToWebView(config: ReaderConfig, systemDark: Boolean) {
+        val previous = _state.value.config
         this.systemDark = systemDark
         updateConfig(config)
         val anchor = _state.value.offset
         val css = jsQuote(resources.currentThemeCss())
-        evaluate(
-            "if (window.MiradReader) {" +
-                "MiradReader.setThemeCss($css);" +
+        // 只改了排版 CSS（字号/行距/段距/配色…）时走快路径：跳过重建文本模型。
+        // 拖字号滑杆每帧都重建整章 DOM 文本模型是卡顿的主因。
+        val layoutChanged = previous.pageMode != config.pageMode ||
+            previous.maxColumnWidthEm != config.maxColumnWidthEm ||
+            previous.horizontalPaddingDp != config.horizontalPaddingDp
+        val body = if (layoutChanged) {
+            "MiradReader.setThemeCss($css);" +
                 "MiradReader.applyConfig(${jsConfig()});" +
-                "MiradReader.gotoOffset($anchor, false);" +
-                "}"
-        )
+                "MiradReader.gotoOffset($anchor, false);"
+        } else {
+            "MiradReader.setThemeCssOnly($css);" +
+                "MiradReader.gotoOffset($anchor, false);"
+        }
+        evaluate("if (window.MiradReader) {$body}")
         renderHighlights()
     }
 

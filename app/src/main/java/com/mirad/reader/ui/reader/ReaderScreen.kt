@@ -192,10 +192,16 @@ private fun ReaderContent(
     var ttsSentences by remember { mutableStateOf<List<SentenceSplitter.Sentence>>(emptyList()) }
     var ttsChapterIndex by remember { mutableStateOf(-1) }
 
+    // 落库防抖：拖滑杆时每动一下都写数据库既没必要也会拖慢体感，停顿 400ms 再写。
+    var configSaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val applyConfig: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
         val updated = transform(state.config)
         session.applyConfigToWebView(updated, systemDark)
-        scope.launch { container.settings.saveBookConfig(book.id, updated) }
+        configSaveJob?.cancel()
+        configSaveJob = scope.launch {
+            kotlinx.coroutines.delay(400)
+            container.settings.saveBookConfig(book.id, updated)
+        }
     }
 
     suspend fun ensureTtsSentences(): List<SentenceSplitter.Sentence> {
