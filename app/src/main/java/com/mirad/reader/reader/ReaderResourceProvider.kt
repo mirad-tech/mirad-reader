@@ -164,12 +164,13 @@ class ReaderResourceProvider(
 
     private fun chapterResponse(index: Int): WebResourceResponse? {
         val current = book ?: return null
-        val chapter = chapters.firstOrNull { it.index == index } ?: return null
+        val chapter = chapters.firstOrNull { it.index == index }
+            ?: return chapterError(index, "目录里找不到这一章。")
 
         val html = when (current.format) {
             BookFormat.EPUB -> {
-                val raw = textProvider.readEpubHtml(current, chapter.href ?: return null)
-                    ?: return notFound()
+                val raw = textProvider.readEpubHtml(current, chapter.href ?: return chapterError(index, "这一章没有对应的正文文件。"))
+                    ?: return chapterError(index, "正文内容读不出来，文件可能已损坏或缺失。")
                 val wrapped = ChapterHtmlBuilder.wrapBody(raw, chapter.index)
                 val baseDir = (chapter.href ?: "").substringBeforeLast('/', "")
                 val baseHref = assetBaseHref(current.id, baseDir)
@@ -188,6 +189,23 @@ class ReaderResourceProvider(
             }
         }
         return response("text/html", html.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * 章节读不出来时给用户一个**可读的说明页**。
+     * 旧实现返回空 404：WebView 对顶层导航会显示自带的网络错误页，用户只看到空白/错误码，
+     * 既不知道发生了什么，也不知道能做什么。
+     */
+    private fun chapterError(index: Int, reason: String): WebResourceResponse {
+        val html = ChapterHtmlBuilder.build(
+            title = "无法显示这一章",
+            bodyText = "第 ${index + 1} 章读不出来。$reason\n\n" +
+                "可以回书架重新导入这本书；如果是文字内容异常，先用「文字乱码？重新识别编码…」检查正文是否完整。",
+            chapterIndex = index,
+            titleLineChars = 0,
+            includeTitleElement = true
+        )
+        return response("text/html", injectHead(html, null).toByteArray(Charsets.UTF_8))
     }
 
     private fun assetBaseHref(bookId: Long, dir: String): String {
