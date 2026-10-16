@@ -120,6 +120,11 @@ data class ReaderConfig(
 
     // ---- 页面与交互 ----
     val horizontalPaddingDp: Int = 20,
+    /**
+     * 单行最大宽度（em，按字号换算）。0 = 不限。
+     * 手机上通常不触发，横屏/折叠屏展开/平板上用来限制行长并把正文居中。
+     */
+    val maxColumnWidthEm: Float = 34f,
     val verticalPaddingDp: Int = 16,
     val tapZone: String = TapZoneKey.THREE,
     val volumeKeyPage: Boolean = true,

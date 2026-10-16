@@ -51,15 +51,26 @@ object ReaderCss {
         sb.append("-webkit-text-size-adjust:100%;word-wrap:break-word;}\n")
 
         if (useImageBg) {
-            sb.append("html{background-image:url('").append(backgroundImageUrl).append("') !important;")
-                .append("background-size:cover;background-position:center;background-repeat:no-repeat;}\n")
-            // 用主题底色按不透明度做一层半透明覆盖：1 表示图片完全可见，0 表示退化为纯色
+            // 背景图与不透明度覆盖层画在固定定位的层上（由 reader.js 注入 #mirad-bg / #mirad-tint），
+            // 而不是画在 html/body 上：正文列居中变窄后，画在元素上的背景会跟着变窄或错位。
             val overlay = (1f - config.backgroundImageAlpha.coerceIn(0f, 1f))
             val rgb = argbToRgbTriplet(palette.background)
-            sb.append("body{background:rgba(").append(rgb).append(",").append(overlay).append(") !important;}\n")
+            sb.append("html{background-image:none !important;}\n")
+            sb.append("#mirad-bg{background-image:url('").append(backgroundImageUrl).append("') !important;}\n")
+            sb.append("#mirad-tint{background:rgba(").append(rgb).append(",").append(overlay).append(") !important;}\n")
         } else {
-            sb.append("body{background:transparent !important;}\n")
+            sb.append("#mirad-bg{background-image:none !important;}\n")
+            sb.append("#mirad-tint{background:transparent !important;}\n")
         }
+
+        sb.append("body{background:transparent !important;}\n")
+        // 固定视口层：不论分列/居中/滚动，永远铺满整屏
+        sb.append("#mirad-bg,#mirad-tint{position:fixed !important;top:0 !important;left:0 !important;")
+            .append("right:0 !important;bottom:0 !important;width:100% !important;height:100% !important;")
+            .append("z-index:0 !important;pointer-events:none !important;background-color:transparent;")
+            .append("background-size:cover !important;background-position:center !important;")
+            .append("background-repeat:no-repeat !important;}\n")
+        sb.append("#mirad-content{position:relative;z-index:1;}\n")
 
         sb.append("#").append(CONTENT_ID).append("{color:").append(fg).append(";}\n")
 
@@ -81,12 +92,20 @@ object ReaderCss {
             sb.append("div,section,article,blockquote,li{text-indent:0;text-align:inherit;}\n")
             sb.append("#").append(CONTENT_ID).append(" *:not(img):not(svg):not(image):not(figure):not(table)")
                 .append("{font-size:inherit !important;background-color:transparent !important;}\n")
+            // 压掉书内 CSS 的固定像素宽度：否则 EPUB 自带样式会把正文撑出屏幕（"没有适应屏幕大小"）
+            sb.append("#").append(CONTENT_ID).append(" p,#").append(CONTENT_ID).append(" div,")
+                .append("#").append(CONTENT_ID).append(" section,#").append(CONTENT_ID).append(" article,")
+                .append("#").append(CONTENT_ID).append(" blockquote,#").append(CONTENT_ID).append(" li")
+                .append("{max-width:100% !important;width:auto !important;min-width:0 !important;}\n")
             sb.append("h1,h2,h3,h4,h5,h6{font-size:1.22em !important;font-weight:700;text-indent:0;")
                 .append("text-align:center;margin:0.6em 0 0.9em 0;line-height:1.4;}\n")
             sb.append("h1{font-size:1.35em !important;}\n")
         } else {
             sb.append("h1,h2,h3,h4,h5,h6{color:").append(fg).append(";text-indent:0;}\n")
         }
+
+        // 保留原书版式时也要防横向溢出
+        sb.append("#").append(CONTENT_ID).append("{max-width:100% !important;overflow-wrap:break-word;}\n")
 
         sb.append("img{max-width:100% !important;height:auto !important;display:block;margin:0.6em auto;}\n")
         if (!config.allowImages) {
@@ -130,6 +149,34 @@ object ReaderCss {
 
     /** 与 reader.js 保持一致的分页计算，便于单元测试与自检。 */
     object PageMath {
+
+        /** 正文版心几何（单位 CSS px，等于 dp）。 */
+        data class ColumnGeometry(val colWidth: Int, val inset: Int, val gap: Int)
+
+        /**
+         * 与 reader.js 的 columnGeometry() 保持一致：
+         * 留白 → 单行上限 → 列宽与居中偏移。窄屏只留白，宽屏由 colMax 限宽并居中。
+         */
+        fun columnGeometry(
+            viewportWidth: Int,
+            paddingDp: Int,
+            colMax: Int,
+            minColumnWidth: Int = 192
+        ): ColumnGeometry {
+            var pad = paddingDp.coerceAtLeast(0)
+            if (viewportWidth - pad * 2 < minColumnWidth) {
+                pad = ((viewportWidth - minColumnWidth) / 2).coerceAtLeast(0)
+            }
+            var colW = viewportWidth - pad * 2
+            if (colMax > 0 && colW > colMax) colW = colMax
+            colW = colW.coerceAtLeast(1)
+            return ColumnGeometry(
+                colWidth = colW,
+                inset = ((viewportWidth - colW) / 2).coerceAtLeast(0),
+                gap = pad * 2
+            )
+        }
+
         fun pageCount(scrollWidth: Int, viewportWidth: Int, gap: Int): Int {
             if (viewportWidth <= 0) return 1
             val step = viewportWidth + gap

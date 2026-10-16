@@ -10,7 +10,9 @@ import android.webkit.JavascriptInterface
 class ReaderJsBridge(
     private val onReady: (pages: Int, textLength: Int) -> Unit,
     private val onState: (page: Int, pages: Int, offset: Int, textLength: Int) -> Unit,
-    private val onSelection: (start: Int, end: Int, text: String) -> Unit
+    private val onSelection: (start: Int, end: Int, text: String) -> Unit,
+    /** 版心几何回报：正文列相对屏幕的居中偏移与列宽（CSS px = dp）。 */
+    private val onMetrics: (insetLeft: Int, columnWidth: Int) -> Unit = { _, _ -> }
 ) {
     private val main = Handler(Looper.getMainLooper())
 
@@ -22,6 +24,11 @@ class ReaderJsBridge(
     @JavascriptInterface
     fun onState(page: Int, pages: Int, offset: Int, textLength: Int, scrollY: Int) {
         main.post { onState(page, pages, offset, textLength) }
+    }
+
+    @JavascriptInterface
+    fun onMetrics(insetLeft: Int, columnWidth: Int) {
+        main.post { onMetrics(insetLeft, columnWidth) }
     }
 
     @JavascriptInterface

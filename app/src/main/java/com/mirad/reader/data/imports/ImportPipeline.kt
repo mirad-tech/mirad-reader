@@ -189,9 +189,8 @@ class ImportPipeline(
         val bytes = target.readBytes()
         if (bytes.isEmpty()) throw ImportException("文件内容为空")
 
-        val detected = EncodingDetector.detect(bytes)
-        val decoded = EncodingDetector.decode(bytes, detected)
-        val normalized = TextNormalizer.normalize(decoded)
+        val decoded = com.mirad.reader.core.text.TextCodec.decode(bytes)
+        val normalized = TextNormalizer.normalize(decoded.text)
         if (normalized.isBlank()) throw ImportException("未解析出正文内容")
 
         val contentFile = paths.contentFile(token)
@@ -227,7 +226,7 @@ class ImportPipeline(
             coverPath = if (hasCover) coverFile.absolutePath else null,
             sourceUri = sourceUriOf(source),
             fileSize = size,
-            encoding = detected.charset.name(),
+            encoding = decoded.charsetName,
             chapterRuleId = effectiveRule?.id,
             totalChapters = chapters.size,
             totalChars = normalized.length.toLong(),
@@ -236,7 +235,7 @@ class ImportPipeline(
         return PreparedBook(
             book = book,
             chapters = chapters,
-            encoding = detected.charset.name(),
+            encoding = decoded.charsetName,
             ruleId = effectiveRule?.id,
             regex = null,
             totalChars = normalized.length.toLong()

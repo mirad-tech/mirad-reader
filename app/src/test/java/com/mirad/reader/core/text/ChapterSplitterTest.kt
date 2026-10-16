@@ -87,11 +87,13 @@ class ChapterSplitterTest {
     }
 
     @Test
-    fun autoDetectPicksTheMostFrequentRule() {
-        val text = "第一章 甲\n内容\n第二章 乙\n内容\n第三章 丙\n内容\n"
+    fun autoDetectPicksChapterRuleForRealLengthText() {
+        // 注意：真正的正文才有每章几百字的体量。极短文本会被判定为"不像章节"（见 ChapterDetectorTest）。
+        val filler = "他走在长街上，风从巷口吹来，卷起一地落叶。".repeat(30)
+        val text = "第一章 甲\n$filler\n第二章 乙\n$filler\n第三章 丙\n$filler\n"
         val (rule, count) = ChapterRules.autoDetect(text)
+        assertEquals(ChapterRules.CN_GENERIC, rule?.id)
         assertEquals(3, count)
-        assertTrue(rule != null && rule.id == ChapterRules.CN_GENERIC)
     }
 
     @Test

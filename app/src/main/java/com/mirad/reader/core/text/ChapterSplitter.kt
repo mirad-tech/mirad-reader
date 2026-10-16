@@ -22,8 +22,8 @@ data class ChapterSlice(
  */
 object ChapterSplitter {
 
-    /** 无可用规则时的兜底分节长度。 */
-    const val FALLBACK_CHUNK_CHARS = 8000
+    /** 无可用规则时的兜底分节长度（约 2~3 页，章节列表才不至于只有两三节）。 */
+    const val FALLBACK_CHUNK_CHARS = 3000
 
     private const val PREFACE_TITLE = "前言"
 

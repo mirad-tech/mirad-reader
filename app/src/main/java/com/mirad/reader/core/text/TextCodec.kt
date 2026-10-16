@@ -1,0 +1,204 @@
+package com.mirad.reader.core.text
+
+import org.mozilla.universalchardet.UniversalDetector
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+
+/** 解码结果：文本 + 实际使用的编码 + 判定来源。 */
+data class DecodedText(
+    val text: String,
+    val charsetName: String,
+    val source: String
+)
+
+/**
+ * 统一的"字节 → 文本"解码层，TXT 与 EPUB 共用。
+ *
+ * 判定顺序（chardet 只作为提示，不再权威）：
+ *   1. 手动指定
+ *   2. BOM
+ *   3. 文件内声明的 charset（EPUB 的 `<?xml encoding>` / `<meta charset>`）
+ *   4. 严格 UTF-8 校验
+ *   5. 多候选评分（GB18030 / BIG5 / SHIFT_JIS / windows-1252）
+ *   6. GB18030 宽松兜底
+ *
+ * 关键点：绝不能让"能解码"等同于"猜对了"——GB18030 几乎能解码任意字节序列，
+ * 所以它只能靠评分胜出，不能靠 chardet 断言。
+ */
+object TextCodec {
+
+    /** 评分只取前 64KB，够判定且快。 */
+    private const val SAMPLE_BYTES = 64 * 1024
+
+    /**
+     * 参与评分的候选。
+     *
+     * UTF-16 不参与评分：任意字节对都可能落进 CJK 码位，评分会把 GBK 文本误判成 UTF-16。
+     * UTF-16 只在有 BOM 或文件声明时采用。
+     */
+    private val SCORED_CANDIDATES = listOf("GB18030", "BIG5", "SHIFT_JIS", "windows-1252")
+
+    private val CHINESE_PUNCT = "，。、；：？！“”‘’（）《》〈〉「」『』【】…—～·　"
+    private val SOUP_CHARS = "ÃÂÐÞãâðþ€‚ƒ„†‡ˆ‰Š‹Œ"
+
+    private val XML_ENCODING = Regex("(?i)<\\?xml[^>]*encoding\\s*=\\s*[\"']([\\w.\\-]+)[\"']")
+    private val META_CHARSET = Regex("(?i)<meta[^>]*charset\\s*=\\s*[\"']?\\s*([\\w.\\-]+)")
+    private val META_HTTP_EQUIV = Regex("(?i)content\\s*=\\s*[\"'][^\"']*charset\\s*=\\s*([\\w.\\-]+)")
+
+    fun decode(bytes: ByteArray, declared: String? = null, manual: String? = null): DecodedText {
+        if (bytes.isEmpty()) return DecodedText("", "UTF-8", "utf8-strict")
+
+        manual?.let { name ->
+            charsetOf(name)?.let { return DecodedText(clean(String(bytes, it)), it.name(), "manual") }
+        }
+
+        bomOf(bytes)?.let { (charset, offset) ->
+            val text = String(bytes, offset, bytes.size - offset, charset)
+            return DecodedText(clean(text), charset.name(), "BOM")
+        }
+
+        declared?.let { name ->
+            charsetOf(name)?.let { charset ->
+                if (canDecodeStrict(bytes, charset)) {
+                    return DecodedText(clean(String(bytes, charset)), charset.name(), "declared")
+                }
+            }
+        }
+
+        // UTF-8 自带校验能力：全篇严格可解就是最强证据，必须排在 GB18030 之前。
+        if (canDecodeStrict(bytes, Charsets.UTF_8)) {
+            return DecodedText(clean(String(bytes, Charsets.UTF_8)), "UTF-8", "utf8-strict")
+        }
+
+        val scored = SCORED_CANDIDATES
+            .mapNotNull { name -> charsetOf(name)?.let { charset -> charset to score(bytes, charset) } }
+            .filter { it.second > Int.MIN_VALUE }
+            .maxByOrNull { it.second }
+
+        if (scored != null && scored.second > 0) {
+            val hinted = runCatching { detectByChardet(bytes) }.getOrNull()
+            val source = if (hinted != null && normalize(hinted).name() == scored.first.name()) "chardet" else "scored"
+            return DecodedText(clean(String(bytes, scored.first)), scored.first.name(), source)
+        }
+
+        val gb = Charset.forName("GB18030")
+        return DecodedText(clean(String(bytes, gb)), gb.name(), "fallback")
+    }
+
+    /** 从文件头解析声明编码（EPUB 的 XHTML / OPF / NCX）。 */
+    fun declaredCharset(bytes: ByteArray): String? {
+        if (bytes.isEmpty()) return null
+        val head = String(bytes, 0, minOf(bytes.size, 2048), Charsets.ISO_8859_1)
+        XML_ENCODING.find(head)?.let { return it.groupValues[1] }
+        META_CHARSET.find(head)?.let { return it.groupValues[1] }
+        META_HTTP_EQUIV.find(head)?.let { return it.groupValues[1] }
+        return null
+    }
+
+    /** 严格校验：全部字节必须可解码。 */
+    fun isValidUtf8(bytes: ByteArray): Boolean = canDecodeStrict(bytes, Charsets.UTF_8)
+
+    private fun bomOf(bytes: ByteArray): Pair<Charset, Int>? {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return Charsets.UTF_8 to 3
+        }
+        if (bytes.size >= 4 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte() &&
+            bytes[2] == 0x00.toByte() && bytes[3] == 0x00.toByte()
+        ) {
+            return charsetOf("UTF-32LE")?.let { it to 4 }
+        }
+        if (bytes.size >= 4 && bytes[0] == 0x00.toByte() && bytes[1] == 0x00.toByte() &&
+            bytes[2] == 0xFE.toByte() && bytes[3] == 0xFF.toByte()
+        ) {
+            return charsetOf("UTF-32BE")?.let { it to 4 }
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) {
+            return Charsets.UTF_16LE to 2
+        }
+        if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
+            return Charsets.UTF_16BE to 2
+        }
+        return null
+    }
+
+    private fun charsetOf(name: String): Charset? =
+        runCatching { normalize(Charset.forName(name)) }.getOrNull()
+
+    /** GB2312/GBK 统一按 GB18030 解码，兼容性更好。 */
+    private fun normalize(charset: Charset): Charset {
+        val name = charset.name().uppercase()
+        return when {
+            name.startsWith("GB") -> charsetOfRaw("GB18030")
+            name == "UTF8" -> Charsets.UTF_8
+            else -> charset
+        }
+    }
+
+    private fun charsetOfRaw(name: String): Charset = Charset.forName(name)
+
+    /**
+     * 文本"像不像正常中文"的评分（每千字），用于在多个可解码的编码之间取舍。
+     * 加分：CJK 汉字与中文标点；减分：私用区、替换符、控制字符、Latin-1 乱码特征。
+     */
+    private fun score(bytes: ByteArray, charset: Charset): Int {
+        val text = decodeLenient(sample(bytes), charset)
+        if (text.isEmpty()) return Int.MIN_VALUE
+        var cjk = 0
+        var punct = 0
+        var pua = 0
+        var bad = 0
+        var ctrl = 0
+        var soup = 0
+        for (ch in text) {
+            val code = ch.code
+            when {
+                ch == '\uFFFD' -> bad++
+                code in 0xE000..0xF8FF -> pua++
+                code in 0x4E00..0x9FFF || code in 0x3400..0x4DBF -> cjk++
+                code < 0x20 && ch != '\n' && ch != '\r' && ch != '\t' -> ctrl++
+                CHINESE_PUNCT.indexOf(ch) >= 0 -> punct++
+                SOUP_CHARS.indexOf(ch) >= 0 -> soup++
+            }
+        }
+        val n = text.length
+        return ((cjk * 3 + punct * 2 - pua * 4 - bad * 5 - ctrl * 3 - soup * 4) * 1000) / n
+    }
+
+    private fun sample(bytes: ByteArray): ByteArray =
+        if (bytes.size <= SAMPLE_BYTES) bytes else bytes.copyOf(SAMPLE_BYTES)
+
+    private fun decodeLenient(bytes: ByteArray, charset: Charset): String =
+        runCatching {
+            charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPLACE)
+                .onUnmappableCharacter(CodingErrorAction.REPLACE)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        }.getOrDefault("")
+
+    private fun canDecodeStrict(bytes: ByteArray, charset: Charset): Boolean =
+        runCatching {
+            charset.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(sample(bytes)))
+            true
+        }.getOrDefault(false)
+
+    private fun detectByChardet(bytes: ByteArray): Charset? {
+        val detector = UniversalDetector(null)
+        if (bytes.size <= 136 * 1024) {
+            detector.handleData(bytes, 0, bytes.size)
+        } else {
+            detector.handleData(bytes, 0, 128 * 1024)
+            detector.handleData(bytes, bytes.size - 8192, 8192)
+        }
+        detector.dataEnd()
+        val name = detector.detectedCharset ?: return null
+        return runCatching { Charset.forName(name) }.getOrNull()
+    }
+
+    private fun clean(text: String): String =
+        if (text.isNotEmpty() && text[0] == '\uFEFF') text.substring(1) else text
+}

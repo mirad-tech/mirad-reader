@@ -77,6 +77,9 @@ import com.mirad.reader.core.model.OrientationKey
 import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.reader.ReaderCss
+import androidx.compose.ui.platform.LocalConfiguration
+import kotlin.math.roundToInt
 import com.mirad.reader.core.model.StatsMath
 import com.mirad.reader.core.model.ThemePalette
 import com.mirad.reader.core.model.ThemePaletteResolver
@@ -388,10 +391,6 @@ private fun ReaderContent(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .padding(
-                    horizontal = config.horizontalPaddingDp.dp,
-                    vertical = 0.dp
-                )
                 .background(Color(palette.background)),
             update = { }
         )
@@ -404,13 +403,29 @@ private fun ReaderContent(
                 contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = config.horizontalPaddingDp.dp)
                     .graphicsLayer { translationX = overlayX }
             )
         }
 
-        // 页眉页脚（始终显示，非交互）
-        HeaderFooter(config, palette, state.chapterTitle, state.page, state.pages, state.percent)
+        // 页眉页脚（始终显示，非交互）：与正文列左边缘对齐
+        val screenWidthDp = LocalConfiguration.current.screenWidthDp
+        val colMax = if (config.maxColumnWidthEm > 0f) {
+            (config.fontSizeSp * config.maxColumnWidthEm).roundToInt()
+        } else {
+            0
+        }
+        val geometry = remember(screenWidthDp, config.horizontalPaddingDp, colMax) {
+            ReaderCss.PageMath.columnGeometry(screenWidthDp, config.horizontalPaddingDp, colMax)
+        }
+        HeaderFooter(
+            config = config,
+            palette = palette,
+            chapterTitle = state.chapterTitle,
+            page = state.page,
+            pages = state.pages,
+            percent = state.percent,
+            insetLeftDp = geometry.inset
+        )
 
         // 顶部/底部工具栏
         AnimatedVisibility(
@@ -681,15 +696,18 @@ private fun HeaderFooter(
     chapterTitle: String,
     page: Int,
     pages: Int,
-    percent: Float
+    percent: Float,
+    insetLeftDp: Int = -1
 ) {
     val clock = rememberClock(config.showClock)
     val battery = rememberBattery(config.showBattery)
     val textColor = Color(palette.secondaryText)
+    // 正文列居中后，页眉页脚要跟着列左边缘走，否则会贴在屏幕边上与正文错位。
+    val horizontal = if (insetLeftDp >= 0) (insetLeftDp + 4).dp else (config.horizontalPaddingDp + 4).dp
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = (config.horizontalPaddingDp + 4).dp, vertical = 4.dp),
+            .padding(horizontal = horizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
         if (config.showHeader) {

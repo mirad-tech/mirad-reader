@@ -14,7 +14,9 @@
     var CFG = {
         mode: 'PAGED',      // PAGED | SCROLL
         gap: 24,
-        anim: 'SLIDE'       // NONE | SLIDE | COVER | CURL
+        anim: 'SLIDE',      // NONE | SLIDE | COVER | CURL
+        pad: 20,            // 正文左右留白（CSS px，等于 dp）
+        colMax: 0           // 单行最大宽度（CSS px），0 = 不限（版心宽度）
     };
 
     var state = {
@@ -25,7 +27,10 @@
         textLength: 0,
         nodes: [],          // {node, start, len}
         points: [],         // {start, pos} 按文档顺序，pos 为分列流中的像素位置
-        pendingOffset: 0
+        pendingOffset: 0,
+        colW: 0,            // 当前正文列宽（CSS px）
+        gap: 24,            // 当前列间距
+        inset: 0            // 居中偏移（左右各留这么多）
     };
 
     var BLOCK_TAGS = {
@@ -46,6 +51,41 @@
 
     function viewportHeight() {
         return Math.max(1, Math.round(document.documentElement.clientHeight || window.innerHeight));
+    }
+
+    /**
+     * 正文版心几何：留白 + 单行上限 → 列宽与居中偏移。
+     * 窄屏只要留白即可，宽屏（横屏/折叠屏展开/平板）由 colMax 限制单行长度并居中。
+     */
+    function columnGeometry() {
+        var vw = viewportWidth();
+        var pad = Math.max(0, Math.round(CFG.pad || 0));
+        var minCol = 12 * 16;   // 留白不能把正文挤没
+        if (vw - pad * 2 < minCol) {
+            pad = Math.max(0, Math.floor((vw - minCol) / 2));
+        }
+        var colW = vw - pad * 2;
+        var max = Math.round(CFG.colMax || 0);
+        if (max > 0 && colW > max) colW = max;
+        colW = Math.max(1, colW);
+        return { pad: pad, colW: colW, inset: Math.max(0, Math.round((vw - colW) / 2)), gap: pad * 2 };
+    }
+
+    /**
+     * 背景层：固定定位、铺满视口，与分列几何完全解耦。
+     * 放在正文容器之下（z-index:0，正文 z-index:1），所以不论正文列多窄、滚到哪一页，
+     * 背景图都恰好铺满整屏——这正是"文字居中但背景要全覆盖"的做法。
+     */
+    function ensureBackgroundLayers() {
+        if (document.getElementById('mirad-bg')) return;
+        var body = document.body;
+        if (!body) return;
+        var bg = document.createElement('div');
+        bg.id = 'mirad-bg';
+        var tint = document.createElement('div');
+        tint.id = 'mirad-tint';
+        body.insertBefore(tint, body.firstChild);
+        body.insertBefore(bg, tint);
     }
 
     function isBlock(el) {
@@ -106,7 +146,11 @@
         if (!c) return;
         var w = viewportWidth();
         var h = viewportHeight();
-        var gap = CFG.gap;
+        var geo = columnGeometry();
+        state.colW = geo.colW;
+        state.gap = geo.gap;
+        state.inset = geo.inset;
+        ensureBackgroundLayers();
 
         document.documentElement.style.height = h + 'px';
         document.body.style.height = CFG.mode === 'PAGED' ? h + 'px' : 'auto';
@@ -114,23 +158,34 @@
         if (CFG.mode === 'PAGED') {
             document.documentElement.style.overflow = 'hidden';
             document.body.style.overflow = 'hidden';
-            c.style.columnWidth = w + 'px';
-            c.style.columnGap = gap + 'px';
+            // 用 padding 做居中：正文列永远从 inset 开始，留白处交给背景层
+            c.style.paddingLeft = geo.inset + 'px';
+            c.style.paddingRight = geo.inset + 'px';
+            c.style.marginLeft = '0px';
+            c.style.marginRight = '0px';
+            c.style.width = 'auto';
+            c.style.maxWidth = 'none';
+            c.style.columnWidth = geo.colW + 'px';
+            c.style.columnGap = geo.gap + 'px';
             c.style.columnFill = 'auto';
-            c.style.width = w + 'px';
             c.style.minHeight = '0';
             c.style.height = h + 'px';
             c.style.overflow = 'hidden';
             c.style.transform = 'none';
-            var scrollWidth = Math.max(c.scrollWidth, w);
-            state.pages = Math.max(1, Math.round((scrollWidth + gap) / (w + gap)));
+            var flowWidth = Math.max(c.scrollWidth - geo.inset * 2, geo.colW);
+            state.pages = Math.max(1, Math.round((flowWidth + geo.gap) / (geo.colW + geo.gap)));
         } else {
             document.documentElement.style.overflow = 'auto';
             document.body.style.overflow = 'visible';
+            c.style.paddingLeft = '0px';
+            c.style.paddingRight = '0px';
             c.style.columnWidth = 'auto';
             c.style.columnGap = '0px';
             c.style.columnFill = 'auto';
-            c.style.width = 'auto';
+            c.style.width = geo.colW + 'px';
+            c.style.maxWidth = geo.colW + 'px';
+            c.style.marginLeft = 'auto';
+            c.style.marginRight = 'auto';
             c.style.height = 'auto';
             c.style.minHeight = '0';
             c.style.overflow = 'visible';
@@ -140,6 +195,7 @@
         buildPoints();
         state.page = Math.min(state.page, state.pages - 1);
         applyPosition(false);
+        reportMetrics();
     }
 
     /** 记录每个文本节点在分列流（或纵向滚动流）中的像素位置，用于偏移↔页互转。 */
@@ -166,7 +222,7 @@
     }
 
     function step() {
-        return viewportWidth() + CFG.gap;
+        return (state.colW || viewportWidth()) + (state.gap || CFG.gap);
     }
 
     function pageFromOffset(offset) {
@@ -416,6 +472,16 @@
         var offset = offsetAtPage(page);
         try {
             b.onState(page, state.pages, offset, state.textLength, CFG.mode === 'PAGED' ? 0 : (window.scrollY || 0));
+        } catch (e) {
+        }
+    }
+
+    /** 把版心几何回报给原生层，供页眉页脚与正文列对齐。 */
+    function reportMetrics() {
+        var b = bridge();
+        if (!b || !b.onMetrics) return;
+        try {
+            b.onMetrics(state.inset || 0, state.colW || 0);
         } catch (e) {
         }
     }

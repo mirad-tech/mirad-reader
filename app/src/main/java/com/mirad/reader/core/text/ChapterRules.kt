@@ -105,21 +105,11 @@ object ChapterRules {
         runCatching { ChapterRule("custom", "自定义正则", listOf(regex)) }.getOrNull()
 
     /**
-     * 自动挑选：返回命中次数最多且不为 0 的规则；全部未命中返回 null（走字数兜底）。
+     * 自动挑选分章规则：委托给 [ChapterDetector]，会做伪标题过滤与密度/序号校验，
+     * 不再单纯比命中次数。
      */
     fun autoDetect(text: String, rules: List<ChapterRule> = ALL): Pair<ChapterRule?, Int> {
-        var best: ChapterRule? = null
-        var bestCount = 0
-        for (rule in rules) {
-            var count = 0
-            for (line in text.lineSequence()) {
-                if (rule.matches(line)) count++
-            }
-            if (count > bestCount) {
-                best = rule
-                bestCount = count
-            }
-        }
-        return best to bestCount
+        val detection = ChapterDetector.detect(text, rules)
+        return detection.rule to detection.hits
     }
 }

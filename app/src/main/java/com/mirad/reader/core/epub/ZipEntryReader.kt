@@ -1,5 +1,6 @@
 package com.mirad.reader.core.epub
 
+import com.mirad.reader.core.text.TextCodec
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
@@ -61,11 +62,21 @@ class ZipEntryReader(private val zip: ZipFile) : java.io.Closeable {
         }.getOrNull()
     }
 
+    /**
+     * 读取文本条目。
+     *
+     * [charset] 为 null（默认）时走自适应解码：BOM → 文件内声明 → 严格 UTF-8 → 候选评分。
+     * 中文 EPUB 里有大量 XHTML 实际是 GBK/GB18030（即使没有声明），写死 UTF-8 会整段乱码。
+     */
     fun readText(
         path: String,
         maxBytes: Int = 2 * 1024 * 1024,
-        charset: Charset = Charsets.UTF_8
-    ): String? = readBytes(path, maxBytes)?.toString(charset)
+        charset: Charset? = null
+    ): String? {
+        val bytes = readBytes(path, maxBytes) ?: return null
+        if (charset != null) return bytes.toString(charset)
+        return TextCodec.decode(bytes, declared = TextCodec.declaredCharset(bytes)).text
+    }
 
     override fun close() {
         runCatching { zip.close() }

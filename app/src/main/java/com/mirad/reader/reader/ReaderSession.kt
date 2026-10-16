@@ -25,6 +25,7 @@ import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -325,8 +326,14 @@ class ReaderSession(
 
     private fun jsConfig(): String {
         val config = _state.value.config
-        val density = container.context.resources.displayMetrics.density
-        val gap = (config.horizontalPaddingDp * 2 * density).toInt()
+        // WebView 里 1 CSS px == 1 dp，所以留白直接就是 paddingDp（不要再乘 density，
+        // 否则列间距会跑到屏幕外，页边距看起来"没生效"）。
+        val pad = config.horizontalPaddingDp.coerceAtLeast(0)
+        val colMax = if (config.maxColumnWidthEm > 0f) {
+            (config.fontSizeSp * config.maxColumnWidthEm).roundToInt()
+        } else {
+            0
+        }
         val mode = if (config.pageMode == PageMode.SCROLL) "SCROLL" else "PAGED"
         val anim = when (config.pageAnim) {
             PageAnim.NONE -> "NONE"
@@ -334,7 +341,7 @@ class ReaderSession(
             PageAnim.CURL -> "CURL"
             else -> "SLIDE"
         }
-        return """{mode:"$mode",gap:$gap,anim:"$anim"}"""
+        return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,anim:"$anim"}"""
     }
 
     // ------------------------------------------------------------------ 翻页与跳转
