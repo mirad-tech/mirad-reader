@@ -232,7 +232,7 @@
             // 必须加回滚动量，才得到"与滚动无关"的流内位置（之前的注释把方向写反了）。
             var pos = paged
                 ? (rect.left - rootRect.left + (c.scrollLeft || 0))
-                : (rect.top - rootRect.top + (window.scrollY || 0));
+                : (rect.top - rootRect.top);
             if (points.length && points[points.length - 1].pos === pos) {
                 continue;
             }
@@ -290,7 +290,7 @@
             // 会形成"算页 → 改滚动 → 再测量 → 又算出另一页"的反馈震荡。
             return CFG.mode === 'PAGED'
                 ? (rect.left - rootRect.left + (c.scrollLeft || 0))
-                : (rect.top - rootRect.top + (window.scrollY || 0));
+                : (rect.top - rootRect.top);
         } catch (e) {
             return null;
         }
@@ -367,7 +367,7 @@
         var c = content();
         if (!c) return null;
         var rootRect = c.getBoundingClientRect();
-        var scroll = CFG.mode === 'PAGED' ? (c.scrollLeft || 0) : (window.scrollY || 0);
+        var scroll = CFG.mode === 'PAGED' ? (c.scrollLeft || 0) : 0;
 
         function posOf(entry, inNode) {
             try {
@@ -378,7 +378,7 @@
                 if (!rect || (rect.width === 0 && rect.height === 0)) return null;
                 return CFG.mode === 'PAGED'
                     ? (rect.left - rootRect.left + scroll)
-                    : (rect.top - rootRect.top + scroll);
+                    : (rect.top - rootRect.top);
             } catch (e) {
                 return null;
             }
