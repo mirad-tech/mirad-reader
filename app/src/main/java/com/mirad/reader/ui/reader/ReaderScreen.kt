@@ -214,7 +214,23 @@ private fun ReaderContent(
         return sentences
     }
 
+    /**
+     * Android 13+ 的前台通知需要 POST_NOTIFICATIONS 运行时授权，否则朗读时通知栏不会出现播放控制。
+     * 只在用户真正开始朗读时请求一次；用户拒绝也不阻断朗读本身（只是没有通知栏控制）。
+     */
+    val permissionActivity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+
+    fun ensureNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        val activity = permissionActivity ?: return
+        val permission = android.Manifest.permission.POST_NOTIFICATIONS
+        if (activity.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED) return
+        @Suppress("DEPRECATION")
+        activity.requestPermissions(arrayOf(permission), 4127)
+    }
+
     fun startTts(fromBeginning: Boolean) {
+        ensureNotificationPermission()
         scope.launch {
             val sentences = ensureTtsSentences()
             if (sentences.isEmpty()) {
