@@ -111,24 +111,39 @@ class ZipEntryReader(private val zip: ZipFile) : java.io.Closeable {
             return normalize(joined)
         }
 
-        /** 仅做 %XX 解码（不把 + 当作空格，路径语义与 URL 查询串不同）。 */
+        /**
+         * 仅做 %XX 解码（不把 + 当作空格，路径语义与 URL 查询串不同）。
+         *
+         * %XX 是**字节**序列，必须按字节累积后整体以 UTF-8 解码：旧实现用 `hex.toChar()`
+         * 逐字节转字符，`%E4%B8%AD` 会变成三个 Latin-1 字符，与 zip 里按 UTF-8 存储的
+         * 中文条目名对不上 → 中文文件名的 href 静默解析成空章节。
+         */
         fun percentDecode(text: String): String {
             if (!text.contains('%')) return text
             val out = StringBuilder(text.length)
+            val bytes = java.io.ByteArrayOutputStream(4)
+            fun flush() {
+                if (bytes.size() > 0) {
+                    out.append(String(bytes.toByteArray(), Charsets.UTF_8))
+                    bytes.reset()
+                }
+            }
             var i = 0
             while (i < text.length) {
                 val c = text[i]
                 if (c == '%' && i + 2 < text.length) {
                     val hex = text.substring(i + 1, i + 3).toIntOrNull(16)
                     if (hex != null) {
-                        out.append(hex.toChar())
+                        bytes.write(hex)
                         i += 3
                         continue
                     }
                 }
+                flush()
                 out.append(c)
                 i++
             }
+            flush()
             return out.toString()
         }
     }
