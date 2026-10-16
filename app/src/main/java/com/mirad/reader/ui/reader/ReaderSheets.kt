@@ -35,6 +35,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.EpubLayoutMode
+import com.mirad.reader.core.model.NoteAnchor
 import com.mirad.reader.core.model.NoteExporter
 import com.mirad.reader.core.model.OrientationKey
 import com.mirad.reader.core.model.PageAnim
@@ -552,6 +553,10 @@ fun NotesSheet(
     var message by remember { mutableStateOf<String?>(null) }
     // 删除划线/书签是破坏性操作，先确认再执行（保留动作供确认后调用）
     var pendingDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    // 章节长度：用于判断划线/书签是否已失效（重新识别编码或重新分章后章节会变）
+    val chapterCharCounts = remember(session.chapters) {
+        session.chapters.map { it.charCount.toInt() }
+    }
 
     val exporter = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/markdown")
@@ -636,16 +641,25 @@ fun NotesSheet(
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     items(highlights, key = { it.id }) { highlight ->
+                        val stale = NoteAnchor.isStale(
+                            highlight.chapterIndex,
+                            highlight.startOffset,
+                            chapterCharCounts
+                        )
                         ListRow(
                             title = highlight.text,
                             subtitle = highlight.note,
-                            meta = "第 ${highlight.chapterIndex + 1} 章",
+                            meta = if (stale) {
+                                "第 ${highlight.chapterIndex + 1} 章 · ${NoteAnchor.STALE_HINT}"
+                            } else {
+                                "第 ${highlight.chapterIndex + 1} 章"
+                            },
                             trailing = {
                                 SheetActionButton("删除", onClick = {
                                     pendingDelete = "划线" to { scope.launch { session.deleteHighlight(highlight) } }
                                 })
                             },
-                            onClick = { onJump(highlight.chapterIndex, highlight.startOffset) }
+                            onClick = if (stale) null else ({ onJump(highlight.chapterIndex, highlight.startOffset) })
                         )
                     }
                 }
@@ -655,9 +669,15 @@ fun NotesSheet(
             } else {
                 LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     items(bookmarks, key = { it.id }) { bookmark ->
+                        val stale = NoteAnchor.isStale(
+                            bookmark.chapterIndex,
+                            bookmark.charOffset,
+                            chapterCharCounts
+                        )
                         ListRow(
                             title = bookmark.chapterTitle,
                             subtitle = bookmark.snippet,
+                            meta = if (stale) NoteAnchor.STALE_HINT else null,
                             trailing = {
                                 SheetActionButton(
                                     "删除",
@@ -668,7 +688,7 @@ fun NotesSheet(
                                     }
                                 )
                             },
-                            onClick = { onJump(bookmark.chapterIndex, bookmark.charOffset) }
+                            onClick = if (stale) null else ({ onJump(bookmark.chapterIndex, bookmark.charOffset) })
                         )
                     }
                 }

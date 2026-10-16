@@ -140,20 +140,26 @@ class BookMaintenance(
             )
         }
         books.saveChapters(book.id, chapters)
-        clampProgress(book.id, chapters.size)
+        clampProgress(book.id, chapters)
         return Indexed(chapters.size, effective?.id)
     }
 
-    /** 重新分章后章节数会变，把越界的阅读进度夹回有效范围。 */
-    private suspend fun clampProgress(bookId: Long, chapterCount: Int) {
+    /**
+     * 重新分章后章节数与各章长度都会变，把越界的阅读进度夹回有效范围。
+     * 注意也要夹 `charOffset`：章节还在但变短了的话，旧偏移会落到正文之外。
+     */
+    private suspend fun clampProgress(bookId: Long, chapters: List<ChapterEntity>) {
         val progress = books.getProgress(bookId) ?: return
-        if (progress.chapterIndex in 0 until chapterCount) return
+        val index = if (chapters.getOrNull(progress.chapterIndex) != null) {
+            progress.chapterIndex
+        } else {
+            (chapters.size - 1).coerceAtLeast(0)
+        }
+        val maxOffset = chapters.getOrNull(index)?.charCount?.toInt() ?: 0
+        val offset = progress.charOffset.coerceIn(0, maxOffset)
+        if (index == progress.chapterIndex && offset == progress.charOffset) return
         books.saveProgress(
-            progress.copy(
-                chapterIndex = (chapterCount - 1).coerceAtLeast(0),
-                charOffset = 0,
-                pageIndex = 0
-            )
+            progress.copy(chapterIndex = index, charOffset = offset, pageIndex = 0)
         )
     }
 }
