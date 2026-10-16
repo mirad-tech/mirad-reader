@@ -170,7 +170,8 @@ fun ShelfScreen(
             sort = sort,
             groupId = selectedGroup,
             query = query,
-            includeHidden = showHidden
+            includeHidden = false,
+            onlyHidden = showHidden
         )
     }
     val hiddenCount = remember(shelf) { shelf.count { it.book.isHidden } }

@@ -56,6 +56,14 @@ class ShelfQueryTest {
     }
 
     @Test
+    fun onlyHiddenShowsJustTheHiddenOnes() {
+        val result = ShelfQuery.apply(all, ShelfSort.RECENT, onlyHidden = true)
+        assertEquals(1, result.size)
+        assertTrue(result.all { it.book.isHidden })
+        assertEquals(3L, result.first().book.id)
+    }
+
+    @Test
     fun pinnedBooksComeFirstThenByLastRead() {
         val result = ShelfQuery.apply(all, ShelfSort.RECENT)
         assertEquals(2L, result.first().book.id)

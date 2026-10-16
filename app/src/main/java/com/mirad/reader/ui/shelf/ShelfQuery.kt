@@ -18,12 +18,20 @@ object ShelfQuery {
         sort: ShelfSort,
         groupId: Long? = null,
         query: String = "",
-        includeHidden: Boolean = false
+        includeHidden: Boolean = false,
+        /** 只看隐藏的书（书架上的「已隐藏 N」筛选）。 */
+        onlyHidden: Boolean = false
     ): List<ShelfBook> {
         val keyword = query.trim()
         return all
             .asSequence()
-            .filter { includeHidden || !it.book.isHidden }
+            .filter {
+                when {
+                    onlyHidden -> it.book.isHidden
+                    includeHidden -> true
+                    else -> !it.book.isHidden
+                }
+            }
             .filter {
                 when (groupId) {
                     null -> true
