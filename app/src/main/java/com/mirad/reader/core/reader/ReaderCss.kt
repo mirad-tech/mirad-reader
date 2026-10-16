@@ -117,9 +117,9 @@ object ReaderCss {
         }
         // 标题与引用不参与首行缩进，避免 EPUB 原书样式叠加出奇怪缩进
         sb.append("blockquote p,li p,td p{text-indent:0;}\n")
-        // 划线高亮
+        // 划线高亮（reader.js 给带笔记的高亮加的类是 mirad-note，两边必须一致）
         sb.append("mark.mirad-hl{background:rgba(255,214,102,0.55);color:inherit;padding:0;}\n")
-        sb.append("mark.mirad-hl.mirad-hl-note{background:rgba(140,200,255,0.55);}\n")
+        sb.append("mark.mirad-note{background:rgba(140,200,255,0.55);}\n")
         sb.append("span.mirad-tts{background:rgba(255,180,80,0.35);border-radius:2px;}\n")
         sb.append("mark.mirad-search{background:rgba(255,120,120,0.45);color:inherit;}\n")
         return sb.toString()

@@ -505,7 +505,14 @@
 
     var scrollTimer = null;
     var lastReportedPage = -1;
-    var bottomSent = false;
+    /** 已经为哪一章发过"到底"信号。按章记录，切章自动失效，且改字号重排不会误触发。 */
+    var bottomSentFor = null;
+
+    function chapterKey() {
+        var c = content();
+        if (!c || !c.getAttribute) return '';
+        return c.getAttribute('data-chapter') || '';
+    }
 
     /** 是否已经滚到本章底部（留 8px 容差，避免小数像素永远差一点）。 */
     function atBottom() {
@@ -516,25 +523,33 @@
         return total > 0 && top + view >= total - 8;
     }
 
+    /**
+     * 通知原生层"本章到底了，请接下一章"。每章只发一次。
+     * 单屏短章根本没有滚动事件，所以除了 onScroll，触摸上滑与"再往下翻一屏"也会调它。
+     */
+    function notifyBottomOnce() {
+        if (CFG.mode !== 'SCROLL' || !state.ready) return false;
+        var key = chapterKey();
+        if (bottomSentFor === key) return false;
+        bottomSentFor = key;
+        var b = bridge();
+        if (b) {
+            try {
+                b.onState(state.pages, state.pages, state.textLength, state.textLength, window.scrollY || 0);
+            } catch (e) {
+            }
+        }
+        return true;
+    }
+
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
             if (atBottom()) {
-                // 本章到底：通知原生层接下一章，只发一次，避免反复触发。
-                if (!bottomSent) {
-                    bottomSent = true;
-                    var b = bridge();
-                    if (b) {
-                        try {
-                            b.onState(state.pages, state.pages, state.textLength, state.textLength, window.scrollY || 0);
-                        } catch (e) {
-                        }
-                    }
-                }
+                notifyBottomOnce();
                 return;
             }
-            bottomSent = false;
             var page = Math.floor((window.scrollY || 0) / viewportHeight());
             // 页号没变就不回报，滚动过程不打扰原生层（否则每帧穿透到 Compose 会顿）。
             if (page === lastReportedPage) return;
@@ -543,6 +558,19 @@
             reportState();
         }, 140);
     }
+
+    // 单屏短章没有滚动事件：手指在底部继续上滑也算"要继续读下一章"。
+    var swipeStartY = null;
+    document.addEventListener('touchstart', function (e) {
+        swipeStartY = (e.touches && e.touches.length) ? e.touches[0].clientY : null;
+    }, {passive: true});
+    document.addEventListener('touchend', function (e) {
+        if (CFG.mode !== 'SCROLL' || swipeStartY === null) return;
+        var endY = (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0].clientY : null;
+        var dy = (endY === null) ? 0 : (endY - swipeStartY);
+        swipeStartY = null;
+        if (dy <= -24 && atBottom()) notifyBottomOnce();
+    }, {passive: true});
 
     document.addEventListener('scroll', onScroll, true);
 
@@ -695,6 +723,11 @@
             var h = viewportHeight();
             var max = Math.max(0, document.documentElement.scrollHeight - h);
             var target = (window.scrollY || 0) + (direction >= 0 ? 1 : -1) * h * 0.85;
+            // 已经在底部还继续往下翻 → 用户意图是继续读下一章
+            if (direction >= 0 && atBottom()) {
+                notifyBottomOnce();
+                return true;
+            }
             animateScrollTop(Math.max(0, Math.min(target, max)));
             return true;
         },

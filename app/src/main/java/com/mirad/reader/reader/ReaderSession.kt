@@ -101,8 +101,9 @@ class ReaderSession(
         },
         onState = state@{ page, pages, offset, textLength ->
             val current = _state.value
-            // 上下滚动模式下，JS 滚到本章底部时会报 page == pages：接下一章，别把越界页号写进状态。
-            if (current.config.pageMode == PageMode.SCROLL && pages > 1 && page >= pages) {
+            // 上下滚动模式下，JS 滚到本章底部时会报 page == pages：接下一章。
+            // 注意不能用 pages > 1 过滤——单屏短章 pages == 1，那样会永远卡在本章末尾。
+            if (current.config.pageMode == PageMode.SCROLL && page >= pages) {
                 if (current.chapterIndex < chapters.size - 1) {
                     gotoChapter(current.chapterIndex + 1, 0)
                 }
