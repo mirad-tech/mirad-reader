@@ -30,7 +30,9 @@ android {
             isMinifyEnabled = false
         }
         release {
-            isMinifyEnabled = false
+            // 之前 release 与 debug 一样不混淆不压缩：正式包体积偏大、符号全暴露。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
