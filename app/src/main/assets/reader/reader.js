@@ -244,17 +244,63 @@
         return (state.colW || viewportWidth()) + (state.gap || CFG.gap);
     }
 
-    function pageFromOffset(offset) {
-        if (CFG.mode !== 'PAGED') {
-            var point = nearestPoint(offset);
-            return point ? point.pos : 0;
+    /** 二分找出包含该字符偏移的文本节点。 */
+    function nodeAt(offset) {
+        var nodes = state.nodes;
+        if (!nodes.length) return null;
+        var lo = 0, hi = nodes.length - 1, found = nodes[0];
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1;
+            if (nodes[mid].start <= offset) {
+                found = nodes[mid];
+                lo = mid + 1;
+            } else {
+                hi = mid - 1;
+            }
         }
+        return found;
+    }
+
+    /**
+     * 用 Range 量出某个字符偏移在流中的精确像素位置。
+     *
+     * 为什么需要它：buildPoints 按"父元素矩形"取位置，同一个 <p> 里的多个文本节点会被
+     * 去重成一条，points 的实际粒度就是段落。段落一旦跨列/跨屏，段内任意偏移都会被
+     * nearestPoint 归到段落起点 → 进度跳转、TTS 定位、搜索落点、划线跳转全落到段落开头。
+     * 测量只发生在跳转时（滚动回报不走这里），代价可以接受。
+     */
+    function precisePos(offset) {
+        var entry = nodeAt(offset);
+        if (!entry || !entry.node) return null;
+        var len = entry.len || 0;
+        if (len <= 0) return null;
+        var inNode = Math.max(0, Math.min(offset - entry.start, len - 1));
+        var c = content();
+        if (!c) return null;
+        try {
+            var range = document.createRange();
+            range.setStart(entry.node, inNode);
+            range.setEnd(entry.node, Math.min(inNode + 1, len));
+            var rect = range.getBoundingClientRect();
+            if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+            var rootRect = c.getBoundingClientRect();
+            return CFG.mode === 'PAGED' ? (rect.left - rootRect.left) : (rect.top - rootRect.top);
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function pageFromOffset(offset) {
         var point = nearestPoint(offset);
         if (!point) return 0;
+        // 段落级 points 只给到段落起点，用精确测量覆盖它（测不出来时退回段落起点）
+        var precise = precisePos(offset);
+        var pos = (precise === null || precise === undefined) ? point.pos : precise;
+        if (CFG.mode !== 'PAGED') return pos;
         // 与 offsetAtPage 的 `pos >= page*step - PAGE_EPS` 对称：用 round 时
         // 落在 [k*step - step/2, k*step + step/2) 都归 k，往返（锚点→页→锚点）不再漂移。
         // 旧实现是 floor((pos+1)/step)，与反向的 -2 容差不对称，每次重排都会退 1 页。
-        return Math.max(0, Math.round(point.pos / step()));
+        return Math.max(0, Math.round(pos / step()));
     }
 
     function nearestPoint(offset) {
