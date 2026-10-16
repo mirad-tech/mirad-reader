@@ -192,6 +192,7 @@ fun ShelfScreen(
                 onHidden = onOpenHidden,
                 onManageGroups = { showGroupManager = true },
                 onExitSelection = { selection = emptySet() },
+                onSelectAll = { selection = visible.map { it.book.id }.toSet() },
                 onPinSelected = {
                     scope.launch {
                         selection.forEach { id ->
@@ -699,6 +700,7 @@ private fun ShelfHeader(
     onHidden: () -> Unit,
     onManageGroups: () -> Unit,
     onExitSelection: () -> Unit,
+    onSelectAll: () -> Unit,
     onPinSelected: () -> Unit,
     onGroupSelected: () -> Unit,
     onDeleteSelected: () -> Unit
@@ -709,6 +711,9 @@ private fun ShelfHeader(
             title = "已选 $selectionCount 本",
             onBack = onExitSelection,
             actions = {
+                IconButton(onClick = onSelectAll) {
+                    Icon(Icons.Default.Check, contentDescription = "全选")
+                }
                 IconButton(onClick = onPinSelected) {
                     Icon(Icons.Default.Star, contentDescription = "置顶")
                 }
