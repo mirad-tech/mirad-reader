@@ -228,9 +228,11 @@
             var el = entry.node.parentElement;
             if (!el) continue;
             var rect = el.getBoundingClientRect();
-            // 容器与子元素的 rect 都包含滚动偏移，两者相减即"在流中的位置"，与 scrollLeft 无关。
-            // （旧代码额外加了 scrollLeft，导致跳转后再重排时偏移↔页映射整体漂移。）
-            var pos = paged ? (rect.left - rootRect.left) : (rect.top - rootRect.top);
+            // 容器自身的矩形不随内部滚动移动，子元素会移动，所以差值 = 流内位置 − 滚动位置。
+            // 必须加回滚动量，才得到"与滚动无关"的流内位置（之前的注释把方向写反了）。
+            var pos = paged
+                ? (rect.left - rootRect.left + (c.scrollLeft || 0))
+                : (rect.top - rootRect.top + (window.scrollY || 0));
             if (points.length && points[points.length - 1].pos === pos) {
                 continue;
             }
@@ -282,9 +284,13 @@
             range.setStart(entry.node, inNode);
             range.setEnd(entry.node, Math.min(inNode + 1, len));
             var rect = range.getBoundingClientRect();
-            if (!rect || (rect.width === 0 && rect.height === 0)) return null;
             var rootRect = c.getBoundingClientRect();
-            return CFG.mode === 'PAGED' ? (rect.left - rootRect.left) : (rect.top - rootRect.top);
+            if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+            // 与 buildPoints 同理：加回滚动量，否则测量值随当前页漂移，
+            // 会形成"算页 → 改滚动 → 再测量 → 又算出另一页"的反馈震荡。
+            return CFG.mode === 'PAGED'
+                ? (rect.left - rootRect.left + (c.scrollLeft || 0))
+                : (rect.top - rootRect.top + (window.scrollY || 0));
         } catch (e) {
             return null;
         }
@@ -333,7 +339,86 @@
         for (var i = 0; i < points2.length; i++) {
             if (points2[i].pos >= target - 2) return points2[i].start;
         }
-        return Math.max(0, state.textLength - 1);
+        // 没有任何点到达目标页：典型情况是"整章只有一个长段落"，points 只有段落起点。
+        // 旧实现返回 textLength-1（末尾）——于是每一次重排把锚点回写时都会跳到本章末尾。
+        // 这里改为跨全部文本节点反向测量出该页真正的起始字符偏移。
+        var measuredPos = offsetAtPos(target);
+        if (measuredPos !== null) return measuredPos;
+        var last = points2.length ? points2[points2.length - 1] : null;
+        return last ? last.start : 0;
+    }
+
+    /**
+     * 跨全部文本节点二分，找出"流内位置 >= targetPos 的最小字符偏移"。
+     *
+     * 这是精确的反向测量，取代"从 points 查表"：points 是按父元素矩形去重的，
+     * 同一位置上的多个节点（典型是章节标题与它后面的首个段落，pos 都是 0）只会留第一条，
+     * 于是表里根本没有段落级以下的信息——长段落跨页时任何页号都查不到点。
+     * 只在查表失败时调用，因此每次重排最多付一次二分代价。
+     */
+    function offsetAtPos(targetPos) {
+        var nodes = state.nodes;
+        if (!nodes || !nodes.length) return null;
+        var list = [];
+        for (var i = 0; i < nodes.length; i++) {
+            if (nodes[i].len > 0) list.push(nodes[i]);
+        }
+        if (!list.length) return null;
+        var c = content();
+        if (!c) return null;
+        var rootRect = c.getBoundingClientRect();
+        var scroll = CFG.mode === 'PAGED' ? (c.scrollLeft || 0) : (window.scrollY || 0);
+
+        function posOf(entry, inNode) {
+            try {
+                var r = document.createRange();
+                r.setStart(entry.node, inNode);
+                r.setEnd(entry.node, Math.min(inNode + 1, entry.len));
+                var rect = r.getBoundingClientRect();
+                if (!rect || (rect.width === 0 && rect.height === 0)) return null;
+                return CFG.mode === 'PAGED'
+                    ? (rect.left - rootRect.left + scroll)
+                    : (rect.top - rootRect.top + scroll);
+            } catch (e) {
+                return null;
+            }
+        }
+
+        // 1) 节点粒度：找第一个"起点位置 >= target"的节点
+        var lo = 0;
+        var hi = list.length - 1;
+        var ansNode = -1;
+        while (lo <= hi) {
+            var mid = (lo + hi) >> 1;
+            var p = posOf(list[mid], 0);
+            if (p === null) return list[mid].start;
+            if (p >= targetPos - 2) {
+                ansNode = mid;
+                hi = mid - 1;
+            } else {
+                lo = mid + 1;
+            }
+        }
+        if (ansNode === 0) return 0;
+        // ansNode === -1 表示没有任何节点的起点到达目标页 → 目标落在**最后一个节点**内部
+        // （典型：整章一个长段落，标题与段落起点位置相同、都不到目标页）。
+        // 早先这里写成 list[0]，于是跑进标题节点里搜，返回"标题末尾"这种荒谬值。
+        var entry = ansNode > 0 ? list[ansNode - 1] : list[list.length - 1];
+        var lo2 = 0;
+        var hi2 = entry.len - 1;
+        var ans = -1;
+        while (lo2 <= hi2) {
+            var m2 = (lo2 + hi2) >> 1;
+            var p2 = posOf(entry, m2);
+            if (p2 === null) return entry.start;
+            if (p2 >= targetPos - 2) {
+                ans = m2;
+                hi2 = m2 - 1;
+            } else {
+                lo2 = m2 + 1;
+            }
+        }
+        return ans < 0 ? entry.start + entry.len : entry.start + ans;
     }
 
     function applyPosition(animate) {
