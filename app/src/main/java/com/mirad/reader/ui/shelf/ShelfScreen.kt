@@ -728,7 +728,7 @@ private fun ShelfHeader(
     } else {
         ScreenHeader(
             title = "墨读",
-            subtitle = if (total == 0) "本地离线阅读" else "书架共 $total 本",
+            subtitle = if (total == 0) "导入本地书开始阅读" else "书架共 $total 本",
             large = true,
             divider = false,
             actions = {

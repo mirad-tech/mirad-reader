@@ -427,7 +427,7 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    text = "本地离线小说阅读器。支持 txt（自动识别 GBK/UTF-8 等编码并分章）与 epub（保留原书排版与图片）；" +
+                    text = "本地小说阅读器，书库与阅读数据只存本机（不注册、不上传）。支持 txt（自动识别 GBK/UTF-8 等编码并分章）与 epub（保留原书排版与图片）；" +
                         "内置 7 款阅读背景与 2 款常用字子集字体；所有书籍与阅读数据只保存在本机。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
