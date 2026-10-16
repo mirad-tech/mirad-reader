@@ -332,7 +332,12 @@
             for (var j = 0; j < points.length; j++) {
                 if (points[j].pos >= y - 2) return points[j].start;
             }
-            return 0;
+            // 滚动模式下 points 同样是段落级粒度：单段落章节的表里只有一个 pos=0 的条目，
+            // "滚到 y>2"永远查不到点，旧实现直接 return 0 —— 于是每次重排都把阅读位置清回章首。
+            // 与 PAGED 分支同一病因，同样用反向测量兜底。
+            var measured = offsetAtPos(y);
+            if (measured !== null) return measured;
+            return points.length ? points[points.length - 1].start : 0;
         }
         var target = page * step();
         var points2 = state.points;
