@@ -118,8 +118,10 @@ fun SettingsScreen(
                 val target = File(container.paths.backgroundsDir, "bg_default.jpg")
                 val ok = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver.openInputStream(uri)?.use { input ->
-                            target.outputStream().use { output -> input.copyTo(output) }
+                        // 同上：输入流为 null 时不能当作成功，否则会提示已设置背景但图片没落盘
+                        val input = context.contentResolver.openInputStream(uri) ?: return@runCatching false
+                        input.use { source ->
+                            target.outputStream().use { output -> source.copyTo(output) }
                         }
                         true
                     }.getOrDefault(false)

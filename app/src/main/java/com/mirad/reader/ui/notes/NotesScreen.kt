@@ -74,7 +74,9 @@ fun NotesScreen(
             scope.launch {
                 val ok = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+                        // 旧写法在 openOutputStream 返回 null 时也返回 true → 提示"已导出"但什么都没写
+                        val out = context.contentResolver.openOutputStream(uri) ?: return@runCatching false
+                        out.use { it.write(content.toByteArray()) }
                         true
                     }.getOrDefault(false)
                 }
