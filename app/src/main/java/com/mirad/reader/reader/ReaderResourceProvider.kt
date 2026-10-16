@@ -177,6 +177,12 @@ class ReaderResourceProvider(
                 injectHead(wrapped, baseHref)
             }
             else -> {
+                // TXT：正文文件缺失时 readTxtText 会静默返回空串（getOrDefault("")），用户只看到一片空白。
+                // 先判存在性，给出与 BookMaintenance 一致的"正文文件缺失"提示。
+                val contentPath = current.contentPath
+                if (contentPath.isNullOrBlank() || !File(contentPath).exists()) {
+                    return chapterError(index, "正文文件缺失，建议回书架重新导入这本书。")
+                }
                 val text = textProvider.readTxtText(current, chapter)
                 val built = ChapterHtmlBuilder.build(
                     title = chapter.title,
