@@ -883,13 +883,13 @@
             }
             var page = pageFromOffset(offset);
             if (CFG.mode !== 'PAGED') {
-                var point = nearestPoint(offset);
-                if (point) {
-                    if (animate) animateScrollTop(Math.max(0, point.pos - 8));
-                    else window.scrollTo(0, Math.max(0, point.pos - 8));
-                    state.page = Math.floor((window.scrollY || 0) / viewportHeight());
-                    reportState();
-                }
+                // 直接用 pageFromOffset 的返回值：滚动模式下它就是精确测量出的流内位置。
+                // 旧实现退回 nearestPoint(offset).pos（段落起点），于是长段落里的跳转又落回段首——
+                // 与 PAGED 分支修掉的是同一个病。
+                if (animate) animateScrollTop(Math.max(0, page - 8));
+                else window.scrollTo(0, Math.max(0, page - 8));
+                state.page = Math.floor((window.scrollY || 0) / viewportHeight());
+                reportState();
                 return true;
             }
             state.page = Math.min(Math.max(page, 0), state.pages - 1);
