@@ -10,7 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -19,6 +23,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.design.Sizes
@@ -42,11 +47,14 @@ fun SheetScaffold(
     fillHeight: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
+    // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
+    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * Sizes.sheetMaxHeightFraction
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             modifier = modifier
                 .fillMaxWidth()
-                .fillMaxHeight(Sizes.sheetMaxHeightFraction)
+                .heightIn(max = maxHeight)
         ) {
             Row(
                 modifier = Modifier
@@ -79,6 +87,12 @@ fun SheetScaffold(
                     .then(
                         if (fillHeight) Modifier.weight(1f)
                         else Modifier.weight(1f, fill = false)
+                    )
+                    // 非列表型弹层（操作面板等）内容可能超出一屏：必须可滚动，
+                    // 否则尾部的操作会被裁掉、永远点不到。
+                    .then(
+                        if (fillHeight) Modifier
+                        else Modifier.verticalScroll(rememberScrollState())
                     ),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
