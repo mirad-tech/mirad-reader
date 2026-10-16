@@ -59,18 +59,6 @@ class BookMaintenance(
             ReindexResult(decoded.charsetName, decoded.source, chapters.count, normalized.length.toLong())
         }
 
-    /** 只重新分章（不动编码）。 */
-    suspend fun resplit(book: BookEntity, ruleId: String?, regex: String? = null): Int =
-        withContext(Dispatchers.IO) {
-            val contentFile = contentFile(book)
-            if (!contentFile.exists()) throw IllegalStateException("正文文件缺失，请重新导入")
-            val text = contentFile.readText(Charsets.UTF_8)
-            val rule = if (!regex.isNullOrBlank()) ChapterRules.custom(regex) else ChapterRules.byId(ruleId)
-            val chapters = index(book, text, rule)
-            books.updateBook(book.copy(chapterRuleId = chapters.ruleId))
-            chapters.count
-        }
-
     /**
      * 各候选编码的前若干字。用于「编码」对话框：选中即预览，用户一眼就能看出哪个是对的。
      */
