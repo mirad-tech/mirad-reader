@@ -275,7 +275,21 @@ fun ReaderSettingsSheet(
         subtitle = "只对当前这本书生效",
         onDismiss = onDismiss,
         fillHeight = true,
-        maxHeightFraction = 0.62f
+        maxHeightFraction = 0.62f,
+        actions = {
+            // 翻页方式是最常切的高频开关，放头部一键切换——面板变矮后又排在字体/排版之后，
+            // 放在卡片里会被折叠线挡在外面，用户得先滚动面板才找得到。
+            SheetActionButton(
+                text = if (config.pageMode == PageMode.SCROLL) "上下滚动" else "左右翻页",
+                onClick = {
+                    onChange {
+                        it.copy(
+                            pageMode = if (it.pageMode == PageMode.SCROLL) PageMode.PAGED else PageMode.SCROLL
+                        )
+                    }
+                }
+            )
+        }
     ) {
         Column(
             modifier = Modifier
