@@ -257,7 +257,9 @@ class ImportPipeline(
         var totalChars = 0L
         try {
             for (item in info.spine) {
-                val html = reader.readText(item.href, maxBytes = 1024 * 1024)
+                // 与阅读路径同口径（8MB）：1MB 会把偏大的章节 XHTML 判成"读不到"，
+                // 导致该章 charCount=0、目录里显示为空章。
+                val html = reader.readText(item.href, maxBytes = 8 * 1024 * 1024)
                 val text = html?.let { Html.toPlainText(it) }.orEmpty()
                 totalChars += text.length
                 chapters.add(

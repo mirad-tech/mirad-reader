@@ -43,18 +43,25 @@ class ZipEntryReader(private val zip: ZipFile) : java.io.Closeable {
 
     fun sizeOf(path: String): Long = entry(path)?.size ?: -1L
 
+    /**
+     * 读取条目字节。
+     *
+     * 超过 [maxBytes] 时**返回 null 而不是半截数据**：旧实现是边读边 `break`，
+     * 返回值与完整内容无法区分，于是被截断的 XHTML 会被当成完整正文——
+     * 截断点常落在多字节 UTF-8 中间，严格解码失败后退到候选评分，可能整章判成 GB18030 而全篇乱码。
+     * 先用 `entry.size` 预检，再在读取过程中兜住"声明大小不可信"的情况。
+     */
     fun readBytes(path: String, maxBytes: Int = DEFAULT_MAX_BYTES): ByteArray? {
         val e = entry(path) ?: return null
+        if (e.size > maxBytes) return null
         return runCatching {
             zip.getInputStream(e).use { input ->
                 val out = ByteArrayOutputStream()
                 val buf = ByteArray(16 * 1024)
-                var total = 0
                 while (true) {
                     val n = input.read(buf)
                     if (n <= 0) break
-                    total += n
-                    if (total > maxBytes) break
+                    if (out.size() + n > maxBytes) return@use null
                     out.write(buf, 0, n)
                 }
                 out.toByteArray()
