@@ -445,7 +445,8 @@ private fun ReaderContent(
         HeaderFooter(
             config = config,
             palette = palette,
-            chapterTitle = state.chapterTitle,
+            // 章节名已经在正文开头以大字标题出现过一次，页眉改显示书名，避免同一行信息重复
+            chapterTitle = if (config.showChapterTitleInHeader) book.title else "",
             page = state.page,
             pages = state.pages,
             percent = state.percent,

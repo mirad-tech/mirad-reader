@@ -336,6 +336,13 @@ fun ReaderSettingsSheet(
                     steps = 16,
                     onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
                 )
+                ChoiceRow(
+                    label = "版心宽度（单行最长）",
+                    options = listOf(0f to "全屏", 28f to "窄", 34f to "适中", 42f to "宽"),
+                    selected = config.maxColumnWidthEm,
+                    onSelect = { value -> onChange { it.copy(maxColumnWidthEm = value) } },
+                    columns = 4
+                )
                 CardDivider()
                 ChoiceRow(
                     label = "对齐",

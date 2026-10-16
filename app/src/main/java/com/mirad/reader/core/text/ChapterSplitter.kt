@@ -131,7 +131,7 @@ object ChapterSplitter {
                 chapterNo++
                 slices.add(
                     ChapterSlice(
-                        title = "第 $chapterNo 节",
+                        title = "第 $chapterNo 节 · 自动",
                         titleLineChars = 0,
                         startChar = chunkStartChar,
                         endChar = charIdx,

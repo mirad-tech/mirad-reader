@@ -65,7 +65,8 @@ class ChapterSplitterTest {
         val text = (1..600).joinToString("\n") { "这是第 $it 行没有章节标记的正文内容。" }
         val slices = ChapterSplitter.split(text, ChapterRules.CN_GENERIC_RULE, fallbackChunkChars = 800)
         assertTrue(slices.size > 5)
-        assertTrue(slices.all { it.title.startsWith("第 ") && it.title.endsWith(" 节") })
+        // 自动分节的标题带「· 自动」后缀，便于和真章节区分
+        assertTrue(slices.all { it.title.startsWith("第 ") && it.title.endsWith("节 · 自动") })
         assertEquals(text.length, slices.last().endChar)
     }
 

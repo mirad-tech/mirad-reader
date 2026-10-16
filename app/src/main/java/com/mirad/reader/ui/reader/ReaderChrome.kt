@@ -145,9 +145,18 @@ fun ReaderBottomBar(
     ) {
         Column {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+            val draftState = androidx.compose.runtime.remember {
+                androidx.compose.runtime.mutableStateOf<Float?>(null)
+            }
             Slider(
-                value = percent.coerceIn(0f, 1f),
-                onValueChange = onSliderChange,
+                value = (draftState.value ?: percent).coerceIn(0f, 1f),
+                // 拖动中只改本地值，松手才真正跳转：否则每帧都会触发一次定位计算，又卡又飘。
+                onValueChange = { draftState.value = it },
+                onValueChangeFinished = {
+                    val target = draftState.value
+                    draftState.value = null
+                    if (target != null) onSliderChange(target)
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
