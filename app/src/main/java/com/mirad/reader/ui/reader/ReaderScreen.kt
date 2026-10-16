@@ -477,20 +477,13 @@ private fun ReaderContent(
         }
 
         if (showTts) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.Bottom
-            ) {
-                TtsPanel(
-                    tts = tts,
-                    onStart = { resume ->
-                        if (resume && ttsState.active) tts.resume() else startTts(false)
-                    },
-                    onClose = { showTts = false }
-                )
-            }
+            TtsSheet(
+                tts = tts,
+                onStart = { resume ->
+                    if (resume && ttsState.active) tts.resume() else startTts(false)
+                },
+                onClose = { showTts = false }
+            )
         }
 
         toast?.let { message ->
@@ -554,7 +547,12 @@ private fun ReaderContent(
             chapterIndex = state.chapterIndex,
             chapterCount = state.chapterCount,
             chapterTitle = state.chapterTitle,
+            page = state.page,
+            pages = state.pages,
             onJump = { session.jumpToPercent(it) },
+            onJumpChapter = { index ->
+                if (index in session.chapters.indices) session.gotoChapter(index)
+            },
             onDismiss = { showProgress = false }
         )
     }
@@ -563,7 +561,7 @@ private fun ReaderContent(
         NotesSheet(
             container = container,
             session = session,
-            bookId = book.id,
+            book = book,
             onDismiss = { showNotes = false },
             onJump = { chapterIndex, offset ->
                 if (chapterIndex != session.state.value.chapterIndex) {

@@ -1,34 +1,26 @@
 package com.mirad.reader.ui.reader
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,29 +29,21 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import com.mirad.reader.AppContainer
-import com.mirad.reader.core.model.BackgroundType
 import com.mirad.reader.core.model.EpubLayoutMode
-import com.mirad.reader.core.model.FontFamilyKey
+import com.mirad.reader.core.model.NoteExporter
 import com.mirad.reader.core.model.OrientationKey
 import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.TapZoneKey
 import com.mirad.reader.core.model.TextAlignKey
-import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.data.db.entity.BookEntity
-import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
-import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.repo.SearchHit
 import com.mirad.reader.data.repo.SearchOptions
 import com.mirad.reader.data.repo.SearchProgress
@@ -67,17 +51,26 @@ import com.mirad.reader.reader.ReaderSession
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
 import com.mirad.reader.ui.common.BackgroundSection
+import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.ChoiceRow
-import com.mirad.reader.ui.common.ColorDotRow
 import com.mirad.reader.ui.common.FontSection
 import com.mirad.reader.ui.common.LabeledSlider
-import com.mirad.reader.ui.common.SectionTitle
+import com.mirad.reader.ui.common.ListRow
+import com.mirad.reader.ui.common.SegmentedRow
+import com.mirad.reader.ui.common.SettingCard
+import com.mirad.reader.ui.common.SettingSwitchRow
+import com.mirad.reader.ui.common.SheetActionButton
+import com.mirad.reader.ui.common.SheetEmpty
+import com.mirad.reader.ui.common.SheetScaffold
+import com.mirad.reader.ui.design.LocalMiradColors
+import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ---------------------------------------------------------------- 目录
+
 @Composable
 fun TocSheet(
     chapters: List<ChapterEntity>,
@@ -85,93 +78,142 @@ fun TocSheet(
     onDismiss: () -> Unit,
     onSelect: (Int) -> Unit
 ) {
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(chapters, query) {
+        if (query.isBlank()) chapters
+        else chapters.filter { it.title.contains(query, ignoreCase = true) }
+    }
     val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0)
+        initialFirstVisibleItemIndex = filtered.indexOfFirst { it.index == currentIndex }.coerceAtLeast(0)
     )
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Text("目录（共 ${chapters.size} 章）", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(8.dp))
+    SheetScaffold(
+        title = "目录",
+        subtitle = "共 ${chapters.size} 章 · 当前第 ${currentIndex + 1} 章",
+        onDismiss = onDismiss,
+        fillHeight = true
+    ) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.lg)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("搜索章节名") },
+                singleLine = true,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
-        LazyColumn(
-            state = listState,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 520.dp)
-        ) {
-            items(chapters, key = { it.index }) { chapter ->
-                val isCurrent = chapter.index == currentIndex
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(
-                            if (isCurrent) MaterialTheme.colorScheme.primaryContainer
-                            else Color.Transparent
-                        )
-                        .clickable { onSelect(chapter.index) }
-                        .padding(
-                            start = 16.dp + if (chapter.isVolume) 0.dp else 16.dp,
-                            end = 16.dp,
-                            top = 12.dp,
-                            bottom = 12.dp
-                        )
-                ) {
-                    Text(
-                        text = chapter.title,
-                        style = if (chapter.isVolume) MaterialTheme.typography.titleSmall
-                        else MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (chapter.isVolume || isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (isCurrent) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface
+        if (filtered.isEmpty()) {
+            SheetEmpty("没有匹配的章节")
+        } else {
+            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(filtered, key = { it.index }) { chapter ->
+                    ListRow(
+                        title = chapter.title,
+                        meta = if (chapter.isVolume) "卷" else null,
+                        selected = chapter.index == currentIndex,
+                        titleMaxLines = 1,
+                        modifier = Modifier.padding(start = if (chapter.isVolume) Spacing.xs else Spacing.xl),
+                        trailing = {
+                            if (chapter.index == currentIndex) {
+                                Text(
+                                    text = "当前",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        },
+                        onClick = { onSelect(chapter.index) }
                     )
                 }
             }
         }
-        Spacer(modifier = Modifier.height(12.dp))
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ---------------------------------------------------------------- 进度
+
 @Composable
 fun ProgressSheet(
     percent: Float,
     chapterIndex: Int,
     chapterCount: Int,
     chapterTitle: String,
+    page: Int,
+    pages: Int,
     onJump: (Float) -> Unit,
+    onJumpChapter: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var draft by remember { mutableStateOf(percent) }
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
-            Text("阅读进度", style = MaterialTheme.typography.titleMedium)
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = chapterTitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            Text("${(draft * 100).toInt()}%  ·  第 ${chapterIndex + 1}/$chapterCount 章")
-            Slider(
-                value = draft,
-                onValueChange = { draft = it },
-                onValueChangeFinished = { onJump(draft) }
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { draft = 0f; onJump(0f) }) { Text("开头") }
-                OutlinedButton(onClick = { draft = 0.5f; onJump(0.5f) }) { Text("中间") }
-                OutlinedButton(onClick = { draft = 1f; onJump(1f) }) { Text("结尾") }
+    var draft by remember(percent) { mutableStateOf(percent) }
+    SheetScaffold(
+        title = "阅读进度",
+        subtitle = "全书 ${(percent * 100).toInt()}%",
+        onDismiss = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            SettingCard {
+                Text(text = chapterTitle, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "第 ${chapterIndex + 1}/$chapterCount 章 · 第 ${page + 1}/$pages 页",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                CardDivider()
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        text = "${(draft * 100).toInt()}%",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = "拖动跳到任意位置",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Slider(
+                    value = draft,
+                    onValueChange = { draft = it },
+                    onValueChangeFinished = { onJump(draft) }
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    OutlinedButton(onClick = { draft = 0f; onJump(0f) }, modifier = Modifier.weight(1f)) {
+                        Text("开头")
+                    }
+                    OutlinedButton(onClick = { draft = 0.5f; onJump(0.5f) }, modifier = Modifier.weight(1f)) {
+                        Text("中间")
+                    }
+                    OutlinedButton(onClick = { draft = 1f; onJump(1f) }, modifier = Modifier.weight(1f)) {
+                        Text("结尾")
+                    }
+                }
+                CardDivider()
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    OutlinedButton(
+                        onClick = { onJumpChapter(chapterIndex - 1) },
+                        enabled = chapterIndex > 0,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("上一章") }
+                    OutlinedButton(
+                        onClick = { onJumpChapter(chapterIndex + 1) },
+                        enabled = chapterIndex < chapterCount - 1,
+                        modifier = Modifier.weight(1f)
+                    ) { Text("下一章") }
+                }
             }
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ---------------------------------------------------------------- 阅读设置
+
 @Composable
 fun ReaderSettingsSheet(
     container: AppContainer,
@@ -183,7 +225,6 @@ fun ReaderSettingsSheet(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-
     var fonts by remember { mutableStateOf(container.fonts.available()) }
 
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -194,7 +235,7 @@ fun ReaderSettingsSheet(
                     fonts = withContext(Dispatchers.IO) { container.fonts.available() }
                     onChange {
                         it.copy(
-                            fontFamily = FontFamilyKey.CUSTOM,
+                            fontFamily = com.mirad.reader.core.model.FontFamilyKey.CUSTOM,
                             customFontAsset = null,
                             customFontPath = imported.filePath
                         )
@@ -203,7 +244,6 @@ fun ReaderSettingsSheet(
             }
         }
     }
-
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
@@ -217,86 +257,64 @@ fun ReaderSettingsSheet(
                     }.getOrDefault(false)
                 }
                 if (ok) {
-                    onChange { it.copy(backgroundType = BackgroundType.IMAGE, backgroundImageUri = target.absolutePath) }
+                    onChange {
+                        it.copy(
+                            backgroundType = com.mirad.reader.core.model.BackgroundType.IMAGE,
+                            backgroundImageUri = target.absolutePath
+                        )
+                    }
                 }
             }
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    SheetScaffold(title = "阅读设置", subtitle = "只对当前这本书生效", onDismiss = onDismiss, fillHeight = true) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(max = 560.dp)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = Spacing.xl)
         ) {
-            Text("阅读设置", style = MaterialTheme.typography.titleMedium)
+            // 亮度放最前：调亮度是最频繁的操作，不该让人翻到底
+            SettingCard(title = "亮度") {
+                SettingSwitchRow(
+                    label = "跟随系统亮度",
+                    subtitle = "关闭后可单独调节阅读时的屏幕亮度",
+                    checked = config.brightness < 0f,
+                    onCheckedChange = { follow ->
+                        onChange { it.copy(brightness = if (follow) -1f else 0.65f) }
+                    }
+                )
+                if (config.brightness >= 0f) {
+                    LabeledSlider(
+                        label = "屏幕亮度",
+                        value = config.brightness,
+                        valueText = "${(config.brightness * 100).toInt()}%",
+                        range = 0.05f..1f,
+                        onChange = { value -> onChange { it.copy(brightness = value) } }
+                    )
+                }
+            }
 
-            SectionTitle("阅读方式")
-            ChoiceRow(
-                label = "排版方式",
-                options = listOf(
-                    PageMode.PAGED to "左右翻页",
-                    PageMode.SCROLL to "上下滚动"
-                ),
-                selected = config.pageMode,
-                onSelect = { mode -> onChange { it.copy(pageMode = mode) } },
-                columns = 2
-            )
-            ChoiceRow(
-                label = "翻页动画",
-                options = listOf(
-                    PageAnim.NONE to "无动画",
-                    PageAnim.SLIDE to "滑动",
-                    PageAnim.COVER to "覆盖"
-                ),
-                selected = config.pageAnim,
-                onSelect = { anim -> onChange { it.copy(pageAnim = anim) } },
-                columns = 3
-            )
+            SettingCard(title = "阅读方式") {
+                SegmentedRow(
+                    options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
+                    selected = config.pageMode,
+                    onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
+                )
+                ChoiceRow(
+                    label = "翻页动画",
+                    options = listOf(
+                        PageAnim.NONE to "无动画",
+                        PageAnim.SLIDE to "滑动",
+                        PageAnim.COVER to "覆盖"
+                    ),
+                    selected = config.pageAnim,
+                    onSelect = { anim -> onChange { it.copy(pageAnim = anim) } },
+                    columns = 3
+                )
+            }
 
-            SectionTitle("字体与排版")
-            LabeledSlider(
-                label = "字号",
-                value = config.fontSizeSp,
-                valueText = "${config.fontSizeSp.toInt()} px",
-                range = 12f..34f,
-                steps = 21,
-                onChange = { value -> onChange { it.copy(fontSizeSp = value) } }
-            )
-            LabeledSlider(
-                label = "行距",
-                value = config.lineHeightMultiplier,
-                valueText = String.format("%.2f 倍", config.lineHeightMultiplier),
-                range = 1.1f..2.8f,
-                steps = 16,
-                onChange = { value -> onChange { it.copy(lineHeightMultiplier = value) } }
-            )
-            LabeledSlider(
-                label = "段间距",
-                value = config.paragraphSpacingEm,
-                valueText = String.format("%.2f em", config.paragraphSpacingEm),
-                range = 0f..1.6f,
-                steps = 15,
-                onChange = { value -> onChange { it.copy(paragraphSpacingEm = value) } }
-            )
-            LabeledSlider(
-                label = "首行缩进",
-                value = config.firstLineIndentEm,
-                valueText = String.format("%.1f 字", config.firstLineIndentEm),
-                range = 0f..3f,
-                steps = 5,
-                onChange = { value -> onChange { it.copy(firstLineIndentEm = value) } }
-            )
-            LabeledSlider(
-                label = "页边距",
-                value = config.horizontalPaddingDp.toFloat(),
-                valueText = "${config.horizontalPaddingDp} dp",
-                range = 6f..40f,
-                steps = 16,
-                onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
-            )
             FontSection(
                 config = config,
                 customFonts = fonts,
@@ -309,20 +327,62 @@ fun ReaderSettingsSheet(
                     }
                 }
             )
-            ChoiceRow(
-                label = "对齐",
-                options = listOf(
-                    TextAlignKey.JUSTIFY to "两端对齐",
-                    TextAlignKey.LEFT to "左对齐",
-                    TextAlignKey.CENTER to "居中"
-                ),
-                selected = config.textAlign,
-                onSelect = { key -> onChange { it.copy(textAlign = key) } },
-                columns = 3
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("加粗正文", modifier = Modifier.weight(1f))
-                Switch(
+
+            SettingCard(title = "排版") {
+                LabeledSlider(
+                    label = "字号",
+                    value = config.fontSizeSp,
+                    valueText = "${config.fontSizeSp.toInt()} px",
+                    range = 12f..34f,
+                    steps = 21,
+                    onChange = { value -> onChange { it.copy(fontSizeSp = value) } }
+                )
+                LabeledSlider(
+                    label = "行距",
+                    value = config.lineHeightMultiplier,
+                    valueText = String.format("%.2f 倍", config.lineHeightMultiplier),
+                    range = 1.1f..2.8f,
+                    steps = 16,
+                    onChange = { value -> onChange { it.copy(lineHeightMultiplier = value) } }
+                )
+                LabeledSlider(
+                    label = "段间距",
+                    value = config.paragraphSpacingEm,
+                    valueText = String.format("%.2f em", config.paragraphSpacingEm),
+                    range = 0f..1.6f,
+                    steps = 15,
+                    onChange = { value -> onChange { it.copy(paragraphSpacingEm = value) } }
+                )
+                LabeledSlider(
+                    label = "首行缩进",
+                    value = config.firstLineIndentEm,
+                    valueText = String.format("%.1f 字", config.firstLineIndentEm),
+                    range = 0f..3f,
+                    steps = 5,
+                    onChange = { value -> onChange { it.copy(firstLineIndentEm = value) } }
+                )
+                LabeledSlider(
+                    label = "页边距",
+                    value = config.horizontalPaddingDp.toFloat(),
+                    valueText = "${config.horizontalPaddingDp} dp",
+                    range = 6f..40f,
+                    steps = 16,
+                    onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
+                )
+                CardDivider()
+                ChoiceRow(
+                    label = "对齐",
+                    options = listOf(
+                        TextAlignKey.JUSTIFY to "两端对齐",
+                        TextAlignKey.LEFT to "左对齐",
+                        TextAlignKey.CENTER to "居中"
+                    ),
+                    selected = config.textAlign,
+                    onSelect = { key -> onChange { it.copy(textAlign = key) } },
+                    columns = 3
+                )
+                SettingSwitchRow(
+                    label = "加粗正文",
                     checked = config.boldText,
                     onCheckedChange = { value -> onChange { it.copy(boldText = value) } }
                 )
@@ -334,227 +394,244 @@ fun ReaderSettingsSheet(
                 onPickImage = { imagePicker.launch(arrayOf("image/*")) }
             )
 
-            SectionTitle("屏幕")
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("亮度（-1 跟随系统）", modifier = Modifier.weight(1f))
-                Switch(
-                    checked = config.brightness < 0f,
-                    onCheckedChange = { follow -> onChange { it.copy(brightness = if (follow) -1f else 0.6f) } }
-                )
-            }
-            if (config.brightness >= 0f) {
-                LabeledSlider(
-                    label = "屏幕亮度",
-                    value = config.brightness,
-                    valueText = "${(config.brightness * 100).toInt()}%",
-                    range = 0.05f..1f,
-                    onChange = { value -> onChange { it.copy(brightness = value) } }
-                )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("屏幕常亮", modifier = Modifier.weight(1f))
-                Switch(
+            SettingCard(title = "屏幕与交互") {
+                SettingSwitchRow(
+                    label = "屏幕常亮",
                     checked = config.keepScreenOn,
                     onCheckedChange = { value -> onChange { it.copy(keepScreenOn = value) } }
                 )
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("全屏沉浸", modifier = Modifier.weight(1f))
-                Switch(
+                SettingSwitchRow(
+                    label = "全屏沉浸",
+                    subtitle = "隐藏状态栏与导航栏",
                     checked = config.fullScreen,
                     onCheckedChange = { value -> onChange { it.copy(fullScreen = value) } }
                 )
-            }
-            ChoiceRow(
-                label = "屏幕方向",
-                options = listOf(
-                    OrientationKey.AUTO to "自动",
-                    OrientationKey.PORTRAIT to "竖屏",
-                    OrientationKey.LANDSCAPE to "横屏"
-                ),
-                selected = config.orientation,
-                onSelect = { key -> onChange { it.copy(orientation = key) } },
-                columns = 3
-            )
-            ChoiceRow(
-                label = "点击区域",
-                options = listOf(
-                    TapZoneKey.THREE to "左中右三分",
-                    TapZoneKey.TWO to "左右两分",
-                    TapZoneKey.NONE to "仅呼出菜单"
-                ),
-                selected = config.tapZone,
-                onSelect = { key -> onChange { it.copy(tapZone = key) } },
-                columns = 3
-            )
-
-            SectionTitle("页眉页脚")
-            SwitchRow("显示页眉", config.showHeader) { value -> onChange { it.copy(showHeader = value) } }
-            SwitchRow("页眉显示章节名", config.showChapterTitleInHeader) { value ->
-                onChange { it.copy(showChapterTitleInHeader = value) }
-            }
-            SwitchRow("显示页脚", config.showFooter) { value -> onChange { it.copy(showFooter = value) } }
-            SwitchRow("显示页码", config.showPageNumber) { value -> onChange { it.copy(showPageNumber = value) } }
-            SwitchRow("显示时间", config.showClock) { value -> onChange { it.copy(showClock = value) } }
-            SwitchRow("显示电量", config.showBattery) { value -> onChange { it.copy(showBattery = value) } }
-
-            SectionTitle("EPUB 排版")
-            ChoiceRow(
-                label = "原书样式",
-                options = listOf(
-                    EpubLayoutMode.UNIFIED to "统一排版",
-                    EpubLayoutMode.ORIGINAL to "保留原书"
-                ),
-                selected = config.epubLayoutMode,
-                onSelect = { key -> onChange { it.copy(epubLayoutMode = key) } },
-                columns = 2
-            )
-            SwitchRow("显示插图", config.allowImages) { value -> onChange { it.copy(allowImages = value) } }
-
-            SectionTitle("朗读")
-            LabeledSlider(
-                label = "语速",
-                value = config.ttsSpeechRate,
-                valueText = String.format("%.2f", config.ttsSpeechRate),
-                range = 0.5f..2f,
-                onChange = { value -> onChange { it.copy(ttsSpeechRate = value) } }
-            )
-            LabeledSlider(
-                label = "音调",
-                value = config.ttsPitch,
-                valueText = String.format("%.2f", config.ttsPitch),
-                range = 0.5f..2f,
-                onChange = { value -> onChange { it.copy(ttsPitch = value) } }
-            )
-            SwitchRow("读完自动下一章", config.ttsAutoNextChapter) { value ->
-                onChange { it.copy(ttsAutoNextChapter = value) }
+                CardDivider()
+                ChoiceRow(
+                    label = "屏幕方向",
+                    options = listOf(
+                        OrientationKey.AUTO to "自动",
+                        OrientationKey.PORTRAIT to "竖屏",
+                        OrientationKey.LANDSCAPE to "横屏"
+                    ),
+                    selected = config.orientation,
+                    onSelect = { key -> onChange { it.copy(orientation = key) } },
+                    columns = 3
+                )
+                ChoiceRow(
+                    label = "点击区域",
+                    options = listOf(
+                        TapZoneKey.THREE to "左中右三分",
+                        TapZoneKey.TWO to "左右两分",
+                        TapZoneKey.NONE to "仅呼出菜单"
+                    ),
+                    selected = config.tapZone,
+                    onSelect = { key -> onChange { it.copy(tapZone = key) } },
+                    columns = 3
+                )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            SettingCard(title = "页眉页脚") {
+                SettingSwitchRow(
+                    label = "显示页眉",
+                    checked = config.showHeader,
+                    onCheckedChange = { value -> onChange { it.copy(showHeader = value) } }
+                )
+                SettingSwitchRow(
+                    label = "页眉显示章节名",
+                    checked = config.showChapterTitleInHeader,
+                    onCheckedChange = { value -> onChange { it.copy(showChapterTitleInHeader = value) } }
+                )
+                SettingSwitchRow(
+                    label = "显示页脚",
+                    checked = config.showFooter,
+                    onCheckedChange = { value -> onChange { it.copy(showFooter = value) } }
+                )
+                SettingSwitchRow(
+                    label = "显示页码",
+                    checked = config.showPageNumber,
+                    onCheckedChange = { value -> onChange { it.copy(showPageNumber = value) } }
+                )
+                SettingSwitchRow(
+                    label = "显示时间",
+                    checked = config.showClock,
+                    onCheckedChange = { value -> onChange { it.copy(showClock = value) } }
+                )
+                SettingSwitchRow(
+                    label = "显示电量",
+                    checked = config.showBattery,
+                    onCheckedChange = { value -> onChange { it.copy(showBattery = value) } }
+                )
+            }
+
+            SettingCard(title = "EPUB 排版") {
+                SegmentedRow(
+                    options = listOf(EpubLayoutMode.UNIFIED to "统一排版", EpubLayoutMode.ORIGINAL to "保留原书"),
+                    selected = config.epubLayoutMode,
+                    onSelect = { key -> onChange { it.copy(epubLayoutMode = key) } }
+                )
+                Text(
+                    text = "统一排版会强制字号行距，但保留插图、加粗与层级；保留原书则尽量还原出版社版式。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                SettingSwitchRow(
+                    label = "显示插图",
+                    checked = config.allowImages,
+                    onCheckedChange = { value -> onChange { it.copy(allowImages = value) } }
+                )
+            }
+
+            SettingCard(title = "朗读") {
+                LabeledSlider(
+                    label = "语速",
+                    value = config.ttsSpeechRate,
+                    valueText = String.format("%.2f", config.ttsSpeechRate),
+                    range = 0.5f..2f,
+                    onChange = { value -> onChange { it.copy(ttsSpeechRate = value) } }
+                )
+                LabeledSlider(
+                    label = "音调",
+                    value = config.ttsPitch,
+                    valueText = String.format("%.2f", config.ttsPitch),
+                    range = 0.5f..2f,
+                    onChange = { value -> onChange { it.copy(ttsPitch = value) } }
+                )
+                SettingSwitchRow(
+                    label = "读完自动下一章",
+                    checked = config.ttsAutoNextChapter,
+                    onCheckedChange = { value -> onChange { it.copy(ttsAutoNextChapter = value) } }
+                )
+            }
+
             OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) {
                 Text("恢复全局默认设置")
             }
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(Spacing.xxxl))
         }
     }
 }
 
-@Composable
-private fun SwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
+// ---------------------------------------------------------------- 笔记与书签
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NotesSheet(
     container: AppContainer,
     session: ReaderSession,
-    bookId: Long,
+    book: BookEntity,
     onDismiss: () -> Unit,
     onJump: (chapterIndex: Int, offset: Int) -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    val highlights by container.notes.observeHighlights(bookId).collectAsState(initial = emptyList())
-    val bookmarks by container.notes.observeBookmarks(bookId).collectAsState(initial = emptyList())
+    val context = LocalContext.current
+    val highlights by container.notes.observeHighlights(book.id).collectAsState(initial = emptyList())
+    val bookmarks by container.notes.observeBookmarks(book.id).collectAsState(initial = emptyList())
     var tab by remember { mutableStateOf(0) }
+    var pendingExport by remember { mutableStateOf<String?>(null) }
+    var message by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { tab = 0 }) { Text("划线笔记 ${highlights.size}") }
-                TextButton(onClick = { tab = 1 }) { Text("书签 ${bookmarks.size}") }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-        }
-        val listHeight = 420.dp
-        if (tab == 0) {
-            LazyColumn(modifier = Modifier
-                .fillMaxWidth()
-                .height(listHeight)) {
-                if (highlights.isEmpty()) {
-                    item { EmptyHint("还没有划线或笔记：长按选中文字后点「划线」或「笔记」") }
+    val exporter = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("text/markdown")
+    ) { uri ->
+        val content = pendingExport
+        pendingExport = null
+        if (uri != null && content != null) {
+            scope.launch {
+                val ok = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
+                        true
+                    }.getOrDefault(false)
                 }
-                items(highlights, key = { it.id }) { highlight ->
-                    NoteRow(
-                        title = highlight.text,
-                        subtitle = highlight.note,
-                        meta = "第 ${highlight.chapterIndex + 1} 章",
-                        onClick = { onJump(highlight.chapterIndex, highlight.startOffset) },
-                        onDelete = { scope.launch { session.deleteHighlight(highlight) } }
-                    )
-                }
-            }
-        } else {
-            LazyColumn(modifier = Modifier
-                .fillMaxWidth()
-                .height(listHeight)) {
-                if (bookmarks.isEmpty()) {
-                    item { EmptyHint("还没有书签：点顶部的星标即可添加") }
-                }
-                items(bookmarks, key = { it.id }) { bookmark ->
-                    NoteRow(
-                        title = bookmark.chapterTitle,
-                        subtitle = bookmark.snippet,
-                        meta = bookmark.note,
-                        onClick = { onJump(bookmark.chapterIndex, bookmark.charOffset) },
-                        onDelete = { scope.launch { container.notes.deleteBookmark(bookmark) } }
-                    )
-                }
+                message = if (ok) "已导出到所选文件" else "导出失败"
             }
         }
     }
-}
 
-@Composable
-private fun EmptyHint(text: String) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(16.dp)
-    )
-}
+    fun startExport() {
+        scope.launch {
+            val markdown = withContext(Dispatchers.IO) {
+                val chapters = session.chapters
+                val titleOf = { index: Int -> chapters.firstOrNull { it.index == index }?.title.orEmpty() }
+                NoteExporter.toMarkdown(
+                    bookTitle = book.title,
+                    author = book.author,
+                    highlights = container.notes.allHighlights(book.id).map {
+                        NoteExporter.ExportHighlight(it.chapterIndex, titleOf(it.chapterIndex), it.startOffset, it.text, it.note)
+                    },
+                    bookmarks = container.notes.allBookmarks().filter { it.bookId == book.id }.map {
+                        NoteExporter.ExportBookmark(it.chapterIndex, titleOf(it.chapterIndex).ifBlank { it.chapterTitle }, it.charOffset, it.snippet)
+                    }
+                )
+            }
+            if (markdown.isEmpty()) {
+                message = "还没有可导出的划线或书签"
+            } else {
+                pendingExport = markdown
+                exporter.launch("${book.title}-读书笔记.md")
+            }
+        }
+    }
 
-@Composable
-private fun NoteRow(
-    title: String,
-    subtitle: String?,
-    meta: String?,
-    onClick: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(16.dp)
+    SheetScaffold(
+        title = "笔记与书签",
+        subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}" + (message?.let { " · $it" } ?: ""),
+        onDismiss = onDismiss,
+        fillHeight = true,
+        actions = {
+            SheetActionButton("导出", onClick = { startExport() }, enabled = highlights.isNotEmpty() || bookmarks.isNotEmpty())
+        }
     ) {
-        Text(text = title, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        if (!subtitle.isNullOrBlank()) {
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
+        Column(modifier = Modifier.padding(horizontal = Spacing.xl)) {
+            SegmentedRow(
+                options = listOf(0 to "划线 ${highlights.size}", 1 to "书签 ${bookmarks.size}"),
+                selected = tab,
+                onSelect = { tab = it }
             )
         }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = meta.orEmpty(),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onDelete) { Text("删除") }
+        when (tab) {
+            0 -> if (highlights.isEmpty()) {
+                SheetEmpty("还没有划线或笔记。\n长按选中文字后点工具条上的「划线」或「笔记」。")
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    items(highlights, key = { it.id }) { highlight ->
+                        ListRow(
+                            title = highlight.text,
+                            subtitle = highlight.note,
+                            meta = "第 ${highlight.chapterIndex + 1} 章",
+                            trailing = {
+                                SheetActionButton("删除", onClick = { scope.launch { session.deleteHighlight(highlight) } })
+                            },
+                            onClick = { onJump(highlight.chapterIndex, highlight.startOffset) }
+                        )
+                    }
+                }
+            }
+            else -> if (bookmarks.isEmpty()) {
+                SheetEmpty("还没有书签。\n点顶栏的星标即可把当前位置加入书签。")
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                    items(bookmarks, key = { it.id }) { bookmark ->
+                        ListRow(
+                            title = bookmark.chapterTitle,
+                            subtitle = bookmark.snippet,
+                            trailing = {
+                                SheetActionButton(
+                                    "删除",
+                                    onClick = { scope.launch { container.notes.deleteBookmark(bookmark) } }
+                                )
+                            },
+                            onClick = { onJump(bookmark.chapterIndex, bookmark.charOffset) }
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+// ---------------------------------------------------------------- 全文搜索
+
 @Composable
 fun SearchSheet(
     container: AppContainer,
@@ -567,19 +644,21 @@ fun SearchSheet(
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<SearchHit>>(emptyList()) }
     var scanning by remember { mutableStateOf(false) }
-    var scanned by remember { mutableStateOf(0) }
+    var scannedChapters by remember { mutableStateOf(0) }
+    var searched by remember { mutableStateOf(false) }
 
     fun runSearch() {
         val keyword = query.trim()
         if (keyword.isEmpty()) return
         results = emptyList()
         scanning = true
-        scanned = 0
+        searched = true
+        scannedChapters = 0
         scope.launch {
             container.search.search(book, session.chapters, keyword, SearchOptions())
                 .collect { progress ->
                     when (progress) {
-                        is SearchProgress.Scanning -> scanned = progress.chapterIndex
+                        is SearchProgress.Scanning -> scannedChapters = progress.chapterIndex + 1
                         is SearchProgress.Done -> {
                             results = progress.results
                             scanning = false
@@ -589,112 +668,107 @@ fun SearchSheet(
         }
     }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    label = { Text("全书搜索") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f)
-                )
-                TextButton(onClick = { runSearch() }) { Text("搜索") }
-            }
-            if (scanning) {
-                Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = {
-                        if (session.chapters.isEmpty()) 0f
-                        else (scanned + 1).toFloat() / session.chapters.size
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Text("正在扫描第 ${scanned + 1} 章…", style = MaterialTheme.typography.labelSmall)
-            }
-            Spacer(modifier = Modifier.height(8.dp))
+    val highlightColor = LocalMiradColors.current.searchHighlight
+
+    SheetScaffold(
+        title = "全书搜索",
+        subtitle = when {
+            scanning -> "正在扫描第 $scannedChapters/${session.chapters.size} 章…"
+            searched -> "找到 ${results.size} 处"
+            else -> "在《${book.title}》中查找"
+        },
+        onDismiss = onDismiss,
+        fillHeight = true,
+        actions = { SheetActionButton("搜索", onClick = { runSearch() }, enabled = query.isNotBlank() && !scanning) }
+    ) {
+        Column(modifier = Modifier.padding(horizontal = Spacing.xl)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("输入要查找的内容") },
+                singleLine = true,
+                shape = MaterialTheme.shapes.small,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
-        LazyColumn(modifier = Modifier
-            .fillMaxWidth()
-            .height(420.dp)) {
-            if (!scanning && results.isEmpty() && query.isNotBlank()) {
-                item { EmptyHint("没有找到「$query」") }
-            }
-            items(results) { hit ->
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onJump(hit) }
-                        .padding(horizontal = 16.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = hit.chapterTitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary
+        if (scanning) {
+            LinearProgressIndicator(
+                progress = {
+                    if (session.chapters.isEmpty()) 0f else scannedChapters.toFloat() / session.chapters.size
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = Spacing.xl)
+            )
+        }
+        when {
+            !searched -> SheetEmpty("输入关键词后点右上角「搜索」，会在全书逐章查找。")
+            scanning && results.isEmpty() -> SheetEmpty("正在查找…")
+            results.isEmpty() -> SheetEmpty("没有找到「$query」")
+            else -> LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                items(results) { hit ->
+                    ListRow(
+                        title = hit.snippet,
+                        meta = hit.chapterTitle,
+                        subtitleMaxLines = 2,
+                        onClick = { onJump(hit) }
                     )
-                    val snippet = hit.snippet
-                    if (hit.matchStart in 0..snippet.length && hit.matchEnd <= snippet.length) {
-                        androidx.compose.ui.text.buildAnnotatedString {
-                            append(snippet.substring(0, hit.matchStart))
-                            withStyle(androidx.compose.ui.text.SpanStyle(
-                                background = Color(0x66FF6B6B),
-                                fontWeight = FontWeight.Bold
-                            )) {
-                                append(snippet.substring(hit.matchStart, hit.matchEnd))
-                            }
-                            append(snippet.substring(hit.matchEnd))
-                        }.let { annotated ->
-                            Text(text = annotated, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                        }
-                    } else {
-                        Text(text = snippet, style = MaterialTheme.typography.bodySmall, maxLines = 2)
-                    }
                 }
             }
         }
     }
 }
 
+// ---------------------------------------------------------------- 朗读
+
 @Composable
-fun TtsPanel(
+fun TtsSheet(
     tts: TtsController,
     onStart: (resume: Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     val state by TtsBus.state.collectAsState()
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 16.dp, vertical = 10.dp)
+    SheetScaffold(
+        title = "朗读",
+        subtitle = when {
+            state.error != null -> state.error
+            state.active -> "第 ${state.index + 1}/${state.total} 句"
+            else -> "使用系统语音朗读当前章节"
+        },
+        onDismiss = onClose
     ) {
-        Text(
-            text = when {
-                state.error != null -> state.error!!
-                state.active -> "正在朗读 第 ${state.index + 1}/${state.total} 句"
-                else -> "朗读当前章节"
-            },
-            style = MaterialTheme.typography.bodyMedium
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { tts.previous() }) { Text("上一句") }
-            TextButton(onClick = { if (state.active) tts.pause() else onStart(true) }) {
-                Text(if (state.playing) "暂停" else "播放")
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                OutlinedButton(onClick = { tts.previous() }, modifier = Modifier.weight(1f)) { Text("上一句") }
+                OutlinedButton(
+                    onClick = { if (state.active && state.playing) tts.pause() else onStart(state.active) },
+                    modifier = Modifier.weight(1f)
+                ) { Text(if (state.playing) "暂停" else "播放") }
+                OutlinedButton(onClick = { tts.next() }, modifier = Modifier.weight(1f)) { Text("下一句") }
             }
-            TextButton(onClick = { tts.next() }) { Text("下一句") }
-            TextButton(onClick = { onStart(false) }) { Text("从头") }
-            TextButton(onClick = { tts.stop(); onClose() }) { Text("停止") }
-        }
-        if (state.active) {
-            LinearProgressIndicator(
-                progress = {
-                    if (state.total <= 0) 0f else (state.index + 1).toFloat() / state.total
-                },
-                modifier = Modifier.fillMaxWidth()
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                OutlinedButton(onClick = { onStart(false) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
+                OutlinedButton(
+                    onClick = { tts.stop(); onClose() },
+                    modifier = Modifier.weight(1f)
+                ) { Text("停止朗读") }
+            }
+            if (state.active) {
+                LinearProgressIndicator(
+                    progress = { if (state.total <= 0) 0f else (state.index + 1).toFloat() / state.total },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+            Text(
+                text = "朗读会在后台继续，通知栏可以暂停或切句；语速与音调在阅读设置里调整。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Normal
             )
+            Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }
 }
-
-private fun formatPercent(value: Float): String = "${(value * 100).toInt()}%"

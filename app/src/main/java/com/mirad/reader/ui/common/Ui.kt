@@ -3,6 +3,7 @@ package com.mirad.reader.ui.common
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,21 +32,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** 设置项标题（分组前的小标题）。 */
-@Composable
-fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = modifier.padding(start = 4.dp, top = 6.dp, bottom = 8.dp)
-    )
-}
-
 /**
  * 设置项分组卡片：统一的圆角、描边与内边距。
  *
- * 之前所有设置项直接堆在滚动列里，靠 SectionTitle 分隔，视觉上很散；
+ * 之前所有设置项直接堆在滚动列里，靠小标题分隔，视觉上很散；
  * 改成卡片分组后层级清楚很多。
  */
 @Composable
@@ -174,8 +164,14 @@ fun <T> ChoiceRow(
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-fun ChoiceChip(text: String, selected: Boolean, onClick: () -> Unit) {
+fun ChoiceChip(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
+) {
     val shape = RoundedCornerShape(50)
     Box(
         modifier = Modifier
@@ -187,7 +183,7 @@ fun ChoiceChip(text: String, selected: Boolean, onClick: () -> Unit) {
                 else MaterialTheme.colorScheme.outlineVariant,
                 shape = shape
             )
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(horizontal = 14.dp, vertical = 7.dp)
     ) {
         Text(
@@ -275,7 +271,8 @@ fun ColorDotRow(
                     Icon(
                         imageVector = Icons.Default.Check,
                         contentDescription = null,
-                        tint = if (dark) Color.White else Color(0xFF2F6B58),
+                        tint = if (dark) com.mirad.reader.ui.design.LocalMiradColors.current.checkOnDarkSwatch
+                        else com.mirad.reader.ui.design.LocalMiradColors.current.selectionCheck,
                         modifier = Modifier.size(18.dp)
                     )
                 }

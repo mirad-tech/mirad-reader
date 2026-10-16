@@ -82,7 +82,14 @@ import com.mirad.reader.data.imports.ImportSource
 import com.mirad.reader.data.imports.ImportSources
 import com.mirad.reader.data.imports.ImportStage
 import com.mirad.reader.data.repo.ShelfBook
+import com.mirad.reader.ui.common.ActionItem
+import com.mirad.reader.ui.common.ActionSheet
 import com.mirad.reader.ui.common.ChoiceChip
+import com.mirad.reader.ui.common.EmptyState
+import com.mirad.reader.ui.common.ScreenHeader
+import com.mirad.reader.ui.design.LocalMiradColors
+import com.mirad.reader.ui.design.Sizes
+import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,7 +111,9 @@ fun ShelfScreen(
     container: AppContainer,
     onOpenBook: (Long) -> Unit,
     onOpenStats: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenNotes: () -> Unit = {},
+    onOpenHidden: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -117,6 +126,7 @@ fun ShelfScreen(
     var sort by remember { mutableStateOf(ShelfSort.RECENT) }
     var layout by remember { mutableStateOf(ShelfLayout.GRID) }
     var selectedGroup by remember { mutableStateOf<Long?>(null) }
+    var showHidden by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -128,6 +138,9 @@ fun ShelfScreen(
     var editAuthor by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
+    var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
+    var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
+    var groupRenameDraft by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -151,31 +164,16 @@ fun ShelfScreen(
         }
     }
 
-    val visible = remember(shelf, sort, selectedGroup, query) {
-        shelf
-            .filter { !it.book.isHidden || selection.isNotEmpty() }
-            .filter {
-                when (selectedGroup) {
-                    null -> true
-                    -1L -> it.book.groupId == null
-                    else -> it.book.groupId == selectedGroup
-                }
-            }
-            .filter {
-                query.isBlank() ||
-                    it.book.title.contains(query, true) ||
-                    (it.book.author?.contains(query, true) == true)
-            }
-            .sortedWith(
-                when (sort) {
-                    ShelfSort.RECENT -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.lastReadAt }
-                    ShelfSort.ADDED -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.book.addedAt }
-                    ShelfSort.TITLE -> compareByDescending<ShelfBook> { it.book.isPinned }.thenBy { it.book.title }
-                    ShelfSort.AUTHOR -> compareByDescending<ShelfBook> { it.book.isPinned }.thenBy { it.book.author.orEmpty() }
-                    ShelfSort.SIZE -> compareByDescending<ShelfBook> { it.book.isPinned }.thenByDescending { it.book.fileSize }
-                }
-            )
+    val visible = remember(shelf, sort, selectedGroup, query, showHidden) {
+        ShelfQuery.apply(
+            all = shelf,
+            sort = sort,
+            groupId = selectedGroup,
+            query = query,
+            includeHidden = showHidden
+        )
     }
+    val hiddenCount = remember(shelf) { shelf.count { it.book.isHidden } }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -187,6 +185,8 @@ fun ShelfScreen(
                 onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
                 onStats = onOpenStats,
                 onSettings = onOpenSettings,
+                onNotes = onOpenNotes,
+                onHidden = onOpenHidden,
                 onExitSelection = { selection = emptySet() },
                 onPinSelected = {
                     scope.launch {
@@ -261,19 +261,41 @@ fun ShelfScreen(
                 )
             }
 
-            if (groups.isNotEmpty()) {
+            if (groups.isNotEmpty() || hiddenCount > 0) {
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     item {
-                        ChoiceChip("全部", selectedGroup == null) { selectedGroup = null }
+                        ChoiceChip(
+                            text = "全部",
+                            selected = selectedGroup == null && !showHidden,
+                            onClick = { selectedGroup = null; showHidden = false }
+                        )
                     }
                     item {
-                        ChoiceChip("未分组", selectedGroup == -1L) { selectedGroup = -1L }
+                        ChoiceChip(
+                            text = "未分组",
+                            selected = selectedGroup == ShelfQuery.GROUP_NONE && !showHidden,
+                            onClick = { selectedGroup = ShelfQuery.GROUP_NONE; showHidden = false }
+                        )
                     }
                     items(groups, key = { it.id }) { group ->
-                        ChoiceChip(group.name, selectedGroup == group.id) { selectedGroup = group.id }
+                        ChoiceChip(
+                            text = group.name,
+                            selected = selectedGroup == group.id && !showHidden,
+                            onClick = { selectedGroup = group.id; showHidden = false },
+                            onLongClick = { groupAction = group }
+                        )
+                    }
+                    if (hiddenCount > 0) {
+                        item {
+                            ChoiceChip(
+                                text = "已隐藏 $hiddenCount",
+                                selected = showHidden,
+                                onClick = { selectedGroup = null; showHidden = true }
+                            )
+                        }
                     }
                 }
             }
@@ -370,27 +392,79 @@ fun ShelfScreen(
     // ---------------- 弹层 ----------------
 
     actionBook?.let { book ->
-        BookActionSheet(
-            book = book,
-            canGroup = groups.isNotEmpty(),
+        val isHidden = book.isHidden
+        ActionSheet(
+            title = book.title,
+            subtitle = "${book.author ?: "未知作者"} · ${book.totalChapters} 章 · ${book.format}",
             onDismiss = { actionBook = null },
-            onOpen = { actionBook = null; onOpenBook(book.id) },
-            onEdit = {
-                actionBook = null
-                editing = book
-                editTitle = book.title
-                editAuthor = book.author.orEmpty()
+            header = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BookCover(
+                        book = book,
+                        modifier = Modifier.size(Sizes.coverSmallWidth, Sizes.coverSmallHeight)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "阅读进度 ${(shelf.firstOrNull { it.book.id == book.id }?.percent ?: 0f).let { (it * 100).toInt() }}%",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (isHidden) "已在书架隐藏" else "上次阅读 ${formatRelative(shelf.firstOrNull { it.book.id == book.id }?.lastReadAt ?: 0L)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             },
-            onTogglePin = {
-                actionBook = null
-                scope.launch { container.books.setPinned(book.id, !book.isPinned) }
-            },
-            onHide = {
-                actionBook = null
-                scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏，可在设置里恢复" }
-            },
-            onGroup = { actionBook = null; selection = setOf(book.id); groupDialog = true },
-            onDelete = { actionBook = null; selection = setOf(book.id); confirmDelete = true }
+            items = buildList {
+                add(ActionItem("继续阅读") { onOpenBook(book.id) })
+                if (isHidden) {
+                    add(ActionItem("取消隐藏") {
+                        scope.launch { container.books.setHidden(book.id, false); toast = "已恢复到书架" }
+                    })
+                }
+                add(ActionItem("编辑书名 / 作者") {
+                    editing = book
+                    editTitle = book.title
+                    editAuthor = book.author.orEmpty()
+                })
+                add(ActionItem(if (book.isPinned) "取消置顶" else "置顶") {
+                    scope.launch { container.books.setPinned(book.id, !book.isPinned) }
+                })
+                if (groups.isNotEmpty()) {
+                    add(ActionItem("移入分组") { selection = setOf(book.id); groupDialog = true })
+                }
+                if (!isHidden) {
+                    add(ActionItem("在书架隐藏", hint = "隐藏后可从分组行的「已隐藏」里找回") {
+                        scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏，可从分组行的「已隐藏」找回" }
+                    })
+                }
+                add(ActionItem("删除这本书", danger = true) { selection = setOf(book.id); confirmDelete = true })
+            }
+        )
+    }
+
+    groupAction?.let { group ->
+        ActionSheet(
+            title = group.name,
+            subtitle = "分组 · ${shelf.count { it.book.groupId == group.id }} 本",
+            onDismiss = { groupAction = null },
+            items = listOf(
+                ActionItem("只看这个分组") { selectedGroup = group.id; showHidden = false },
+                ActionItem("重命名", hint = "当前名称：${group.name}") {
+                    groupRenameTarget = group
+                    groupRenameDraft = group.name
+                },
+                ActionItem("删除分组", hint = "组内书籍会回到「未分组」", danger = true) {
+                    scope.launch {
+                        container.groups.delete(group)
+                        if (selectedGroup == group.id) selectedGroup = null
+                        toast = "已删除分组「${group.name}」"
+                    }
+                }
+            )
         )
     }
 
@@ -470,6 +544,32 @@ fun ShelfScreen(
         )
     }
 
+    if (groupRenameTarget != null) {
+        val target = groupRenameTarget!!
+        AlertDialog(
+            onDismissRequest = { groupRenameTarget = null },
+            title = { Text("重命名分组") },
+            text = {
+                OutlinedTextField(
+                    value = groupRenameDraft,
+                    onValueChange = { groupRenameDraft = it },
+                    label = { Text("分组名称") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val name = groupRenameDraft.trim()
+                    groupRenameTarget = null
+                    if (name.isNotEmpty() && name != target.name) {
+                        scope.launch { container.groups.rename(target, name) }
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { groupRenameTarget = null }) { Text("取消") } }
+        )
+    }
+
     if (confirmDelete) {
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
@@ -534,31 +634,19 @@ private fun ShelfHeader(
     onToggleSearch: () -> Unit,
     onStats: () -> Unit,
     onSettings: () -> Unit,
+    onNotes: () -> Unit,
+    onHidden: () -> Unit,
     onExitSelection: () -> Unit,
     onPinSelected: () -> Unit,
     onGroupSelected: () -> Unit,
     onDeleteSelected: () -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.background,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        if (selectionCount > 0) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onExitSelection) {
-                    Icon(Icons.Default.Close, contentDescription = "退出多选")
-                }
-                Text(
-                    text = "已选 $selectionCount 本",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
-                )
+    var menu by remember { mutableStateOf(false) }
+    if (selectionCount > 0) {
+        ScreenHeader(
+            title = "已选 $selectionCount 本",
+            onBack = onExitSelection,
+            actions = {
                 IconButton(onClick = onPinSelected) {
                     Icon(Icons.Default.Star, contentDescription = "置顶")
                 }
@@ -569,26 +657,14 @@ private fun ShelfHeader(
                     Icon(Icons.Default.Delete, contentDescription = "删除")
                 }
             }
-        } else {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .statusBarsPadding()
-                    .padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "墨读",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = if (total == 0) "本地离线阅读" else "书架共 $total 本",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        )
+    } else {
+        ScreenHeader(
+            title = "墨读",
+            subtitle = if (total == 0) "本地离线阅读" else "书架共 $total 本",
+            large = true,
+            divider = false,
+            actions = {
                 IconButton(onClick = onToggleSearch) {
                     Icon(
                         Icons.Default.Search,
@@ -598,13 +674,40 @@ private fun ShelfHeader(
                     )
                 }
                 IconButton(onClick = onStats) {
-                    Icon(Icons.Default.Star, contentDescription = "阅读统计", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(
+                        Icons.Default.Star,
+                        contentDescription = "阅读统计",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 IconButton(onClick = onSettings) {
-                    Icon(Icons.Default.Settings, contentDescription = "设置", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = "设置",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Box {
+                    IconButton(onClick = { menu = true }) {
+                        Icon(
+                            Icons.Default.MoreVert,
+                            contentDescription = "更多",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text("笔记与书签") },
+                            onClick = { menu = false; onNotes() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("隐藏的书籍") },
+                            onClick = { menu = false; onHidden() }
+                        )
+                    }
                 }
             }
-        }
+        )
     }
 }
 
@@ -650,7 +753,7 @@ private fun BookGridCard(
                         .clip(RoundedCornerShape(50))
                         .background(
                             if (selected) MaterialTheme.colorScheme.primary
-                            else Color.Black.copy(alpha = 0.35f)
+                            else LocalMiradColors.current.coverScrim
                         ),
                     contentAlignment = Alignment.Center
                 ) {
@@ -757,7 +860,7 @@ private fun androidx.compose.foundation.layout.BoxScope.CoverProgress(percent: F
             .align(Alignment.BottomStart)
             .fillMaxWidth()
             .height(4.dp)
-            .background(Color.Black.copy(alpha = 0.22f))
+            .background(LocalMiradColors.current.coverScrim)
     ) {
         Box(
             modifier = Modifier
@@ -800,107 +903,26 @@ private fun Badge(text: String, modifier: Modifier = Modifier) {
 
 @Composable
 private fun EmptyShelf(searching: Boolean, onImport: () -> Unit) {
-    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(32.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.outlineVariant,
-                        shape = RoundedCornerShape(24.dp)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (searching) "空" else "书",
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Spacer(modifier = Modifier.height(18.dp))
-            Text(
-                text = if (searching) "没有匹配的书籍" else "书架还是空的",
-                style = MaterialTheme.typography.titleMedium
-            )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                text = if (searching) "换个关键词或分组试试" else "导入本机的 txt / epub 就能开始阅读",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            if (!searching) {
-                Spacer(modifier = Modifier.height(18.dp))
-                OutlinedButton(onClick = onImport) { Text("导入 txt / epub") }
-            }
-        }
+    if (searching) {
+        EmptyState(
+            title = "没有匹配的书籍",
+            badge = "空",
+            description = "换个关键词，或切回「全部」分组",
+            modifier = Modifier.fillMaxSize()
+        )
+    } else {
+        EmptyState(
+            title = "书架还是空的",
+            badge = "书",
+            description = "导入本机的 txt / epub 就能开始阅读",
+            actionText = "导入 txt / epub",
+            onAction = onImport,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
-/** 长按书籍后的操作面板。 */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun BookActionSheet(
-    book: BookEntity,
-    canGroup: Boolean,
-    onDismiss: () -> Unit,
-    onOpen: () -> Unit,
-    onEdit: () -> Unit,
-    onTogglePin: () -> Unit,
-    onHide: () -> Unit,
-    onGroup: () -> Unit,
-    onDelete: () -> Unit
-) {
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(modifier = Modifier.padding(horizontal = 20.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                BookCover(
-                    book = book,
-                    modifier = Modifier
-                        .width(44.dp)
-                        .height(60.dp)
-                )
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(text = book.title, style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        text = "${book.author ?: "未知作者"} · ${book.totalChapters} 章 · ${book.format}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            SheetAction("继续阅读", onOpen)
-            SheetAction("编辑书名 / 作者", onEdit)
-            SheetAction(if (book.isPinned) "取消置顶" else "置顶", onTogglePin)
-            if (canGroup) SheetAction("移入分组", onGroup)
-            SheetAction("在书架隐藏", onHide)
-            SheetAction("删除这本书", onDelete, danger = true)
-            Spacer(modifier = Modifier.height(16.dp))
-        }
-    }
-}
-
-@Composable
-private fun SheetAction(text: String, onClick: () -> Unit, danger: Boolean = false) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyLarge,
-        color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.small)
-            .clickable(onClick = onClick)
-            .padding(vertical = 14.dp)
-    )
-}
+// 书籍与分组的操作面板统一用 ui/common/ActionSheet，不再各自实现 ModalBottomSheet。
 
 @Composable
 private fun ShelfToast(message: String, onDismiss: () -> Unit) {
@@ -968,6 +990,24 @@ private fun ImportBar(items: List<ImportItem>, running: Boolean) {
 private fun isSupported(name: String): Boolean {
     val lower = name.lowercase()
     return lower.endsWith(".txt") || lower.endsWith(".epub")
+}
+
+/** 「3 小时前 / 昨天 / 3 天前」这类相对时间，书架副标题用。 */
+private fun formatRelative(timeMillis: Long): String {
+    if (timeMillis <= 0L) return "还没读过"
+    val diff = System.currentTimeMillis() - timeMillis
+    val minutes = diff / 60_000
+    return when {
+        minutes < 1 -> "刚刚"
+        minutes < 60 -> "$minutes 分钟前"
+        minutes < 60 * 24 -> "${minutes / 60} 小时前"
+        minutes < 60 * 24 * 2 -> "昨天"
+        minutes < 60 * 24 * 30 -> "${minutes / (60 * 24)} 天前"
+        else -> {
+            val days = minutes / (60 * 24)
+            "${days / 30} 个月前"
+        }
+    }
 }
 
 private data class SampleScan(

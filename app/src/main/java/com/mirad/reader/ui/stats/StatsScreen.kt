@@ -1,9 +1,11 @@
 package com.mirad.reader.ui.stats
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,16 +14,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material3.Card
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -32,17 +28,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.ReadingStats
 import com.mirad.reader.core.model.StatsMath
+import com.mirad.reader.ui.common.EmptyState
+import com.mirad.reader.ui.common.ScreenHeader
+import com.mirad.reader.ui.common.SettingCard
+import com.mirad.reader.ui.common.StatTile
+import com.mirad.reader.ui.design.LocalMiradColors
+import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * 阅读统计：今日主卡 + 统计瓦片 + 近 30 天柱状图。
+ */
 @Composable
 fun StatsScreen(container: AppContainer, onBack: () -> Unit) {
     var stats by remember { mutableStateOf<ReadingStats?>(null) }
@@ -52,82 +56,107 @@ fun StatsScreen(container: AppContainer, onBack: () -> Unit) {
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("阅读统计") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
-                    }
-                }
-            )
-        }
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = { ScreenHeader(title = "阅读统计", onBack = onBack) }
     ) { padding ->
         val current = stats
-        if (current == null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
-                contentAlignment = Alignment.Center
-            ) { Text("统计中…") }
-            return@Scaffold
-        }
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                StatCard("今日", StatsMath.formatDuration(current.todayMs), Modifier.weight(1f))
-                StatCard("本周", StatsMath.formatDuration(current.weekMs), Modifier.weight(1f))
+            if (current == null) {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            } else if (current.sessionCount == 0) {
+                EmptyState(
+                    title = "还没有阅读记录",
+                    badge = "时",
+                    description = "阅读满 5 秒就会开始统计，读一读就有数据了",
+                    modifier = Modifier.fillMaxSize()
+                )
+            } else {
+                StatsContent(current)
             }
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                StatCard("本月", StatsMath.formatDuration(current.monthMs), Modifier.weight(1f))
-                StatCard("累计", StatsMath.formatDuration(current.totalMs), Modifier.weight(1f))
-            }
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                StatCard("连续阅读", "${current.streakDays} 天", Modifier.weight(1f))
-                StatCard("今日字数", "${current.todayChars} 字", Modifier.weight(1f))
-            }
-
-            Spacer(modifier = Modifier.height(18.dp))
-            Text("最近 30 天阅读时长", style = MaterialTheme.typography.titleSmall)
-            Spacer(modifier = Modifier.height(8.dp))
-            DailyChart(current)
-
-            Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "累计阅读 ${current.totalChars} 字，共 ${current.sessionCount} 次阅读记录。\n" +
-                    "统计口径：单次阅读满 5 秒才计入，单次上限 6 小时。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }
 
 @Composable
-private fun StatCard(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier) {
-        Column(modifier = Modifier.padding(14.dp)) {
+private fun StatsContent(stats: ReadingStats) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Spacing.xl)
+    ) {
+        Spacer(modifier = Modifier.height(Spacing.sm))
+
+        // 今日：主卡
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp))
+                .padding(Spacing.xl)
+        ) {
             Text(
-                text = title,
+                text = "今日阅读",
                 style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(modifier = Modifier.height(Spacing.xs))
+            Text(
+                text = StatsMath.formatDuration(stats.todayMs),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onPrimaryContainer
+            )
+            Spacer(modifier = Modifier.height(Spacing.sm))
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.lg)) {
+                InlineStat("连续", "${stats.streakDays} 天")
+                InlineStat("今日字数", "${stats.todayChars} 字")
+                InlineStat("累计记录", "${stats.sessionCount} 次")
+            }
+        }
+
+        Spacer(modifier = Modifier.height(Spacing.lg))
+
+        SettingCard(title = "各时间段") {
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md), modifier = Modifier.fillMaxWidth()) {
+                StatTile("本周", StatsMath.formatDuration(stats.weekMs), Modifier.weight(1f))
+                StatTile("本月", StatsMath.formatDuration(stats.monthMs), Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md), modifier = Modifier.fillMaxWidth()) {
+                StatTile("累计时长", StatsMath.formatDuration(stats.totalMs), Modifier.weight(1f))
+                StatTile("累计字数", "${stats.totalChars} 字", Modifier.weight(1f))
+            }
+        }
+
+        SettingCard(title = "最近 30 天") {
+            DailyChart(stats)
+            Text(
+                text = "柱高表示当天阅读时长；单次阅读满 5 秒才计入，单次上限 6 小时。",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
         }
+
+        Spacer(modifier = Modifier.height(Spacing.xxxl))
+    }
+}
+
+@Composable
+private fun InlineStat(label: String, value: String) {
+    Column {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.75f)
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onPrimaryContainer
+        )
     }
 }
 
@@ -135,41 +164,67 @@ private fun StatCard(title: String, value: String, modifier: Modifier = Modifier
 private fun DailyChart(stats: ReadingStats) {
     val maxMs = stats.daily.maxOfOrNull { it.durationMs } ?: 0L
     val barColor = MaterialTheme.colorScheme.primary
+    val emptyColor = LocalMiradColors.current.chartEmpty
+    val baseline = MaterialTheme.colorScheme.outlineVariant
+
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .height(140.dp)
     ) {
         val count = stats.daily.size.coerceAtLeast(1)
-        val gap = size.width * 0.02f
+        val gap = size.width * 0.025f
         val barWidth = (size.width - gap * (count - 1)) / count
-        val labelHeight = 6.dp.toPx()
-        val chartHeight = size.height - labelHeight * 2
+        val radius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2f, barWidth / 2f)
+        val chartHeight = size.height - 6.dp.toPx()
+
+        drawLine(
+            color = baseline,
+            start = Offset(0f, chartHeight),
+            end = Offset(size.width, chartHeight),
+            strokeWidth = 1.dp.toPx()
+        )
+
         stats.daily.forEachIndexed { index, day ->
             val ratio = if (maxMs <= 0L) 0f else (day.durationMs.toFloat() / maxMs)
-            val barHeight = chartHeight * ratio.coerceIn(0f, 1f)
             val left = index * (barWidth + gap)
-            if (barHeight > 0f) {
-                drawRect(
+            if (ratio > 0f) {
+                val barHeight = (chartHeight * ratio.coerceIn(0.04f, 1f))
+                drawRoundRect(
                     color = barColor,
                     topLeft = Offset(left, chartHeight - barHeight),
-                    size = Size(barWidth, barHeight)
+                    size = Size(barWidth, barHeight),
+                    cornerRadius = radius
                 )
             } else {
-                drawRect(
-                    color = Color(0x22000000),
-                    topLeft = Offset(left, chartHeight - 2.dp.toPx()),
-                    size = Size(barWidth, 2.dp.toPx())
+                drawRoundRect(
+                    color = emptyColor,
+                    topLeft = Offset(left, chartHeight - 3.dp.toPx()),
+                    size = Size(barWidth, 3.dp.toPx()),
+                    cornerRadius = radius
                 )
             }
         }
     }
     val formatter = DateTimeFormatter.ofPattern("MM-dd")
-    val first = stats.daily.firstOrNull()?.date?.format(formatter).orEmpty()
-    val last = stats.daily.lastOrNull()?.date?.format(formatter).orEmpty()
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(first, style = MaterialTheme.typography.labelSmall)
-        Text("峰值 ${StatsMath.formatDuration(maxMs)}", style = MaterialTheme.typography.labelSmall)
-        Text(last, style = MaterialTheme.typography.labelSmall)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(
+            text = stats.daily.firstOrNull()?.date?.format(formatter).orEmpty(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = "峰值 ${StatsMath.formatDuration(maxMs)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            text = stats.daily.lastOrNull()?.date?.format(formatter).orEmpty(),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
