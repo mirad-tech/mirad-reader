@@ -159,7 +159,7 @@ https://mirad.local/book/<id>/asset/<p>    EPUB zip 内图片 / CSS / 字体（�
 - **子集字体的生僻字**：内置字体只含 GB2312 常用字，超出范围的字会回退系统字体（同一段落里字体可能不完全一致）。
   要覆盖生僻字，可把完整字体放进 `app/src/main/assets/fonts/` 或直接导入。
 - 覆盖翻页动画在部分机型（WebView 无法把内容画进位图）会自动退化为普通翻页。
-- 明确不做：在线书源/书城、WebDAV/局域网传书、云同步、PDF/MOBI/AZW3、竖排/RTL、多语言 UI、桌面小部件、release 签名打包。
+- 明确不做：在线书源/书城、WebDAV/局域网传书、云同步、PDF/MOBI/AZW3、竖排/RTL、多语言 UI、桌面小部件。
 
 ## 数据与隐私
 
