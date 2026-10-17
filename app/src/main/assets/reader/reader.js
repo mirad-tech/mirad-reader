@@ -782,9 +782,12 @@
         // 旧实现把整段重建卡在"换内容"这一帧里，观感就是接章时顿一下。
         if (!toBottom) window.scrollTo(0, 0);
         var finish = function () {
+            // 关键：applyLayout() 会按 state.page 恢复滚动位置。原地换章时这个值还是
+            // 上一章的页号，不清零就会把新章滚到"后面"去（重载路径天然是 0，所以以前没暴露）。
+            state.page = 0;
             buildInitialModelAndLayout();
-            // 布局重建后才知道新章高度：往回翻时停在上一章末尾。
-            if (toBottom) window.scrollTo(0, document.documentElement.scrollHeight);
+            // 布局重建后才知道新章高度：往回翻时停在上一章末尾，向前翻则回到开头。
+            window.scrollTo(0, toBottom ? document.documentElement.scrollHeight : 0);
             state.page = Math.floor((window.scrollY || 0) / viewportHeight());
             lastReportedPage = state.page;
             state.ready = true;
