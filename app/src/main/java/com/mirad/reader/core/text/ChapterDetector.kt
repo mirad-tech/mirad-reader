@@ -17,7 +17,18 @@ object ChapterDetector {
             if (marks.isEmpty()) continue
             val weak = rule.id == ChapterRules.NUMBERED
             val spans = marks.mapIndexed { i, mark -> (marks.getOrNull(i + 1)?.startChar ?: text.length) - mark.startChar }
-            if (weak && (marks.size < 3 || spans.count { it >= 300 } < spans.size * 0.8)) continue
+            if (weak) {
+                if (marks.size < 3) continue
+                // 弱数字标题（如 "1 初见"）真正的判据是"连续编号 + 篇幅大体均匀"，
+                // 而不是"每章至少 300 字"：短章书会被那条硬阈值整体否掉，退化成自动分节。
+                val numbers = marks.mapNotNull { chapterNumber(it.title) }
+                if (numbers.size < 3) continue
+                val consecutive = numbers.zipWithNext().count { (a, b) -> b == a + 1 }
+                if (consecutive < numbers.size - 1) continue
+                val avgSpan = spans.average()
+                val maxSpan = spans.maxOrNull() ?: 0
+                if (avgSpan < 120 || maxSpan > avgSpan * 4) continue
+            }
             val groups = mutableListOf<MutableList<Int>>(mutableListOf())
             marks.forEach { mark ->
                 if (mark.isVolume) groups.add(mutableListOf())
