@@ -382,10 +382,16 @@ private fun ReaderContent(
 
     session.onTap = tap@{ x, y ->
         val view = session.webView ?: return@tap
-        // 上下滚动模式不响应"点左右翻页/翻屏"：整屏点击只用来呼出/收起工具栏。
-        // 滚动模式下的前进后退靠手指滚动（章末再上滑接下一章），点屏翻页只会误触。
+        // 上下滚动模式按"竖向分区"响应：上 1/3 往回滚一屏、下 1/3 往前滚一屏、中间呼出菜单。
+        // 章首/章末继续同一方向时，由 scrollStep 接到上一章末尾 / 下一章开头。
         if (config.pageMode == PageMode.SCROLL) {
-            chromeVisible = !chromeVisible
+            val height = view.height.toFloat()
+            val vRatio = if (height > 0) y / height else 0.5f
+            when {
+                vRatio < 0.32f -> session.scrollStep(-1)
+                vRatio > 0.68f -> session.scrollStep(1)
+                else -> chromeVisible = !chromeVisible
+            }
             return@tap
         }
         val width = view.width.toFloat()
