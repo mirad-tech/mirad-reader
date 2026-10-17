@@ -697,6 +697,7 @@
             );
             // 还剩一屏半时就把下一章取到内存，真正换章时几乎零等待。
             if (total > 0 && top + view * 1.5 >= total) prefetchNextChapter();
+            if (top < view) prefetchPreviousChapter();
             var page = Math.floor(top / view);
             // 页号没变就不回报，滚动过程不打扰原生层（否则每帧穿透到 Compose 会顿）。
             if (page === lastReportedPage) return;
@@ -749,7 +750,7 @@
      * 重建文本模型与布局、回到顶部，并把新章号告诉原生层。
      * 全程不重载文档，因此没有白屏与"卡一下"。
      */
-    function swapInNextChapter(html) {
+    function swapInNextChapter(html, toBottom) {
         var live = content();
         if (!live) return false;
         var parsed;
@@ -777,8 +778,11 @@
         state.ready = false;
         bottomSentFor = null;
         lastReportedPage = -1;
-        window.scrollTo(0, 0);
         buildInitialModelAndLayout();
+        // 必须先重建布局：新章的高度只有重建后才知道。往回翻时停在上一章末尾。
+        window.scrollTo(0, toBottom ? document.documentElement.scrollHeight : 0);
+        state.page = Math.floor((window.scrollY || 0) / viewportHeight());
+        lastReportedPage = state.page;
         state.ready = true;
         var b = bridge();
         if (b) {
@@ -819,6 +823,54 @@
         return true;
     }
 
+    /** 是否在章首（留 2px 容差）。 */
+    function atTop() {
+        return (window.scrollY || 0) <= 2;
+    }
+
+    var prevPrefetchedFor = -1;
+    var prevPrefetchedHtml = null;
+    var prevPrefetching = false;
+
+    function prefetchPreviousChapter() {
+        var idx = currentChapterIndex();
+        if (idx <= 0) return;
+        if (prevPrefetchedFor === idx - 1 && prevPrefetchedHtml) return;
+        if (prevPrefetching) return;
+        prevPrefetching = true;
+        fetch(chapterUrlOf(idx - 1))
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                if (html) { prevPrefetchedHtml = html; prevPrefetchedFor = idx - 1; }
+            })
+            .catch(function () {})
+            .then(function () { prevPrefetching = false; });
+    }
+
+    /** 在章首继续下拉：回到上一章并停在它的末尾（连续阅读，不重载文档）。 */
+    function retreatChapter() {
+        if (CFG.mode !== 'SCROLL' || !state.ready) return false;
+        var idx = currentChapterIndex();
+        if (idx <= 0) return false;
+        if (prevPrefetchedFor === idx - 1 && prevPrefetchedHtml) {
+            var cached = prevPrefetchedHtml;
+            prevPrefetchedHtml = null;
+            prevPrefetchedFor = -1;
+            if (swapInNextChapter(cached, true)) {
+                prefetchPreviousChapter();
+                return true;
+            }
+        }
+        fetch(chapterUrlOf(idx - 1))
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                if (!html || !swapInNextChapter(html, true)) return false;
+                prefetchPreviousChapter();
+            })
+            .catch(function () {});
+        return true;
+    }
+
     // 单屏短章没有滚动事件：手指在底部继续上滑也算"要继续读下一章"。
     var swipeStartY = null;
     document.addEventListener('touchstart', function (e) {
@@ -830,6 +882,7 @@
         var dy = (endY === null) ? 0 : (endY - swipeStartY);
         swipeStartY = null;
         if (dy <= -48 && atBottom()) advanceChapter();
+        else if (dy >= 48 && atTop()) retreatChapter();
     }, {passive: true});
 
     document.addEventListener('scroll', onScroll, true);
@@ -987,6 +1040,11 @@
             // 已经在底部还继续往下翻 → 用户意图是继续读下一章（原地换章，不重载）
             if (direction >= 0 && atBottom()) {
                 advanceChapter();
+                return true;
+            }
+            // 已经在章首还继续往回翻 → 回到上一章末尾
+            if (direction < 0 && atTop()) {
+                retreatChapter();
                 return true;
             }
             animateScrollTop(Math.max(0, Math.min(target, max)));
