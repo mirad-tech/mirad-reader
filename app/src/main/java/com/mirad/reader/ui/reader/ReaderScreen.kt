@@ -273,7 +273,13 @@ private fun ReaderContent(
             ttsSentences = emptyList()
             ttsChapterIndex = -1
             session.gotoChapter(next, 0)
-            kotlinx.coroutines.delay(1200)
+            // 等新章真正就绪再开读：固定 delay 在慢机上会读到空句子
+            var waited = 0
+            while (!session.state.value.ready && waited < 4000) {
+                kotlinx.coroutines.delay(60)
+                waited += 60
+            }
+            kotlinx.coroutines.delay(120)
             startTts(true)
         } else {
             toast = "已读完最后一章"

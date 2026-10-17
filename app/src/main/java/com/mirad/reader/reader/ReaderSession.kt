@@ -104,20 +104,9 @@ class ReaderSession(
         },
         onState = state@{ page, pages, offset, textLength ->
             val current = _state.value
-            // 上下滚动模式下，JS 滚到本章底部时会报 page == pages：接下一章。
-            // 注意不能用 pages > 1 过滤——单屏短章 pages == 1，那样会永远卡在本章末尾。
-            if (current.config.pageMode == PageMode.SCROLL && page >= pages) {
-                // 单屏短章 pages == 1 也要能接章，所以不能用 pages > 1 过滤。
-                // 但原地换章（JS 侧）与这条"到底"信号可能几乎同时到达：短时间内只认一次，
-                // 否则一次上滑会被当成两次，直接跳过一章。
-                val now = System.currentTimeMillis()
-                if (now - lastBottomAdvanceAt < 800L) return@state
-                lastBottomAdvanceAt = now
-                if (current.chapterIndex < chapters.size - 1) {
-                    gotoChapter(current.chapterIndex + 1, 0)
-                }
-                return@state
-            }
+            // 跨章只有两个显式入口：侧滑/点按的 turnPage(+1)，以及 JS 的原地换章
+            // （成功后回调 onChapterChanged，失败后回调 onRequestNextChapter）。
+            // 这里不再从 onState 的页码推断"到底"——那条隐式路径曾与原地换章重复触发跳两章。
             val pageChanged = current.page != page
             _state.update {
                 it.copy(
@@ -136,7 +125,11 @@ class ReaderSession(
         onSelection = { start, end, text ->
             _state.update { it.copy(selection = TextSelection(start, end, text)) }
         },
-        onChapterChanged = { index -> onJsChapterChanged(index) }
+        onChapterChanged = { index -> onJsChapterChanged(index) },
+        onRequestNextChapter = { index ->
+            // 只有 JS 侧原地换章失败（fetch/解析出错）才会走到这里：显式重载目标章。
+            if (index in chapters.indices) gotoChapter(index, 0)
+        }
     )
 
     // ------------------------------------------------------------------ 生命周期

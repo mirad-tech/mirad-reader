@@ -808,7 +808,21 @@
         return true;
     }
 
-    /** 用户明确要继续读下一章时才走这里：优先原地换章，失败才退回"通知原生重载"。 */
+    /** 原地换章失败时，显式请原生重载目标章——这是唯一的失败兜底入口。 */
+    function requestChapterLoad(index) {
+        var b = bridge();
+        if (b && b.onRequestNextChapter) {
+            try {
+                b.onRequestNextChapter(index);
+                return true;
+            } catch (e) {
+            }
+        }
+        notifyBottomOnce();
+        return false;
+    }
+
+    /** 用户明确要继续读下一章时才走这里：优先原地换章，失败才请原生重载。 */
     function advanceChapter() {
         if (CFG.mode !== 'SCROLL' || !state.ready) return false;
         var idx = currentChapterIndex();
@@ -829,10 +843,10 @@
         fetch(chapterUrlOf(idx + 1))
             .then(function (r) { return r.ok ? r.text() : null; })
             .then(function (html) {
-                if (!html || !swapInNextChapter(html)) notifyBottomOnce();
+                if (!html || !swapInNextChapter(html)) requestChapterLoad(idx + 1);
                 else prefetchNextChapter();
             })
-            .catch(function () { notifyBottomOnce(); });
+            .catch(function () { requestChapterLoad(idx + 1); });
         return true;
     }
 
@@ -891,10 +905,10 @@
         fetch(chapterUrlOf(idx - 1))
             .then(function (r) { return r.ok ? r.text() : null; })
             .then(function (html) {
-                if (!html || !swapInNextChapter(html, true)) return false;
-                prefetchPreviousChapter();
+                if (!html || !swapInNextChapter(html, true)) requestChapterLoad(idx - 1);
+                else prefetchPreviousChapter();
             })
-            .catch(function () {});
+            .catch(function () { requestChapterLoad(idx - 1); });
         return true;
     }
 
