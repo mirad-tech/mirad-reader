@@ -32,39 +32,15 @@ object ChapterSplitter {
         rule: ChapterRule?,
         fallbackChunkChars: Int = FALLBACK_CHUNK_CHARS
     ): List<ChapterSlice> {
+        val detection = if (rule == null) ChapterDetection(null, 0, 0, emptyList(), "")
+            else ChapterDetector.detect(text, listOf(rule))
+        return split(text, detection, fallbackChunkChars)
+    }
+
+    fun split(text: String, detection: ChapterDetection, fallbackChunkChars: Int = FALLBACK_CHUNK_CHARS): List<ChapterSlice> {
         if (text.isEmpty()) return emptyList()
-
-        data class Mark(val title: String, val titleLineChars: Int, val startChar: Int, val startByte: Long, val isVolume: Boolean)
-
-        val marks = ArrayList<Mark>()
-        var charIdx = 0
-        var byteIdx = 0L
-        while (charIdx < text.length) {
-            var nl = text.indexOf('\n', charIdx)
-            if (nl < 0) nl = text.length
-            val lineEndWithNl = nl + if (nl < text.length) 1 else 0
-            val line = text.substring(charIdx, nl)
-
-            val isVolume = ChapterRules.CN_VOLUME_RULE.matches(line)
-            val isChapter = (rule != null && rule.matches(line)) ||
-                (isVolume && rule?.id != ChapterRules.CN_VOLUME_ONLY)
-
-            if (isChapter && line.isNotBlank()) {
-                marks.add(
-                    Mark(
-                        title = line.trim(),
-                        titleLineChars = lineEndWithNl - charIdx,
-                        startChar = charIdx,
-                        startByte = byteIdx,
-                        isVolume = isVolume
-                    )
-                )
-            }
-
-            byteIdx += TextNormalizer.utf8Length(text, charIdx, lineEndWithNl)
-            charIdx = lineEndWithNl
-        }
-
+        val marks = detection.marks
+        val byteIdx = TextNormalizer.utf8Length(text)
         if (marks.isEmpty()) {
             return fallbackChunks(text, fallbackChunkChars)
         }
@@ -73,7 +49,7 @@ object ChapterSplitter {
         val totalBytes = byteIdx
 
         // 第一个标题之前的内容作为"前言"独立成章。
-        if (marks.first().startChar > 0 && text.substring(0, marks.first().startChar).isNotBlank()) {
+        if (marks.first().startChar > 0) {
             slices.add(
                 ChapterSlice(
                     title = PREFACE_TITLE,

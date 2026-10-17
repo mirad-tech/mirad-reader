@@ -1,157 +1,71 @@
 package com.mirad.reader.core.text
 
-/** 分章判定结果，供界面展示"为什么这样分"。 */
+data class ChapterMark(val title: String, val titleLineChars: Int, val startChar: Int, val startByte: Long, val isVolume: Boolean)
 data class ChapterDetection(
-    val rule: ChapterRule?,
-    val hits: Int,
-    val avgChars: Int,
-    val titlesPreview: List<String>,
-    val reason: String
+    val rule: ChapterRule?, val hits: Int, val avgChars: Int,
+    val titlesPreview: List<String>, val reason: String,
+    val marks: List<ChapterMark> = emptyList()
 )
 
-/**
- * 章节标记判定。
- *
- * 旧实现是"命中次数最多者胜"，于是数字规则（`^\d{1,4}$`、"1、xxx"）总能靠正文里的
- * "3.5公里""1、他走进屋子"之类把命中数刷上去，把一本书切得稀碎。
- *
- * 现在改为：先做伪标题过滤，再做硬校验（数量/密度/序号单调），最后按"规则强度"择优。
- */
 object ChapterDetector {
-
-    private const val MIN_CHAPTERS = 3
-    /** 平均每章至少这么多字，否则视为误判（数字列表式假章节的典型特征）。 */
-    private const val MIN_AVG_CHARS = 300
-    private const val MAX_TITLE_CHARS = 20
-
-    /** 句末标点：出现在标题行里基本可断定是正文而非标题。 */
-    private val SENTENCE_PUNCT = charArrayOf('。', '！', '？', '；', '!', '?', ';', '，', '、', ',')
-
-    /**
-     * 关键词之后紧跟这些字，说明是正文在"接着往下说"（如"第一章的内容我已经看过了"）。
-     */
-    private const val CONTINUATION_CHARS = "的了是在中里上下我你他她它们就都也又还而但因为所以对从向把被让使会能要想说道问答看见听到去来走过着得地很太更最不没无有一二三四五"
-
-    /** 关键词锚定的规则优先级更高；数字编号规则最弱，卷规则仅在别无选择时用。 */
-    private val STRONG_ORDER = listOf(
-        ChapterRules.CN_GENERIC,
-        ChapterRules.CN_WITH_BRACKET,
-        ChapterRules.SPECIAL,
-        ChapterRules.ENGLISH
-    )
-    private val WEAK_ORDER = listOf(ChapterRules.NUMBERED)
-    private val LAST_RESORT = listOf(ChapterRules.CN_VOLUME_ONLY)
-
     fun detect(text: String, rules: List<ChapterRule> = ChapterRules.ALL): ChapterDetection {
-        if (text.isBlank()) return ChapterDetection(null, 0, 0, emptyList(), "正文为空")
-
-        val lines = text.lineSequence().toList()
-        val ordered = orderRules(rules)
-
-        // 校验不通过的规则一律不采用（否则数字噪声又能蒙混过关）；
-        // 但把最有希望的那条的原因记录下来，界面可以解释"为什么按篇幅分节"。
-        var rejectedNote: String? = null
-
+        val priority = listOf(ChapterRules.CN_GENERIC, ChapterRules.CN_WITH_BRACKET, ChapterRules.ENGLISH,
+            ChapterRules.SPECIAL, ChapterRules.NUMBERED, ChapterRules.CN_VOLUME_ONLY)
+        val ordered = rules.sortedBy { rule -> priority.indexOf(rule.id).let { if (it < 0) priority.size else it } }
         for (rule in ordered) {
-            val probe = probe(rule, lines, text.length)
-            if (!probe.valid) {
-                if (probe.hits >= MIN_CHAPTERS && rejectedNote == null) rejectedNote = probe.note
-                continue
+            val marks = scan(text, rule)
+            if (marks.isEmpty()) continue
+            val weak = rule.id == ChapterRules.NUMBERED
+            val spans = marks.mapIndexed { i, mark -> (marks.getOrNull(i + 1)?.startChar ?: text.length) - mark.startChar }
+            if (weak && (marks.size < 3 || spans.count { it >= 300 } < spans.size * 0.8)) continue
+            val groups = mutableListOf<MutableList<Int>>(mutableListOf())
+            marks.forEach { mark ->
+                if (mark.isVolume) groups.add(mutableListOf())
+                else chapterNumber(mark.title)?.let { groups.last().add(it) }
             }
-            return ChapterDetection(
-                rule = rule,
-                hits = probe.hits,
-                avgChars = probe.avgChars,
-                titlesPreview = probe.titles,
-                reason = "${rule.name}：${probe.hits} 章，平均 ${probe.avgChars} 字"
-            )
+            if (groups.any { !isMonotonic(it) }) continue
+            val avg = text.length / marks.size
+            return ChapterDetection(rule, marks.size, avg, marks.take(5).map { it.title },
+                "${rule.name}：${marks.size} 章，平均 $avg 字", marks)
         }
-
-        return ChapterDetection(
-            rule = null,
-            hits = 0,
-            avgChars = 0,
-            titlesPreview = emptyList(),
-            reason = rejectedNote?.let { "没有可靠的章节标记（$it），按篇幅自动分节" }
-                ?: "没有找到可靠的章节标记，按篇幅自动分节"
-        )
+        return ChapterDetection(null, 0, 0, emptyList(), "没有找到可靠的章节标记，按篇幅自动分节")
     }
 
-    private fun orderRules(rules: List<ChapterRule>): List<ChapterRule> {
-        val byId = rules.associateBy { it.id }
-        val ordered = ArrayList<ChapterRule>(rules.size)
-        (STRONG_ORDER + WEAK_ORDER + LAST_RESORT).forEach { id ->
-            byId[id]?.let { ordered.add(it) }
-        }
-        rules.forEach { if (ordered.none { it.id == it.id }) ordered.add(it) }
-        return ordered
-    }
-
-    private class Probe(
-        val rule: ChapterRule,
-        val hits: Int,
-        val avgChars: Int,
-        val titles: List<String>,
-        val valid: Boolean,
-        val note: String
-    )
-
-    private fun probe(rule: ChapterRule, lines: List<String>, totalChars: Int): Probe {
-        val titles = ArrayList<String>(16)
-        val numbers = ArrayList<Int>(16)
-        var hits = 0
-        var rejected = 0
-
-        for (index in lines.indices) {
-            val raw = lines[index]
-            if (raw.isBlank()) continue
-            if (!rule.matches(raw)) continue
-            val title = raw.trim()
-            if (!isPlausibleTitle(title)) {
-                rejected++
-                continue
+    private fun scan(text: String, rule: ChapterRule): List<ChapterMark> {
+        val marks = mutableListOf<ChapterMark>()
+        var pos = 0
+        var bytes = 0L
+        val combineStrong = rule.id in setOf(ChapterRules.CN_GENERIC, ChapterRules.CN_WITH_BRACKET, ChapterRules.ENGLISH, ChapterRules.SPECIAL)
+        var ownMatch = false
+        while (pos < text.length) {
+            val end = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+            val next = if (end < text.length) end + 1 else end
+            val title = text.substring(pos, end).trim()
+            val volume = ChapterRules.CN_VOLUME_RULE.matches(title)
+            val volumeOnly = volume && !Regex("[章节節回]").containsMatchIn(title)
+            val own = rule.matches(title)
+            val matched = own || (combineStrong &&
+                (ChapterRules.CN_GENERIC_RULE.matches(title) || ChapterRules.CN_BRACKET_RULE.matches(title) ||
+                 ChapterRules.SPECIAL_RULE.matches(title) || ChapterRules.ENGLISH_RULE.matches(title))) || (rule.id != ChapterRules.NUMBERED && volume)
+            if (matched && plausible(title, rule.id == ChapterRules.NUMBERED)) {
+                marks.add(ChapterMark(title, next - pos, pos, bytes, volumeOnly))
+                if (own) ownMatch = true
             }
-            hits++
-            if (titles.size < 5) titles.add(title)
-            chapterNumber(title)?.let { numbers.add(it) }
+            bytes += TextNormalizer.utf8Length(text, pos, next)
+            pos = next
         }
-
-        if (hits == 0) {
-            return Probe(rule, 0, 0, titles, valid = false, note = "${rule.name}：无命中")
-        }
-        val avg = totalChars / hits
-        val monotonic = isMonotonic(numbers)
-        val tooManyRejected = rejected > hits
-        val valid = hits >= MIN_CHAPTERS && avg >= MIN_AVG_CHARS && monotonic && !tooManyRejected
-        val note = buildString {
-            append(rule.name).append("：命中 ").append(hits).append(" 处")
-            if (avg < MIN_AVG_CHARS) append("，平均仅 ").append(avg).append(" 字（疑似误判）")
-            if (!monotonic) append("，序号不递增（疑似误判）")
-            if (tooManyRejected) append("，多数行不像标题")
-        }
-        return Probe(rule, hits, avg, titles, valid, note)
+        return if (!ownMatch) emptyList() else marks
     }
 
-    /** 伪标题过滤：标题短、无句读、关键词后面不是"接着说话"。 */
-    private fun isPlausibleTitle(title: String): Boolean {
-        if (title.length > MAX_TITLE_CHARS) return false
-        for (ch in title) {
-            if (SENTENCE_PUNCT.contains(ch)) return false
+    private fun plausible(title: String, weak: Boolean): Boolean {
+        if (title.length > ChapterRule.MAX_TITLE_CHARS) return false
+        if (weak) {
+            if (Regex("^[0-9]+[.][0-9]").containsMatchIn(title)) return false
+            if (title.any { it in "。！？；!?;，," }) return false
         }
-        val tail = tailAfterKeyword(title)
-        if (tail.isNotEmpty() && CONTINUATION_CHARS.indexOf(tail[0]) >= 0) return false
+        if (Regex("^第\\s*[0-9０-９零〇一二三四五六七八九十百千万两]+\\s*[章节節回卷部篇集](的|里|中|已经|说到|讲的是)").containsMatchIn(title)) return false
+        if (Regex("^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)(的|里|中|已经|是)").containsMatchIn(title)) return false
         return true
-    }
-
-    /** 去掉开头的"第X章/1./Chapter N"等标记与标点后的剩余文本。 */
-    private fun tailAfterKeyword(title: String): String {
-        var text = title
-        text = text.replace(Regex("^[【〖\\[「『]"), "")
-        text = text.replace(Regex("^(?i)(chapter|part|book|section)\\s+[0-9ivxlcdm]+"), "")
-        text = text.replace(Regex("^第\\s*[0-9０-９零〇一二三四五六七八九十百千万两]+\\s*[章节節回卷部篇集]"), "")
-        text = text.replace(Regex("^[0-9０-９]{1,4}\\s*[.、,，:：]"), "")
-        text = text.replace(Regex("^[【〖\\[「『]?\\s*(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)"), "")
-        return text.trimStart(' ', '\t', '　', '：', ':', '.', '、', '-', '—', '】', '〗', ']', '」', '』', '）', ')')
     }
 
     /** 章序号：阿拉伯数字或中文数字，取不到（序章/楔子等）返回 null。 */

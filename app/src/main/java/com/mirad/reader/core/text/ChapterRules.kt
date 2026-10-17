@@ -19,7 +19,7 @@ class ChapterRule(
 
     companion object {
         /** 章节标题一般不超此长度。 */
-        const val MAX_TITLE_CHARS = 40
+        const val MAX_TITLE_CHARS = 80
     }
 }
 
@@ -41,9 +41,9 @@ object ChapterRules {
         id = CN_GENERIC,
         name = "中文章节（第X章/节/回）",
         patterns = listOf(
-            "^第\\s*$CN_NUM\\s*[章节節回][\\s\\p{Punct}]*.{0,30}$",
-            "^第\\s*$CN_NUM\\s*[章节節回]\\s*.{0,30}$",
-            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外)[\\s\\p{Punct}]*.{0,30}$"
+            "^第\\s*$CN_NUM\\s*[章节節回][\\s\\p{Punct}]*.{0,70}$",
+            "^第\\s*$CN_NUM\\s*[章节節回]\\s*.{0,70}$",
+            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外)[\\s\\p{Punct}]*.{0,70}$"
         )
     )
 
@@ -51,7 +51,7 @@ object ChapterRules {
         id = CN_VOLUME_ONLY,
         name = "分卷（第X卷/部/篇）",
         patterns = listOf(
-            "^第\\s*$CN_NUM\\s*[卷部篇集][\\s\\p{Punct}]*.{0,30}$"
+            "^第\\s*$CN_NUM\\s*[卷部篇集][\\s\\p{Punct}]*.{0,70}$"
         )
     )
 
@@ -59,8 +59,8 @@ object ChapterRules {
         id = CN_WITH_BRACKET,
         name = "带括号章节（【第X章】）",
         patterns = listOf(
-            "^[【〖\\[]\\s*第\\s*$CN_NUM\\s*[章节節回卷][^】〗\\]]{0,30}[】〗\\]].{0,30}$",
-            "^[【〖\\[]\\s*$CN_NUM\\s*[】〗\\]].{0,30}$"
+            "^[【〖\\[]\\s*第\\s*$CN_NUM\\s*[章节節回卷][^】〗\\]]{0,70}[】〗\\]].{0,70}$",
+            "^[【〖\\[]\\s*$CN_NUM\\s*[】〗\\]].{0,70}$"
         )
     )
 
@@ -68,7 +68,7 @@ object ChapterRules {
         id = NUMBERED,
         name = "数字编号（1. / 1、）",
         patterns = listOf(
-            "^\\d{1,4}\\s*[.、,，:：]\\s*\\S.{0,30}$",
+            "^\\d{1,4}\\s*[.、,，:：]\\s*\\S.{0,70}$",
             "^\\d{1,4}\\s*$"
         )
     )
@@ -77,7 +77,7 @@ object ChapterRules {
         id = ENGLISH,
         name = "英文章节（Chapter N）",
         patterns = listOf(
-            "^(?i:chapter|part|book|section)\\s+([0-9]+|[ivxlcdm]+)\\b.{0,30}$"
+            "^(?i:chapter|part|book|section)\\s+([0-9]+|[ivxlcdm]+)\\b.{0,70}$"
         )
     )
 
@@ -85,7 +85,7 @@ object ChapterRules {
         id = SPECIAL,
         name = "特殊标记（正文/序章/楔子）",
         patterns = listOf(
-            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)[\\s\\p{Punct}]*.{0,30}$"
+            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)[\\s\\p{Punct}]*.{0,70}$"
         )
     )
 

@@ -1,7 +1,11 @@
 package com.mirad.reader.data.repo
 
+import androidx.room.withTransaction
+import com.mirad.reader.data.db.AppDatabase
+import com.mirad.reader.core.model.ChapterTextMap
+import com.mirad.reader.core.text.ChapterSlice
+import java.security.MessageDigest
 import com.mirad.reader.core.text.ChapterDetector
-import com.mirad.reader.core.text.ChapterRules
 import com.mirad.reader.core.text.ChapterSplitter
 import com.mirad.reader.core.text.TextCodec
 import com.mirad.reader.core.text.TextNormalizer
@@ -22,8 +26,111 @@ import java.io.File
  */
 class BookMaintenance(
     private val books: BookRepository,
-    private val paths: AppPaths
+    private val paths: AppPaths,
+    private val database: AppDatabase
 ) {
+
+    data class ChapterPreview internal constructor(
+        val slices: List<ChapterSlice>,
+        val automatic: Boolean,
+        val reason: String,
+        internal val bookId: Long,
+        internal val digest: String,
+        internal val oldChapters: List<ChapterEntity>,
+        internal val ruleId: String?
+    )
+
+    suspend fun previewChapters(book: BookEntity): ChapterPreview = withContext(Dispatchers.IO) {
+        require(book.format != BookFormat.EPUB) { "EPUB 不需要重新识别章节" }
+        val current = books.getBook(book.id) ?: error("书籍已不存在")
+        val bytes = normalizedFile(current).readBytes()
+        val text = bytes.toString(Charsets.UTF_8)
+        check(text.isNotBlank()) { "没有可识别的正文" }
+        val detection = ChapterDetector.detect(text)
+        ChapterPreview(ChapterSplitter.split(text, detection), detection.marks.isEmpty(), detection.reason,
+            book.id, digest(bytes), books.getChapters(book.id), detection.rule?.id)
+    }
+
+    suspend fun applyChapters(book: BookEntity, preview: ChapterPreview): Int = withContext(Dispatchers.IO) {
+        require(book.id == preview.bookId && book.format != BookFormat.EPUB)
+        database.withTransaction {
+            val current = books.getBook(book.id) ?: error("书籍已不存在")
+            val bytes = normalizedFile(current).readBytes()
+            check(digest(bytes) == preview.digest && books.getChapters(book.id) == preview.oldChapters) {
+                "正文或目录已变化，请重新预览"
+            }
+            val text = bytes.toString(Charsets.UTF_8)
+            val slices = preview.slices
+            check(slices.isNotEmpty()) { "无法切分正文" }
+            val newMaps = slices.map { slice ->
+                ChapterTextMap(text.substring(slice.startChar, slice.endChar), slice.title,
+                    slice.titleLineChars, slice.isVolume, slice.startChar)
+            }
+            var sourceStart = 0
+            var previousEnd = 0L
+            var validPrefix = true
+            val oldMaps = preview.oldChapters.map { chapter ->
+                // Refuse malformed historical byte indexes rather than fabricate an anchor.
+                val valid = validPrefix && chapter.startByte == previousEnd && chapter.endByte >= chapter.startByte && chapter.endByte <= bytes.size
+                previousEnd = chapter.endByte
+                validPrefix = valid
+                if (!valid) null else {
+                    val body = bytes.copyOfRange(chapter.startByte.toInt(), chapter.endByte.toInt()).toString(Charsets.UTF_8)
+                    validPrefix = body.toByteArray(Charsets.UTF_8).contentEquals(bytes.copyOfRange(chapter.startByte.toInt(), chapter.endByte.toInt()))
+                    val map = ChapterTextMap(body, chapter.title, chapter.titleLineChars, chapter.isVolume, sourceStart)
+                    sourceStart += body.length
+                    map.takeIf { validPrefix }
+                }
+            }
+            fun point(chapter: Int, offset: Int): Pair<Int, Int>? {
+                val source = oldMaps.getOrNull(chapter)?.sourceAt(offset) ?: return null
+                return newMaps.mapIndexedNotNull { index, map -> map.domAt(source)?.let { index to it } }.lastOrNull()
+            }
+            val bookmarks = database.bookmarkDao().getAllForBook(book.id)
+            val highlights = database.highlightDao().getAllForBook(book.id)
+            val progress = books.getProgress(book.id)
+            val chapters = slices.mapIndexed { i, slice ->
+                ChapterEntity(bookId = book.id, index = i, title = slice.title,
+                    startByte = slice.startByte, endByte = slice.endByte, charCount = slice.charCount.toLong(),
+                    titleLineChars = slice.titleLineChars, isVolume = slice.isVolume)
+            }
+            books.saveChapters(book.id, chapters)
+            books.updateIndexInfo(book.id, chapters.size, text.length.toLong(), preview.ruleId, null, current.encoding)
+            bookmarks.forEach { bookmark ->
+                val mapped = point(bookmark.chapterIndex, bookmark.charOffset)
+                database.bookmarkDao().update(if (mapped == null) bookmark.copy(chapterIndex = -1)
+                    else bookmark.copy(chapterIndex = mapped.first, charOffset = mapped.second, chapterTitle = chapters[mapped.first].title))
+            }
+            highlights.forEach { highlight ->
+                val ranges = oldMaps.getOrNull(highlight.chapterIndex)?.migrateRange(
+                    highlight.startOffset, highlight.endOffset, highlight.text, newMaps)
+                if (ranges == null) database.highlightDao().update(highlight.copy(chapterIndex = -1))
+                else ranges.forEachIndexed { i, range ->
+                    val mapped = highlight.copy(id = if (i == 0) highlight.id else 0,
+                        chapterIndex = range.chapter, startOffset = range.start, endOffset = range.end, text = range.text)
+                    if (i == 0) database.highlightDao().update(mapped) else database.highlightDao().insert(mapped)
+                }
+            }
+            if (progress != null) {
+                val mapped = point(progress.chapterIndex, progress.charOffset)
+                    ?: oldMaps.getOrNull(progress.chapterIndex)?.let { old ->
+                        val index = slices.indexOfLast { it.startChar <= old.sourceStart }.coerceAtLeast(0)
+                        index to 0
+                    } ?: (0 to 0)
+                books.saveProgress(progress.copy(chapterIndex = mapped.first, charOffset = mapped.second, pageIndex = 0, pageCount = 0))
+            }
+            chapters.size
+        }
+    }
+
+    private fun normalizedFile(book: BookEntity): File {
+        val file = File(book.contentPath ?: error("找不到归一化正文，请重新导入"))
+        check(file.isFile) { "找不到归一化正文，请重新导入" }
+        return file
+    }
+
+    private fun digest(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256")
+        .digest(bytes).joinToString("") { "%02x".format(it) }
 
     data class ReindexResult(
         val encoding: String,
@@ -112,8 +219,9 @@ class BookMaintenance(
         text: String,
         rule: com.mirad.reader.core.text.ChapterRule? = null
     ): Indexed {
-        val effective = rule ?: ChapterDetector.detect(text).rule
-        val slices = ChapterSplitter.split(text, effective)
+        val detection = if (rule == null) ChapterDetector.detect(text) else ChapterDetector.detect(text, listOf(rule))
+        val effective = detection.rule
+        val slices = ChapterSplitter.split(text, detection)
         if (slices.isEmpty()) throw IllegalStateException("无法切分正文")
         val chapters = slices.mapIndexed { i, slice ->
             ChapterEntity(

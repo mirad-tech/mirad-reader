@@ -10,8 +10,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -35,7 +38,7 @@ import com.mirad.reader.ui.design.Spacing
  * 统一了：拖拽把手、标题/副标题、右上角文字操作、内容最大高度与外边距。
  * 任何新弹层都走这里，避免每个弹层各写一套高度和留白。
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun SheetScaffold(
     title: String,
@@ -52,7 +55,10 @@ fun SheetScaffold(
     // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        contentWindowInsets = { WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout) }
+    ) {
         Column(
             modifier = modifier
                 .fillMaxWidth()

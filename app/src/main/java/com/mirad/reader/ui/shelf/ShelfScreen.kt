@@ -47,7 +47,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -139,6 +139,7 @@ fun ShelfScreen(
     var confirmDelete by remember { mutableStateOf(false) }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
+    var chapterBook by remember { mutableStateOf<BookEntity?>(null) }
     var showGroupManager by remember { mutableStateOf(false) }
     var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
@@ -483,6 +484,7 @@ fun ShelfScreen(
                     })
                 }
                 if (book.format == com.mirad.reader.data.db.entity.BookFormat.TXT) {
+                    add(ActionItem("重新识别章节") { chapterBook = book })
                     add(ActionItem("文字乱码？重新识别编码…", hint = "当前识别为 ${book.encoding ?: "未知"}") {
                         encodingBook = book
                     })
@@ -494,6 +496,15 @@ fun ShelfScreen(
 
     if (showGroupManager) {
         GroupManagerSheet(container = container, onDismiss = { showGroupManager = false })
+    }
+
+    chapterBook?.let { book ->
+        ChapterPreviewSheet(
+            container = container,
+            book = book,
+            onDismiss = { chapterBook = null },
+            onApplied = { count -> chapterBook = null; toast = "已更新目录，共 $count 节" }
+        )
     }
 
     encodingBook?.let { book ->
@@ -945,14 +956,12 @@ private fun androidx.compose.foundation.layout.BoxScope.CoverProgress(percent: F
 /** 列表模式：独立细进度条。 */
 @Composable
 private fun InlineProgress(percent: Float) {
-    LinearProgressIndicator(
+    MiradLinearProgress(
         progress = { percent.coerceIn(0f, 1f) },
         modifier = Modifier
             .fillMaxWidth()
             .height(3.dp)
-            .clip(RoundedCornerShape(2.dp)),
-        color = MaterialTheme.colorScheme.primary,
-        trackColor = MaterialTheme.colorScheme.surfaceVariant
+            .clip(RoundedCornerShape(2.dp))
     )
 }
 
@@ -1044,7 +1053,7 @@ private fun ImportBar(items: List<ImportItem>, running: Boolean) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(6.dp))
-                LinearProgressIndicator(
+                MiradLinearProgress(
                     progress = { active?.progress ?: 0f },
                     modifier = Modifier
                         .fillMaxWidth()

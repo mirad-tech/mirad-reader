@@ -218,9 +218,9 @@ class ImportPipeline(
         val contentFile = paths.contentFile(token)
         contentFile.writeText(normalized, Charsets.UTF_8)
 
-        val (rule, hits) = ChapterRules.autoDetect(normalized)
-        val effectiveRule = if (hits > 0) rule else null
-        val slices = ChapterSplitter.split(normalized, effectiveRule)
+        val detection = com.mirad.reader.core.text.ChapterDetector.detect(normalized)
+        val effectiveRule = detection.rule
+        val slices = ChapterSplitter.split(normalized, detection)
         if (slices.isEmpty()) throw ImportException("无法切分正文")
 
         val chapters = slices.mapIndexed { index, slice ->

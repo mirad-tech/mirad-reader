@@ -12,6 +12,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -30,7 +37,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
+import com.mirad.reader.ui.common.MiradSlider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -44,6 +51,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+
+/** Same safe area for controls and text, including transient bars in immersive mode. */
+@Composable
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+internal fun readerSafeInsets(): WindowInsets =
+    WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
 
 /**
  * 阅读顶栏：只保留「返回 / 章节信息 / 书签 / 更多」。
@@ -68,7 +81,7 @@ fun ReaderTopBar(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column {
+        Column(Modifier.windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -143,12 +156,12 @@ fun ReaderBottomBar(
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column {
+        Column(Modifier.windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             val draftState = androidx.compose.runtime.remember {
                 androidx.compose.runtime.mutableStateOf<Float?>(null)
             }
-            Slider(
+            MiradSlider(
                 value = (draftState.value ?: percent).coerceIn(0f, 1f),
                 // 拖动中只改本地值，松手才真正跳转：否则每帧都会触发一次定位计算，又卡又飘。
                 onValueChange = { draftState.value = it },
@@ -160,7 +173,6 @@ fun ReaderBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp)
-                    .height(28.dp)
             )
             Row(
                 modifier = Modifier
@@ -196,7 +208,7 @@ fun ReaderBottomBar(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "${(percent * 100).toInt()}%",
+                        text = "${((draftState.value ?: percent) * 100).toInt()}%",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )

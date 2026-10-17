@@ -56,8 +56,8 @@ class AppContainer(app: Application) {
 
     val textProvider: ChapterTextProvider = ChapterTextProvider(paths)
 
-    /** 已导入书籍的维护：重新识别编码、重新分章（TXT 需要重写正文文件）。 */
-    val maintenance: BookMaintenance = BookMaintenance(books, paths)
+    /** 已导入书籍的维护：重新识别编码、重新分章（分章不重写正文文件）。 */
+    val maintenance: BookMaintenance = BookMaintenance(books, paths, database)
 
     val fonts: FontManager = FontManager(app, paths)
 

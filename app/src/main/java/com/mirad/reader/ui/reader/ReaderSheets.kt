@@ -14,13 +14,15 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.LinearProgressIndicator
+import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
+import com.mirad.reader.ui.common.MiradSlider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,6 +53,7 @@ import com.mirad.reader.data.repo.SearchProgress
 import com.mirad.reader.reader.ReaderSession
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
+import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.ChoiceRow
@@ -178,7 +181,7 @@ fun ProgressSheet(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Slider(
+                MiradSlider(
                     value = draft,
                     onValueChange = { draft = it },
                     onValueChangeFinished = { onJump(draft) }
@@ -219,6 +222,7 @@ fun ProgressSheet(
 fun ReaderSettingsSheet(
     container: AppContainer,
     bookId: Long,
+    isEpub: Boolean = false,
     config: ReaderConfig,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
     onResetGlobal: () -> Unit,
@@ -251,7 +255,7 @@ fun ReaderSettingsSheet(
                 val target = File(container.paths.backgroundsDir, "bg_$bookId.jpg")
                 val ok = withContext(Dispatchers.IO) {
                     runCatching {
-                        context.contentResolver.openInputStream(uri)?.use { input ->
+                        (context.contentResolver.openInputStream(uri) ?: return@runCatching false).use { input ->
                             target.outputStream().use { output -> input.copyTo(output) }
                         }
                         true
@@ -269,282 +273,45 @@ fun ReaderSettingsSheet(
         }
     }
 
-    // 只占屏幕下半部分：调字号/行距时上半屏还能看到正文，改了立刻能看出效果。
+    var category by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
+    val scrollStates = SettingsCategory.entries.associateWith { rememberScrollState() }
+    val homeScroll = rememberScrollState()
+    androidx.activity.compose.BackHandler(category != null) { category = null }
+    DisposableEffect(bookId) {
+        onDispose { container.settings.flushBookConfig(bookId, container.appScope) }
+    }
+    CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushBookConfig(bookId, container.appScope) }) {
     SheetScaffold(
-        title = "阅读设置",
-        subtitle = "只对当前这本书生效",
+        title = category?.title ?: "阅读设置",
+        subtitle = "当前书籍",
         onDismiss = onDismiss,
         fillHeight = true,
         maxHeightFraction = 0.62f,
-        actions = {
-            // 翻页方式是最常切的高频开关，放头部一键切换——面板变矮后又排在字体/排版之后，
-            // 放在卡片里会被折叠线挡在外面，用户得先滚动面板才找得到。
-            SheetActionButton(
-                text = if (config.pageMode == PageMode.SCROLL) "上下滚动" else "左右翻页",
-                onClick = {
-                    onChange {
-                        it.copy(
-                            pageMode = if (it.pageMode == PageMode.SCROLL) PageMode.PAGED else PageMode.SCROLL
-                        )
-                    }
-                }
-            )
-        }
+        actions = { if (category != null) SheetActionButton("返回", { category = null }) }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = Spacing.xl)
-        ) {
-            FontSection(
-                config = config,
-                customFonts = fonts,
-                onChange = onChange,
-                onImport = { fontPicker.launch(arrayOf("*/*")) },
-                onDelete = { font ->
-                    scope.launch {
+        Column(Modifier.fillMaxWidth().verticalScroll(category?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
+            val selected = category
+            if (selected == null) {
+                SettingCard { FontSizeControl(config, onChange) }
+                BrightnessSettings(config, onChange)
+                SettingCard {
+                    listOf(SettingsCategory.TYPOGRAPHY, SettingsCategory.THEME, SettingsCategory.INTERACTION, SettingsCategory.SCREEN)
+                        .plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
+                        .forEach { item -> SettingNavRow(item.title, onClick = { category = item }) }
+                }
+                OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复全局默认设置") }
+            } else {
+                ReaderSettingsContent(selected, config, onChange, fonts,
+                    onImportFont = { fontPicker.launch(arrayOf("*/*")) },
+                    onDeleteFont = { font -> scope.launch {
                         withContext(Dispatchers.IO) { container.fonts.delete(font) }
                         fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    }
-                }
-            )
-
-            SettingCard(title = "排版") {
-                LabeledSlider(
-                    label = "字号",
-                    value = config.fontSizeSp,
-                    valueText = "${config.fontSizeSp.toInt()} px",
-                    range = 12f..60f,
-                    steps = 47,
-                    onChange = { value -> onChange { it.copy(fontSizeSp = value) } }
-                )
-                LabeledSlider(
-                    label = "行距",
-                    value = config.lineHeightMultiplier,
-                    valueText = String.format("%.2f 倍", config.lineHeightMultiplier),
-                    range = 1.1f..2.8f,
-                    steps = 16,
-                    onChange = { value -> onChange { it.copy(lineHeightMultiplier = value) } }
-                )
-                LabeledSlider(
-                    label = "段间距",
-                    value = config.paragraphSpacingEm,
-                    valueText = String.format("%.2f em", config.paragraphSpacingEm),
-                    range = 0f..1.6f,
-                    steps = 15,
-                    onChange = { value -> onChange { it.copy(paragraphSpacingEm = value) } }
-                )
-                LabeledSlider(
-                    label = "首行缩进",
-                    value = config.firstLineIndentEm,
-                    valueText = String.format("%.1f 字", config.firstLineIndentEm),
-                    range = 0f..3f,
-                    steps = 5,
-                    onChange = { value -> onChange { it.copy(firstLineIndentEm = value) } }
-                )
-                LabeledSlider(
-                    label = "页边距",
-                    value = config.horizontalPaddingDp.toFloat(),
-                    valueText = "${config.horizontalPaddingDp} dp",
-                    range = 6f..40f,
-                    steps = 16,
-                    onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
-                )
-                ChoiceRow(
-                    label = "版心宽度（单行最长）",
-                    options = listOf(0f to "全屏", 28f to "窄", 34f to "适中", 42f to "宽"),
-                    selected = config.maxColumnWidthEm,
-                    onSelect = { value -> onChange { it.copy(maxColumnWidthEm = value) } },
-                    columns = 4
-                )
-                CardDivider()
-                ChoiceRow(
-                    label = "对齐",
-                    options = listOf(
-                        TextAlignKey.JUSTIFY to "两端对齐",
-                        TextAlignKey.LEFT to "左对齐",
-                        TextAlignKey.CENTER to "居中"
-                    ),
-                    selected = config.textAlign,
-                    onSelect = { key -> onChange { it.copy(textAlign = key) } },
-                    columns = 3
-                )
-                SettingSwitchRow(
-                    label = "加粗正文",
-                    checked = config.boldText,
-                    onCheckedChange = { value -> onChange { it.copy(boldText = value) } }
-                )
+                    } },
+                    onPickImage = { imagePicker.launch(arrayOf("image/*")) })
             }
-
-            // 亮度与阅读方式放在排版之后：先看得见字，再管看的方式
-            SettingCard(title = "亮度") {
-                SettingSwitchRow(
-                    label = "跟随系统亮度",
-                    subtitle = "关闭后可单独调节阅读时的屏幕亮度",
-                    checked = config.brightness < 0f,
-                    onCheckedChange = { follow ->
-                        onChange { it.copy(brightness = if (follow) -1f else 0.65f) }
-                    }
-                )
-                if (config.brightness >= 0f) {
-                    LabeledSlider(
-                        label = "屏幕亮度",
-                        value = config.brightness,
-                        valueText = "${(config.brightness * 100).toInt()}%",
-                        range = 0.05f..1f,
-                        onChange = { value -> onChange { it.copy(brightness = value) } }
-                    )
-                }
-            }
-
-            SettingCard(title = "阅读方式") {
-                SegmentedRow(
-                    options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
-                    selected = config.pageMode,
-                    onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
-                )
-                ChoiceRow(
-                    label = "翻页动画",
-                    options = listOf(
-                        PageAnim.NONE to "无动画",
-                        PageAnim.SLIDE to "滑动",
-                        PageAnim.COVER to "覆盖"
-                    ),
-                    selected = config.pageAnim,
-                    onSelect = { anim -> onChange { it.copy(pageAnim = anim) } },
-                    columns = 3
-                )
-            }
-
-            BackgroundSection(
-                config = config,
-                onChange = onChange,
-                onPickImage = { imagePicker.launch(arrayOf("image/*")) }
-            )
-
-            SettingCard(title = "屏幕与交互") {
-                SettingSwitchRow(
-                    label = "屏幕常亮",
-                    checked = config.keepScreenOn,
-                    onCheckedChange = { value -> onChange { it.copy(keepScreenOn = value) } }
-                )
-                SettingSwitchRow(
-                    label = "全屏沉浸",
-                    subtitle = "隐藏状态栏与导航栏",
-                    checked = config.fullScreen,
-                    onCheckedChange = { value -> onChange { it.copy(fullScreen = value) } }
-                )
-                CardDivider()
-                ChoiceRow(
-                    label = "屏幕方向",
-                    options = listOf(
-                        OrientationKey.AUTO to "自动",
-                        OrientationKey.PORTRAIT to "竖屏",
-                        OrientationKey.LANDSCAPE to "横屏"
-                    ),
-                    selected = config.orientation,
-                    onSelect = { key -> onChange { it.copy(orientation = key) } },
-                    columns = 3
-                )
-                ChoiceRow(
-                    label = "点击区域",
-                    options = listOf(
-                        TapZoneKey.THREE to "左中右三分",
-                        TapZoneKey.TWO to "左右两分",
-                        TapZoneKey.NONE to "仅呼出菜单"
-                    ),
-                    selected = config.tapZone,
-                    onSelect = { key -> onChange { it.copy(tapZone = key) } },
-                    columns = 3
-                )
-            }
-
-            SettingCard(title = "页眉页脚") {
-                SettingSwitchRow(
-                    label = "显示页眉",
-                    checked = config.showHeader,
-                    onCheckedChange = { value -> onChange { it.copy(showHeader = value) } }
-                )
-                SettingSwitchRow(
-                    label = "页眉显示章节名",
-                    checked = config.showChapterTitleInHeader,
-                    onCheckedChange = { value -> onChange { it.copy(showChapterTitleInHeader = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示页脚",
-                    checked = config.showFooter,
-                    onCheckedChange = { value -> onChange { it.copy(showFooter = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示页码",
-                    checked = config.showPageNumber,
-                    onCheckedChange = { value -> onChange { it.copy(showPageNumber = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示时间",
-                    checked = config.showClock,
-                    onCheckedChange = { value -> onChange { it.copy(showClock = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示电量",
-                    checked = config.showBattery,
-                    onCheckedChange = { value -> onChange { it.copy(showBattery = value) } }
-                )
-            }
-
-            SettingCard(title = "EPUB 排版") {
-                SegmentedRow(
-                    options = listOf(EpubLayoutMode.UNIFIED to "统一排版", EpubLayoutMode.ORIGINAL to "保留原书"),
-                    selected = config.epubLayoutMode,
-                    onSelect = { key -> onChange { it.copy(epubLayoutMode = key) } }
-                )
-                Text(
-                    text = "统一排版会强制字号行距，但保留插图、加粗与层级；保留原书则尽量还原出版社版式。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                SettingSwitchRow(
-                    label = "显示插图",
-                    checked = config.allowImages,
-                    onCheckedChange = { value -> onChange { it.copy(allowImages = value) } }
-                )
-            }
-
-            SettingCard(title = "朗读") {
-                LabeledSlider(
-                    label = "语速",
-                    value = config.ttsSpeechRate,
-                    valueText = String.format("%.2f", config.ttsSpeechRate),
-                    range = 0.5f..2f,
-                    onChange = { value -> onChange { it.copy(ttsSpeechRate = value) } }
-                )
-                LabeledSlider(
-                    label = "音调",
-                    value = config.ttsPitch,
-                    valueText = String.format("%.2f", config.ttsPitch),
-                    range = 0.5f..2f,
-                    onChange = { value -> onChange { it.copy(ttsPitch = value) } }
-                )
-                SettingSwitchRow(
-                    label = "读完自动下一章",
-                    checked = config.ttsAutoNextChapter,
-                    onCheckedChange = { value -> onChange { it.copy(ttsAutoNextChapter = value) } }
-                )
-                // 朗读读不出声/读错音，多半是系统 TTS 引擎或中文语音没装/没选对。
-                // 这里直接把你送到系统设置，不自己管引擎列表。
-                com.mirad.reader.ui.common.SettingNavRow(
-                    label = "选择朗读语音 / 引擎",
-                    subtitle = "打开系统语音设置，装中文语音包或切换引擎",
-                    onClick = { openTtsSettings(context) }
-                )
-            }
-
-            OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) {
-                Text("恢复全局默认设置")
-            }
-            Spacer(modifier = Modifier.height(Spacing.xxxl))
+            Spacer(Modifier.height(Spacing.lg))
         }
+    }
     }
 }
 
@@ -775,7 +542,7 @@ fun SearchSheet(
             )
         }
         if (scanning) {
-            LinearProgressIndicator(
+            MiradLinearProgress(
                 progress = {
                     if (session.chapters.isEmpty()) 0f else scannedChapters.toFloat() / session.chapters.size
                 },
@@ -821,6 +588,8 @@ fun openTtsSettings(context: android.content.Context) {
 @Composable
 fun TtsSheet(
     tts: TtsController,
+    config: ReaderConfig,
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
     onStart: (resume: Boolean) -> Unit,
     onClose: () -> Unit
 ) {
@@ -856,17 +625,12 @@ fun TtsSheet(
                 ) { Text("停止朗读") }
             }
             if (state.active) {
-                LinearProgressIndicator(
+                MiradLinearProgress(
                     progress = { if (state.total <= 0) 0f else (state.index + 1).toFloat() / state.total },
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            Text(
-                text = "朗读会在后台继续，通知栏可以暂停或切句；语速与音调在阅读设置里调整。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Normal
-            )
+            ReaderSettingsContent(SettingsCategory.TTS, config, onChange)
             Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }

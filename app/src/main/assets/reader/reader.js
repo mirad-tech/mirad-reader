@@ -790,8 +790,9 @@
          * 只替换主题样式（字号/行距/段距/配色等），跳过重建文本模型。
          * 拖动字号、行距滑杆时走这条快路径，否则每帧重建整章 DOM 文本模型会明显卡顿。
          */
-        setThemeCssOnly: function (css) {
+        setThemeCssOnly: function (css, config) {
             var anchor = offsetAtPage(state.page);
+            Object.assign(CFG, config || {});
             var element = document.getElementById('mirad-theme');
             if (element) {
                 element.textContent = css;

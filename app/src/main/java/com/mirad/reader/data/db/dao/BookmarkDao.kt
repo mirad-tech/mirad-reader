@@ -29,6 +29,9 @@ interface BookmarkDao {
     @Query("SELECT * FROM bookmarks WHERE bookId = :bookId AND chapterIndex = :chapterIndex AND charOffset = :charOffset LIMIT 1")
     suspend fun find(bookId: Long, chapterIndex: Int, charOffset: Int): BookmarkEntity?
 
+    @Query("SELECT * FROM bookmarks WHERE bookId = :bookId")
+    suspend fun getAllForBook(bookId: Long): List<BookmarkEntity>
+
     @Query("SELECT * FROM bookmarks")
     suspend fun getAll(): List<BookmarkEntity>
 }

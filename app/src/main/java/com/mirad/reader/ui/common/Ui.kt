@@ -21,14 +21,16 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
@@ -95,6 +97,8 @@ fun CardDivider() {
 }
 
 /** 带数值的滑杆：标签与数值同一行，滑杆紧跟其后。 */
+val LocalSettingsCommit = staticCompositionLocalOf<() -> Unit> { {} }
+
 @Composable
 fun LabeledSlider(
     label: String,
@@ -118,13 +122,13 @@ fun LabeledSlider(
                 color = MaterialTheme.colorScheme.primary
             )
         }
-        Slider(
+        MiradSlider(
             value = value.coerceIn(range.start, range.endInclusive),
             onValueChange = onChange,
-            onValueChangeFinished = onCommit,
+            onValueChangeFinished = onCommit ?: LocalSettingsCommit.current,
             valueRange = range,
             steps = steps,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth().semantics { contentDescription = label }
         )
     }
 }

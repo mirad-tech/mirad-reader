@@ -19,6 +19,7 @@ sealed interface Screen {
     data class Reader(val bookId: Long) : Screen
     data object Stats : Screen
     data object Settings : Screen
+    data class SettingsDetail(val category: com.mirad.reader.ui.common.SettingsCategory) : Screen
     data object Notes : Screen
     data object HiddenBooks : Screen
 }
@@ -42,6 +43,8 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
 
     BackHandler(enabled = backStack.size > 1) { goBack() }
 
+    val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
+    stateHolder.SaveableStateProvider(current.toString()) {
     when (current) {
         Screen.Shelf -> ShelfScreen(
             container = container,
@@ -58,8 +61,13 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
             onBack = { goBack() }
         )
         Screen.Stats -> StatsScreen(container = container, onBack = { goBack() })
+        is Screen.SettingsDetail -> SettingsScreen(
+            container = container, category = current.category, onBack = { goBack() },
+            onOpenHidden = { navigate(Screen.HiddenBooks) }
+        )
         Screen.Settings -> SettingsScreen(
             container = container,
+            onOpenCategory = { navigate(Screen.SettingsDetail(it)) },
             onBack = { goBack() },
             onOpenHidden = { navigate(Screen.HiddenBooks) }
         )
@@ -70,4 +78,6 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         )
         Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
     }
+}
+
 }

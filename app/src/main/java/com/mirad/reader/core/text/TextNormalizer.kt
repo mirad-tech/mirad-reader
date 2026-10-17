@@ -25,10 +25,25 @@ object TextNormalizer {
         else -> 3
     }
 
-    /** 字符串的 UTF-8 字节长度（不含代理对修正，中文正文足够）。 */
+    /**
+     * 字符串的 UTF-8 字节长度（**含代理对修正**）。
+     *
+     * 逐 Char 累加会把一个 4 字节码点（emoji、增补平面汉字如 𠮷）算成两个 3 字节字符，
+     * 每个多算 2 字节；而 startByte/endByte 会被用来 seek 切片，偏差会让正文读到错位区间。
+     */
     fun utf8Length(s: CharSequence, start: Int = 0, end: Int = s.length): Long {
         var sum = 0L
-        for (i in start until end) sum += utf8Length(s[i])
+        var i = start
+        while (i < end) {
+            val c = s[i]
+            if (c.isHighSurrogate() && i + 1 < end && s[i + 1].isLowSurrogate()) {
+                sum += 4
+                i += 2
+            } else {
+                sum += utf8Length(c)
+                i++
+            }
+        }
         return sum
     }
 }

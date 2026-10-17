@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
@@ -193,15 +194,13 @@ private fun ReaderContent(
     var ttsChapterIndex by remember { mutableStateOf(-1) }
 
     // 落库防抖：拖滑杆时每动一下都写数据库既没必要也会拖慢体感，停顿 400ms 再写。
-    var configSaveJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val applyConfig: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
-        val updated = transform(state.config)
+        val updated = transform(session.state.value.config)
         session.applyConfigToWebView(updated, systemDark)
-        configSaveJob?.cancel()
-        configSaveJob = scope.launch {
-            kotlinx.coroutines.delay(400)
-            container.settings.saveBookConfig(book.id, updated)
-        }
+        container.settings.queueBookConfig(book.id, updated, container.appScope)
+    }
+    DisposableEffect(book.id) {
+        onDispose { container.settings.flushBookConfig(book.id, container.appScope) }
     }
 
     suspend fun ensureTtsSentences(): List<SentenceSplitter.Sentence> {
@@ -368,10 +367,9 @@ private fun ReaderContent(
     }
 
     // 系统栏预留：正文避开状态栏与底部手势条（沉浸式仍然保留，只是正文不贴边）
-    val systemBarInsets = androidx.compose.foundation.layout.WindowInsets.systemBars
-        .asPaddingValues()
-    val reserveTop = systemBarInsets.calculateTopPadding().value.roundToInt().coerceAtLeast(30)
-    val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt().coerceAtLeast(24)
+    val systemBarInsets = readerSafeInsets().asPaddingValues()
+    val reserveTop = systemBarInsets.calculateTopPadding().value.roundToInt() + if (config.showHeader) 24 else 0
+    val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
     androidx.compose.runtime.LaunchedEffect(reserveTop, reserveBottom) {
         session.updateInsets(reserveTop, reserveBottom)
     }
@@ -547,6 +545,8 @@ private fun ReaderContent(
         if (showTts) {
             TtsSheet(
                 tts = tts,
+                config = config,
+                onChange = applyConfig,
                 onStart = { resume ->
                     if (resume && ttsState.active) tts.resume() else startTts(false)
                 },
@@ -596,6 +596,7 @@ private fun ReaderContent(
         ReaderSettingsSheet(
             container = container,
             bookId = book.id,
+            isEpub = book.format == com.mirad.reader.data.db.entity.BookFormat.EPUB,
             config = config,
             onChange = applyConfig,
             onResetGlobal = {
@@ -760,6 +761,7 @@ private fun HeaderFooter(
     Column(
         modifier = Modifier
             .fillMaxSize()
+            .windowInsetsPadding(readerSafeInsets())
             .padding(horizontal = horizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {

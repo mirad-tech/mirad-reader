@@ -21,6 +21,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -44,6 +46,7 @@ import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.TapZoneKey
 import com.mirad.reader.core.model.TextAlignKey
 import com.mirad.reader.data.db.entity.GroupEntity
+import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.ChoiceRow
@@ -71,6 +74,8 @@ import java.io.File
 fun SettingsScreen(
     container: AppContainer,
     onBack: () -> Unit,
+    category: SettingsCategory? = null,
+    onOpenCategory: (SettingsCategory) -> Unit = {},
     onOpenHidden: () -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -92,7 +97,11 @@ fun SettingsScreen(
     fun update(transform: (ReaderConfig) -> ReaderConfig) {
         val updated = transform(config)
         config = updated
-        scope.launch { container.settings.saveGlobal(updated) }
+        container.settings.queueGlobalConfig(updated, container.appScope)
+    }
+
+    DisposableEffect(container) {
+        onDispose { container.settings.flushGlobalConfig(container.appScope) }
     }
 
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -131,9 +140,11 @@ fun SettingsScreen(
         }
     }
 
+    CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        topBar = { ScreenHeader(title = "设置", onBack = onBack) }
+        topBar = { ScreenHeader(title = category?.title ?: "设置", onBack = onBack,
+            subtitle = if (category != null && category != SettingsCategory.SHELF && category != SettingsCategory.ABOUT) "全局默认" else null) }
     ) { padding ->
         Column(
             modifier = Modifier
@@ -143,233 +154,20 @@ fun SettingsScreen(
                 .padding(horizontal = Spacing.xl)
         ) {
             Spacer(modifier = Modifier.height(Spacing.sm))
-            InlineBanner("这里是新书的默认设置。在阅读器里改动只对当前这本书生效，可在阅读设置里「恢复全局默认」。")
-            Spacer(modifier = Modifier.height(Spacing.lg))
-
-            SettingCard(title = "阅读方式") {
-                SegmentedRow(
-                    options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
-                    selected = config.pageMode,
-                    onSelect = { mode -> update { it.copy(pageMode = mode) } }
-                )
-                ChoiceRow(
-                    label = "翻页动画",
-                    options = listOf(
-                        PageAnim.NONE to "无动画",
-                        PageAnim.SLIDE to "滑动",
-                        PageAnim.COVER to "覆盖"
-                    ),
-                    selected = config.pageAnim,
-                    onSelect = { anim -> update { it.copy(pageAnim = anim) } },
-                    columns = 3
-                )
-            }
-
-            FontSection(
-                config = config,
-                customFonts = fonts,
-                onChange = { transform -> update(transform) },
-                onImport = { fontPicker.launch(arrayOf("*/*")) },
-                onDelete = { font ->
-                    scope.launch {
+            if (category == null) {
+                SettingCard { SettingsCategory.entries.forEach { item ->
+                    SettingNavRow(item.title, onClick = { onOpenCategory(item) })
+                } }
+            } else if (category != SettingsCategory.SHELF && category != SettingsCategory.ABOUT) {
+                ReaderSettingsContent(category, config, { update(it) }, fonts,
+                    onImportFont = { fontPicker.launch(arrayOf("*/*")) },
+                    onDeleteFont = { font -> scope.launch {
                         withContext(Dispatchers.IO) { container.fonts.delete(font) }
                         fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    }
-                }
-            )
-
-            SettingCard(title = "排版") {
-                LabeledSlider(
-                    label = "字号",
-                    value = config.fontSizeSp,
-                    valueText = "${config.fontSizeSp.toInt()} px",
-                    range = 12f..60f,
-                    steps = 47,
-                    onChange = { value -> update { it.copy(fontSizeSp = value) } }
-                )
-                LabeledSlider(
-                    label = "行距",
-                    value = config.lineHeightMultiplier,
-                    valueText = String.format("%.2f 倍", config.lineHeightMultiplier),
-                    range = 1.1f..2.8f,
-                    steps = 16,
-                    onChange = { value -> update { it.copy(lineHeightMultiplier = value) } }
-                )
-                LabeledSlider(
-                    label = "段间距",
-                    value = config.paragraphSpacingEm,
-                    valueText = String.format("%.2f em", config.paragraphSpacingEm),
-                    range = 0f..1.6f,
-                    steps = 15,
-                    onChange = { value -> update { it.copy(paragraphSpacingEm = value) } }
-                )
-                LabeledSlider(
-                    label = "首行缩进",
-                    value = config.firstLineIndentEm,
-                    valueText = String.format("%.1f 字", config.firstLineIndentEm),
-                    range = 0f..3f,
-                    steps = 5,
-                    onChange = { value -> update { it.copy(firstLineIndentEm = value) } }
-                )
-                LabeledSlider(
-                    label = "页边距",
-                    value = config.horizontalPaddingDp.toFloat(),
-                    valueText = "${config.horizontalPaddingDp} dp",
-                    range = 6f..40f,
-                    steps = 16,
-                    onChange = { value -> update { it.copy(horizontalPaddingDp = value.toInt()) } }
-                )
-                ChoiceRow(
-                    label = "版心宽度（单行最长）",
-                    options = listOf(0f to "全屏", 28f to "窄", 34f to "适中", 42f to "宽"),
-                    selected = config.maxColumnWidthEm,
-                    onSelect = { value -> update { it.copy(maxColumnWidthEm = value) } },
-                    columns = 4
-                )
-                CardDivider()
-                ChoiceRow(
-                    label = "对齐",
-                    options = listOf(
-                        TextAlignKey.JUSTIFY to "两端对齐",
-                        TextAlignKey.LEFT to "左对齐",
-                        TextAlignKey.CENTER to "居中"
-                    ),
-                    selected = config.textAlign,
-                    onSelect = { key -> update { it.copy(textAlign = key) } },
-                    columns = 3
-                )
-                SettingSwitchRow(
-                    label = "加粗正文",
-                    checked = config.boldText,
-                    onCheckedChange = { value -> update { it.copy(boldText = value) } }
-                )
+                    } },
+                    onPickImage = { imagePicker.launch(arrayOf("image/*")) })
             }
-
-            BackgroundSection(
-                config = config,
-                onChange = { transform -> update(transform) },
-                onPickImage = { imagePicker.launch(arrayOf("image/*")) }
-            )
-
-            SettingCard(title = "自动夜间") {
-                SettingSwitchRow(
-                    label = "定时进入夜间主题",
-                    checked = config.autoNightEnabled,
-                    onCheckedChange = { value -> update { it.copy(autoNightEnabled = value) } }
-                )
-                if (config.autoNightEnabled) {
-                    LabeledSlider(
-                        label = "开始时间",
-                        value = (config.autoNightStartMinute / 60).toFloat(),
-                        valueText = "%d:00".format(config.autoNightStartMinute / 60),
-                        range = 0f..23f,
-                        steps = 22,
-                        onChange = { value -> update { it.copy(autoNightStartMinute = value.toInt() * 60) } }
-                    )
-                    LabeledSlider(
-                        label = "结束时间",
-                        value = (config.autoNightEndMinute / 60).toFloat(),
-                        valueText = "%d:00".format(config.autoNightEndMinute / 60),
-                        range = 0f..23f,
-                        steps = 22,
-                        onChange = { value -> update { it.copy(autoNightEndMinute = value.toInt() * 60) } }
-                    )
-                }
-            }
-
-            SettingCard(title = "屏幕与交互") {
-                SettingSwitchRow(
-                    label = "屏幕常亮",
-                    checked = config.keepScreenOn,
-                    onCheckedChange = { value -> update { it.copy(keepScreenOn = value) } }
-                )
-                SettingSwitchRow(
-                    label = "全屏沉浸",
-                    checked = config.fullScreen,
-                    onCheckedChange = { value -> update { it.copy(fullScreen = value) } }
-                )
-                CardDivider()
-                ChoiceRow(
-                    label = "屏幕方向",
-                    options = listOf(
-                        OrientationKey.AUTO to "自动",
-                        OrientationKey.PORTRAIT to "竖屏",
-                        OrientationKey.LANDSCAPE to "横屏"
-                    ),
-                    selected = config.orientation,
-                    onSelect = { key -> update { it.copy(orientation = key) } },
-                    columns = 3
-                )
-                ChoiceRow(
-                    label = "点击区域",
-                    options = listOf(
-                        TapZoneKey.THREE to "左中右三分",
-                        TapZoneKey.TWO to "左右两分",
-                        TapZoneKey.NONE to "仅呼出菜单"
-                    ),
-                    selected = config.tapZone,
-                    onSelect = { key -> update { it.copy(tapZone = key) } },
-                    columns = 3
-                )
-            }
-
-            SettingCard(title = "页眉页脚") {
-                SettingSwitchRow(
-                    label = "显示页眉",
-                    checked = config.showHeader,
-                    onCheckedChange = { value -> update { it.copy(showHeader = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示页脚",
-                    checked = config.showFooter,
-                    onCheckedChange = { value -> update { it.copy(showFooter = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示页码",
-                    checked = config.showPageNumber,
-                    onCheckedChange = { value -> update { it.copy(showPageNumber = value) } }
-                )
-                SettingSwitchRow(
-                    label = "显示时间与电量",
-                    subtitle = "页眉右侧显示当前时间与电量",
-                    checked = config.showClock || config.showBattery,
-                    onCheckedChange = { value ->
-                        update { it.copy(showClock = value, showBattery = value) }
-                    }
-                )
-            }
-
-            SettingCard(title = "EPUB 与朗读") {
-                SegmentedRow(
-                    options = listOf(EpubLayoutMode.UNIFIED to "统一排版", EpubLayoutMode.ORIGINAL to "保留原书"),
-                    selected = config.epubLayoutMode,
-                    onSelect = { key -> update { it.copy(epubLayoutMode = key) } }
-                )
-                SettingSwitchRow(
-                    label = "显示插图",
-                    checked = config.allowImages,
-                    onCheckedChange = { value -> update { it.copy(allowImages = value) } }
-                )
-                CardDivider()
-                LabeledSlider(
-                    label = "朗读语速",
-                    value = config.ttsSpeechRate,
-                    valueText = String.format("%.2f", config.ttsSpeechRate),
-                    range = 0.5f..2f,
-                    onChange = { value -> update { it.copy(ttsSpeechRate = value) } }
-                )
-                SettingSwitchRow(
-                    label = "读完自动下一章",
-                    checked = config.ttsAutoNextChapter,
-                    onCheckedChange = { value -> update { it.copy(ttsAutoNextChapter = value) } }
-                )
-                SettingNavRow(
-                    label = "选择朗读语音 / 引擎",
-                    subtitle = "打开系统语音设置，装中文语音包或切换引擎",
-                    onClick = { com.mirad.reader.ui.reader.openTtsSettings(context) }
-                )
-            }
-
+            if (category == SettingsCategory.SHELF) {
             SettingCard(title = "书架管理") {
                 SettingNavRow(
                     label = "隐藏的书籍",
@@ -423,21 +221,19 @@ fun SettingsScreen(
                 }
             }
 
+            }
+            if (category == SettingsCategory.ABOUT) {
             SettingCard(title = "关于") {
                 Text(
                     text = "墨读 v${BuildConfig.VERSION_NAME}",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Text(
-                    text = "本地小说阅读器，书库与阅读数据只存本机（不注册、不上传）。支持 txt（自动识别 GBK/UTF-8 等编码并分章）与 epub（保留原书排版与图片）；" +
-                        "内置 7 款阅读背景与 2 款常用字子集字体；所有书籍与阅读数据只保存在本机。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            }
             }
 
             Spacer(modifier = Modifier.height(Spacing.xxxl))
         }
+    }
     }
 
     renameTarget?.let { target ->

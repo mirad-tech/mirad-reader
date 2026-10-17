@@ -323,28 +323,13 @@ class ReaderSession(
 
     /** 配置变更后刷新 WebView 中的样式（不重载章节）。 */
     fun applyConfigToWebView(config: ReaderConfig, systemDark: Boolean) {
-        val previous = _state.value.config
         this.systemDark = systemDark
         updateConfig(config)
-        val anchor = _state.value.offset
         val css = jsQuote(resources.currentThemeCss())
-        // 只改了排版 CSS（字号/行距/段距/配色…）时走快路径：跳过重建文本模型。
-        // 拖字号滑杆每帧都重建整章 DOM 文本模型是卡顿的主因。
-        val layoutChanged = previous.pageMode != config.pageMode ||
-            previous.maxColumnWidthEm != config.maxColumnWidthEm ||
-            previous.horizontalPaddingDp != config.horizontalPaddingDp
-        val body = if (layoutChanged) {
-            "MiradReader.setThemeCss($css);" +
-                "MiradReader.applyConfig(${jsConfig()});" +
-                "MiradReader.gotoOffset($anchor, false);"
-        } else {
-            "MiradReader.setThemeCssOnly($css);" +
-                "MiradReader.gotoOffset($anchor, false);"
-        }
-        evaluate("if (window.MiradReader) {$body}")
-        renderHighlights()
+        // 样式、版心和安全区域同批更新；由 DOM 记录更新前的阅读锚点。
+        // 不重建文本/高亮，避免每次拖动清掉搜索与朗读标记。
+        evaluate("if (window.MiradReader) {MiradReader.setThemeCssOnly($css, ${jsConfig()});}")
     }
-
     private fun jsQuote(value: String): String = org.json.JSONObject.quote(value)
 
     private fun jsConfig(): String {
