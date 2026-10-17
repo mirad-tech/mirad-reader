@@ -243,8 +243,8 @@ class ReaderSession(
         chapterRendered = false
         renderAttempts = 0
         _state.update { it.copy(ready = false) }
-        val offset = if (initial) restoreOffset else 0
-        restoreOffset = offset
+        // restoreOffset 已由调用方决定（进度恢复，或 gotoChapter 传入的显式偏移）。
+        // 这里不能再覆盖成 0：否则"在章首点左键回上一章"会落到上一章开头，而不是它的末尾。
         webView?.loadUrl(ReaderResourceProvider.chapterUrl(book.id, index))
     }
 

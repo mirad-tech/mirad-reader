@@ -778,20 +778,30 @@
         state.ready = false;
         bottomSentFor = null;
         lastReportedPage = -1;
-        buildInitialModelAndLayout();
-        // 必须先重建布局：新章的高度只有重建后才知道。往回翻时停在上一章末尾。
-        window.scrollTo(0, toBottom ? document.documentElement.scrollHeight : 0);
-        state.page = Math.floor((window.scrollY || 0) / viewportHeight());
-        lastReportedPage = state.page;
-        state.ready = true;
-        var b = bridge();
-        if (b) {
-            try {
-                if (b.onChapterChanged) b.onChapterChanged(currentChapterIndex());
-            } catch (e) {
+        // 先让新章内容立刻出现在屏幕上（滚动到顶部），再重建模型/布局。
+        // 旧实现把整段重建卡在"换内容"这一帧里，观感就是接章时顿一下。
+        if (!toBottom) window.scrollTo(0, 0);
+        var finish = function () {
+            buildInitialModelAndLayout();
+            // 布局重建后才知道新章高度：往回翻时停在上一章末尾。
+            if (toBottom) window.scrollTo(0, document.documentElement.scrollHeight);
+            state.page = Math.floor((window.scrollY || 0) / viewportHeight());
+            lastReportedPage = state.page;
+            state.ready = true;
+            var b = bridge();
+            if (b) {
+                try {
+                    if (b.onChapterChanged) b.onChapterChanged(currentChapterIndex());
+                } catch (e) {
+                }
             }
+            reportState();
+        };
+        if (window.requestAnimationFrame) {
+            requestAnimationFrame(function () { requestAnimationFrame(finish); });
+        } else {
+            finish();
         }
-        reportState();
         return true;
     }
 
@@ -826,6 +836,20 @@
     /** 是否在章首（留 2px 容差）。 */
     function atTop() {
         return (window.scrollY || 0) <= 2;
+    }
+
+    /** 距章末还有多少像素（用于"一次滑动就接章"的容差判断）。 */
+    function nearBottom(slack) {
+        var top = window.scrollY || 0;
+        var total = Math.max(
+            document.documentElement.scrollHeight,
+            document.body ? document.body.scrollHeight : 0
+        );
+        return total > 0 && top + viewportHeight() >= total - slack;
+    }
+
+    function nearTop(slack) {
+        return (window.scrollY || 0) <= slack;
     }
 
     var prevPrefetchedFor = -1;
@@ -881,8 +905,9 @@
         var endY = (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0].clientY : null;
         var dy = (endY === null) ? 0 : (endY - swipeStartY);
         swipeStartY = null;
-        if (dy <= -48 && atBottom()) advanceChapter();
-        else if (dy >= 48 && atTop()) retreatChapter();
+        // 容差放宽：手指抬起时惯性还没落定，严格 atBottom 会让人"再滑一次才进下一章"
+        if (dy <= -48 && nearBottom(96)) advanceChapter();
+        else if (dy >= 48 && nearTop(96)) retreatChapter();
     }, {passive: true});
 
     document.addEventListener('scroll', onScroll, true);

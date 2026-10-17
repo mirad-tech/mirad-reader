@@ -82,7 +82,7 @@ data class ReaderConfig(
     @SerialName("customFontPath") val customFontPath: String? = null,
     /** 内置在 assets/fonts 下的字体（fontFamily = CUSTOM 时生效）。 */
     val customFontAsset: String? = ReadingFonts.DEFAULT_CUSTOM_FONT,
-    val fontSizeSp: Float = 18f,
+    val fontSizeSp: Float = 24f,
     val lineHeightMultiplier: Float = 1.7f,
     val paragraphSpacingEm: Float = 0.55f,
     val letterSpacingEm: Float = 0f,
