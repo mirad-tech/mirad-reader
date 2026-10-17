@@ -95,6 +95,9 @@ class ReaderSession(
     private var insetTopDp = 0
     private var insetBottomDp = 0
 
+    /** 上次因"滚到底"信号而跨章的时间，用于抑制原地换章与信号同时到达造成的跳两章。 */
+    private var lastBottomAdvanceAt = 0L
+
     private val bridge = ReaderJsBridge(
         onReady = { pages, textLength ->
             _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
@@ -104,6 +107,12 @@ class ReaderSession(
             // 上下滚动模式下，JS 滚到本章底部时会报 page == pages：接下一章。
             // 注意不能用 pages > 1 过滤——单屏短章 pages == 1，那样会永远卡在本章末尾。
             if (current.config.pageMode == PageMode.SCROLL && page >= pages) {
+                // 单屏短章 pages == 1 也要能接章，所以不能用 pages > 1 过滤。
+                // 但原地换章（JS 侧）与这条"到底"信号可能几乎同时到达：短时间内只认一次，
+                // 否则一次上滑会被当成两次，直接跳过一章。
+                val now = System.currentTimeMillis()
+                if (now - lastBottomAdvanceAt < 800L) return@state
+                lastBottomAdvanceAt = now
                 if (current.chapterIndex < chapters.size - 1) {
                     gotoChapter(current.chapterIndex + 1, 0)
                 }
