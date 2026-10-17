@@ -126,10 +126,27 @@ class ReaderSession(
         },
         onSelection = { start, end, text ->
             _state.update { it.copy(selection = TextSelection(start, end, text)) }
-        }
+        },
+        onChapterChanged = { index -> onJsChapterChanged(index) }
     )
 
     // ------------------------------------------------------------------ 生命周期
+
+    /**
+     * 滚动模式下 JS 已在**同一文档内**换到另一章（原地换章），这里同步原生状态。
+     *
+     * 注意不能走 [gotoChapter]：那会重新 loadUrl，正是"接章卡一下"的来源。
+     * 换章后页号/偏移由随后的 reportState 回填，这里只负责章号、进度与本章标注。
+     */
+    private fun onJsChapterChanged(index: Int) {
+        if (index !in chapters.indices) return
+        if (index == _state.value.chapterIndex) return
+        _state.update { it.copy(chapterIndex = index, page = 0, offset = 0) }
+        recomputePercent()
+        scheduleProgressSave()
+        renderHighlights()
+        scope.launch { refreshBookmarkFlagNow() }
+    }
 
     suspend fun prepare(config: ReaderConfig, systemDark: Boolean) {
         this.systemDark = systemDark
@@ -350,7 +367,8 @@ class ReaderSession(
             else -> "SLIDE"
         }
         return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
-            """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim"}"""
+            """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim",""" +
+            """chapterCount:${chapters.size}}"""
     }
 
     /**

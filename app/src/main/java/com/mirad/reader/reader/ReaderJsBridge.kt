@@ -12,9 +12,16 @@ class ReaderJsBridge(
     private val onState: (page: Int, pages: Int, offset: Int, textLength: Int) -> Unit,
     private val onSelection: (start: Int, end: Int, text: String) -> Unit,
     /** 版心几何回报：正文列相对屏幕的居中偏移与列宽（CSS px = dp）。 */
-    private val onMetrics: (insetLeft: Int, columnWidth: Int) -> Unit = { _, _ -> }
+    private val onMetrics: (insetLeft: Int, columnWidth: Int) -> Unit = { _, _ -> },
+    /** JS 已在同一文档内换到别的章（滚动模式无感接章），原生层据此同步章节状态。 */
+    private val onChapterChanged: (index: Int) -> Unit = {}
 ) {
     private val main = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onChapterChanged(index: Int) {
+        main.post { onChapterChanged(index) }
+    }
 
     @JavascriptInterface
     fun onReady(pages: Int, textLength: Int) {

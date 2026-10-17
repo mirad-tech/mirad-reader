@@ -687,17 +687,136 @@
         if (CFG.mode !== 'SCROLL') return;
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
-            if (atBottom()) {
-                notifyBottomOnce();
-                return;
-            }
-            var page = Math.floor((window.scrollY || 0) / viewportHeight());
+            // 不再"滚到底就自动接章"：最后一段刚露出来时用户还没读完，
+            // 自动跳会让人觉得"没看完就被切走"。接章改为到底后继续上滑（见 touchend / scrollStep）。
+            var top = window.scrollY || 0;
+            var view = viewportHeight();
+            var total = Math.max(
+                document.documentElement.scrollHeight,
+                document.body ? document.body.scrollHeight : 0
+            );
+            // 还剩一屏半时就把下一章取到内存，真正换章时几乎零等待。
+            if (total > 0 && top + view * 1.5 >= total) prefetchNextChapter();
+            var page = Math.floor(top / view);
             // 页号没变就不回报，滚动过程不打扰原生层（否则每帧穿透到 Compose 会顿）。
             if (page === lastReportedPage) return;
             lastReportedPage = page;
             state.page = page;
             reportState();
         }, 140);
+    }
+
+    // ---------------------------------------------------------------- 滚动模式：无感接章
+
+    var prefetchedFor = -1;
+    var prefetchedHtml = null;
+    var prefetching = false;
+
+    /** 当前章的索引（来自 #mirad-content 的 data-chapter）。 */
+    function currentChapterIndex() {
+        var c = content();
+        var raw = c && c.getAttribute ? c.getAttribute('data-chapter') : null;
+        var n = parseInt(raw, 10);
+        return isNaN(n) ? -1 : n;
+    }
+
+    function lastChapterIndex() {
+        return (typeof CFG.chapterCount === 'number' && CFG.chapterCount > 0) ? CFG.chapterCount - 1 : 0;
+    }
+
+    function chapterUrlOf(index) {
+        return location.pathname.replace(/\/chapter\/\d+$/, '/chapter/' + index) + location.search;
+    }
+
+    /** 提前把下一章 HTML 取到内存（同源，走本地拦截，不产生网络流量）。 */
+    function prefetchNextChapter() {
+        var idx = currentChapterIndex();
+        if (idx < 0 || idx >= lastChapterIndex()) return;
+        if (prefetchedFor === idx + 1 && prefetchedHtml) return;
+        if (prefetching) return;
+        prefetching = true;
+        fetch(chapterUrlOf(idx + 1))
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                if (html) { prefetchedHtml = html; prefetchedFor = idx + 1; }
+            })
+            .catch(function () {})
+            .then(function () { prefetching = false; });
+    }
+
+    /**
+     * 原地换到下一章：替换 #mirad-content、同步 <base>（EPUB 的图片依赖它）、
+     * 重建文本模型与布局、回到顶部，并把新章号告诉原生层。
+     * 全程不重载文档，因此没有白屏与"卡一下"。
+     */
+    function swapInNextChapter(html) {
+        var live = content();
+        if (!live) return false;
+        var parsed;
+        try {
+            parsed = new DOMParser().parseFromString(html, 'text/html');
+        } catch (e) {
+            return false;
+        }
+        var incoming = parsed.querySelector('#mirad-content');
+        if (!incoming) return false;
+        var incomingBase = parsed.querySelector('base');
+        var liveBase = document.querySelector('base');
+        if (incomingBase) {
+            if (!liveBase) {
+                liveBase = document.createElement('base');
+                document.head.appendChild(liveBase);
+            }
+            liveBase.setAttribute('href', incomingBase.getAttribute('href') || '');
+        }
+        live.innerHTML = incoming.innerHTML;
+        for (var i = 0; i < incoming.attributes.length; i++) {
+            var attr = incoming.attributes[i];
+            if (attr && attr.name) live.setAttribute(attr.name, attr.value);
+        }
+        state.ready = false;
+        bottomSentFor = null;
+        lastReportedPage = -1;
+        window.scrollTo(0, 0);
+        buildInitialModelAndLayout();
+        state.ready = true;
+        var b = bridge();
+        if (b) {
+            try {
+                if (b.onChapterChanged) b.onChapterChanged(currentChapterIndex());
+            } catch (e) {
+            }
+        }
+        reportState();
+        return true;
+    }
+
+    /** 用户明确要继续读下一章时才走这里：优先原地换章，失败才退回"通知原生重载"。 */
+    function advanceChapter() {
+        if (CFG.mode !== 'SCROLL' || !state.ready) return false;
+        var idx = currentChapterIndex();
+        if (idx < 0) return false;
+        if (idx >= lastChapterIndex()) {
+            notifyBottomOnce();
+            return false;
+        }
+        if (prefetchedFor === idx + 1 && prefetchedHtml) {
+            var cached = prefetchedHtml;
+            prefetchedHtml = null;
+            prefetchedFor = -1;
+            if (swapInNextChapter(cached)) {
+                prefetchNextChapter();
+                return true;
+            }
+        }
+        fetch(chapterUrlOf(idx + 1))
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                if (!html || !swapInNextChapter(html)) notifyBottomOnce();
+                else prefetchNextChapter();
+            })
+            .catch(function () { notifyBottomOnce(); });
+        return true;
     }
 
     // 单屏短章没有滚动事件：手指在底部继续上滑也算"要继续读下一章"。
@@ -710,7 +829,7 @@
         var endY = (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0].clientY : null;
         var dy = (endY === null) ? 0 : (endY - swipeStartY);
         swipeStartY = null;
-        if (dy <= -24 && atBottom()) notifyBottomOnce();
+        if (dy <= -48 && atBottom()) advanceChapter();
     }, {passive: true});
 
     document.addEventListener('scroll', onScroll, true);
@@ -865,9 +984,9 @@
             var h = viewportHeight();
             var max = Math.max(0, document.documentElement.scrollHeight - h);
             var target = (window.scrollY || 0) + (direction >= 0 ? 1 : -1) * h * 0.85;
-            // 已经在底部还继续往下翻 → 用户意图是继续读下一章
+            // 已经在底部还继续往下翻 → 用户意图是继续读下一章（原地换章，不重载）
             if (direction >= 0 && atBottom()) {
-                notifyBottomOnce();
+                advanceChapter();
                 return true;
             }
             animateScrollTop(Math.max(0, Math.min(target, max)));
