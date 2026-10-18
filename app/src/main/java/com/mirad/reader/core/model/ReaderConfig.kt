@@ -92,6 +92,11 @@ data class ReaderConfig(
 
     // ---- 阅读方式 ----
     val pageMode: String = PageMode.PAGED,
+    /**
+     * 滚动模式「连续接章」开关（见 docs/continuous-scroll-plan.md）。
+     * 默认开；关闭时退回旧的"整章替换"路径，行为与 1.0.7 一致，可随时回退而不涉及数据迁移。
+     */
+    val windowedScroll: Boolean = true,
     val pageAnim: String = PageAnim.SLIDE,
 
     // ---- 背景与主题 ----

@@ -144,6 +144,11 @@ class ReaderResourceProvider(
                 val index = segments.getOrNull(2)?.toIntOrNull() ?: return notFound()
                 chapterResponse(index)
             }
+            // 章节片段：滚动模式窗口追加用（只含 <section>，无 head/主题/reader.js）
+            "fragment" -> {
+                val index = segments.getOrNull(2)?.toIntOrNull() ?: return notFound()
+                fragmentResponse(index)
+            }
             "asset" -> {
                 val zipPath = Uri.decode(segments.drop(2).joinToString("/"))
                 assetFromZip(zipPath)
@@ -192,6 +197,39 @@ class ReaderResourceProvider(
                     includeTitleElement = !chapter.isVolume
                 )
                 injectHead(built, null)
+            }
+        }
+        return response("text/html", html.toByteArray(Charsets.UTF_8))
+    }
+
+    /**
+     * 章节片段：只返回一个 `<section>`（不含 head / 主题 / reader.js），供滚动模式窗口追加。
+     *
+     * 与 [chapterResponse] 共用同一份正文与标题行规则，所以片段内的局部文本与整章加载逐字相同；
+     * EPUB 的相对资源在此处绝对化，因为窗口文档只有一个 `<base>`。
+     */
+    private fun fragmentResponse(index: Int): WebResourceResponse? {
+        val current = book ?: return null
+        val chapter = chapters.firstOrNull { it.index == index } ?: return notFound()
+        val html = when (current.format) {
+            BookFormat.EPUB -> {
+                val raw = textProvider.readEpubHtml(current, chapter.href ?: return notFound())
+                    ?: return notFound()
+                val baseDir = (chapter.href ?: "").substringBeforeLast('/', "")
+                ChapterHtmlBuilder.epubSection(raw, chapter.index) { ref ->
+                    com.mirad.reader.core.html.HtmlUrlRewriter.resolveRelative(baseDir, ref)
+                        ?.let { assetUrl(current.id, it) }
+                }
+            }
+            else -> {
+                val text = textProvider.readTxtText(current, chapter)
+                ChapterHtmlBuilder.buildSection(
+                    title = chapter.title,
+                    bodyText = text,
+                    chapterIndex = chapter.index,
+                    titleLineChars = chapter.titleLineChars,
+                    includeTitleElement = !chapter.isVolume
+                )
             }
         }
         return response("text/html", html.toByteArray(Charsets.UTF_8))
