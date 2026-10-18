@@ -92,7 +92,9 @@ fun TocSheet(
     )
     SheetScaffold(
         title = "目录",
-        subtitle = "共 ${chapters.size} 章 · 当前第 ${currentIndex + 1} 章",
+        // 用章节标题而不是"第 N 章"序号：分卷/重新编号的书里，序号和标题里的章号会不一致，
+        // 用户会以为"当前章节识别错了"。
+        subtitle = "共 ${chapters.size} 章 · 当前：${chapters.getOrNull(currentIndex)?.title ?: "第 ${currentIndex + 1} 章"}",
         onDismiss = onDismiss,
         fillHeight = true
     ) {

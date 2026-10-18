@@ -98,6 +98,21 @@ class ReaderSession(
     /** 上次因"滚到底"信号而跨章的时间，用于抑制原地换章与信号同时到达造成的跳两章。 */
     private var lastBottomAdvanceAt = 0L
 
+    init {
+        // 音量键翻页：阅读会话在（且仅在前台时）注册；release() 时清理。
+        ReaderKeys.pager = { delta -> handleVolumeKey(delta) }
+    }
+
+    /**
+     * 音量键：+1 下一页、-1 上一页。滚动模式下按屏滚动（滚到章末继续滚会接下一章）。
+     * 页面还没就绪时返回 false，把按键交还系统（仍可调音量）。
+     */
+    private fun handleVolumeKey(delta: Int): Boolean {
+        if (!_state.value.ready) return false
+        if (_state.value.config.pageMode == PageMode.SCROLL) scrollStep(delta) else turnPage(delta)
+        return true
+    }
+
     private val bridge = ReaderJsBridge(
         onReady = { pages, textLength ->
             _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }

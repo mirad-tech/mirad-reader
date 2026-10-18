@@ -145,7 +145,7 @@ fun ReaderScreen(
     }
 
     DisposableEffect(current) {
-        onDispose { current.release() }
+        onDispose { current.release(); com.mirad.reader.reader.ReaderKeys.pager = null }
     }
 
     ReaderContent(
@@ -810,7 +810,7 @@ private fun HeaderFooter(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "${(percent * 100).toInt()}%",
+                    text = String.format(java.util.Locale.US, "%.1f%%", percent * 100f),
                     style = MaterialTheme.typography.labelSmall,
                     color = textColor
                 )

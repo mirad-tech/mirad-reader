@@ -208,7 +208,7 @@ fun ReaderBottomBar(
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "${((draftState.value ?: percent) * 100).toInt()}%",
+                        text = String.format(java.util.Locale.US, "%.1f%%", (draftState.value ?: percent) * 100f),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary
                     )
