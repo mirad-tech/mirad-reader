@@ -205,10 +205,6 @@
         var raw = c.getAttribute('data-chapter');
         var idx = parseInt(raw, 10);
         if (isNaN(idx)) idx = 0;
-        try {
-            console.log('MIRAD wrap raw=' + raw + ' idx=' + idx);
-        } catch (e) {
-        }
         var sec = document.createElement('section');
         sec.className = 'mirad-chapter';
         sec.setAttribute('data-chapter', String(idx));
@@ -884,10 +880,6 @@
 
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
-        try {
-            console.log('MIRAD scroll y=' + Math.round(window.scrollY || 0) + ' win=' + windowed());
-        } catch (e) {
-        }
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
             // 不再"滚到底就自动接章"：最后一段刚露出来时用户还没读完，
@@ -900,13 +892,6 @@
                 refreshActive();
                 var relTop = Math.max(0, top - (win.active ? sectionTop(win.active) : 0));
                 var winPage = Math.floor(relTop / view);
-                try {
-                    console.log('MIRAD win y=' + Math.round(top) + ' rel=' + Math.round(relTop) +
-                        ' page=' + winPage + ' pages=' + state.pages +
-                        ' secs=' + container().querySelectorAll('section.mirad-chapter').length +
-                        ' idx=' + sectionIndex(win.active) + ' docH=' + documentHeight() + ' vh=' + view);
-                } catch (e) {
-                }
                 if (winPage === lastReportedPage) return;
                 lastReportedPage = winPage;
                 state.page = Math.min(winPage, state.pages - 1);
@@ -972,6 +957,48 @@
      * 重建文本模型与布局、回到顶部，并把新章号告诉原生层。
      * 全程不重载文档，因此没有白屏与"卡一下"。
      */
+    // ---------------------------------------------------------------- 换章资源同步
+    //
+    // 换章时除了正文，还要同步：书籍样式表/内联样式、原书 html/body 呈现属性、
+    // 并重新监听新章的图片与字体（它们可能晚于布局才展开）。
+    // resourceGen 是换章代次：旧章的资源回调不得影响新章的布局、标题或定位。
+
+    var resourceGen = 0;
+    var appBodyBase = '';     // 应用自己写在 body 上的类（如 mirad-txt），换章时保留
+    var appHtmlBase = '';
+    var relayoutScheduled = false;
+
+    /** 合并同一帧内的多个资源事件，避免重复全量重排。 */
+    function scheduleRelayout(gen) {
+        if (gen !== undefined && gen !== resourceGen) return;
+        if (relayoutScheduled) return;
+        relayoutScheduled = true;
+        var run = function () {
+            relayoutScheduled = false;
+            if (gen !== undefined && gen !== resourceGen) return;
+            if (!state.ready) return;
+            window.MiradReader.relayout(true);
+            // 向后换章且用户还没动过：图片展开后仍应停在新的章末
+            if (state.pendingEndAnchor) {
+                window.scrollTo(0, document.documentElement.scrollHeight);
+                state.page = Math.max(0, Math.floor((window.scrollY || 0) / viewportHeight()));
+                state.pendingEndAnchor = false;
+            }
+            reportState();
+        };
+        if (window.requestAnimationFrame) requestAnimationFrame(run);
+        else window.setTimeout(run, 16);
+    }
+
+    /** 保留应用类，同时套用书籍类（同名去重）。 */
+    function mergeBookClasses(base, extra) {
+        var result = (base || '').split(/\s+/).filter(function (c) { return c; });
+        (extra || '').split(/\s+/).forEach(function (c) {
+            if (c && result.indexOf(c) < 0) result.push(c);
+        });
+        return result.join(' ');
+    }
+
     function swapInNextChapter(html, toBottom) {
         var live = content();
         if (!live) return false;
@@ -983,32 +1010,102 @@
         }
         var incoming = parsed.querySelector('#mirad-content');
         if (!incoming) return false;
+
         var incomingBase = parsed.querySelector('base');
         var liveBase = document.querySelector('base');
-        if (incomingBase) {
+        var resolvedBase = incomingBase ? incomingBase.getAttribute('href') : null;
+
+        // 1) 目标章的书籍样式（应用注入的 #mirad-theme 不复制，它是当前主题）
+        var bookNodes = [];
+        if (parsed.head) {
+            var candidates = parsed.head.querySelectorAll('link[rel~="stylesheet"], style');
+            for (var c1 = 0; c1 < candidates.length; c1++) {
+                if (candidates[c1].id === 'mirad-theme') continue;
+                bookNodes.push(candidates[c1]);
+            }
+        }
+        var bookBodyClass = parsed.body ? (parsed.body.getAttribute('class') || '') : '';
+        var bookBodyStyle = parsed.body ? parsed.body.getAttribute('style') : null;
+        var bookHtmlClass = parsed.documentElement ? (parsed.documentElement.getAttribute('class') || '') : '';
+        var bookDir = parsed.documentElement ? parsed.documentElement.getAttribute('dir') : null;
+        var bookLang = parsed.documentElement ? parsed.documentElement.getAttribute('lang') : null;
+
+        var gen = ++resourceGen;
+
+        // 2) base：目标章没有 base 就退回文档地址，避免继续沿用上一章的相对路径
+        if (resolvedBase) {
             if (!liveBase) {
                 liveBase = document.createElement('base');
                 document.head.appendChild(liveBase);
             }
-            liveBase.setAttribute('href', incomingBase.getAttribute('href') || '');
+            liveBase.setAttribute('href', resolvedBase);
+        } else if (liveBase && liveBase.parentNode) {
+            liveBase.parentNode.removeChild(liveBase);
         }
+
+        // 3) 移除上一章的书籍样式（#mirad-theme 属于应用，不动）
+        var stale = document.querySelectorAll('link[data-mirad-book="1"], style[data-mirad-book="1"]');
+        for (var s1 = 0; s1 < stale.length; s1++) {
+            if (stale[s1].parentNode) stale[s1].parentNode.removeChild(stale[s1]);
+        }
+
+        // 4) 装上目标章样式，等它们加载完成或明确失败（有超时，不无限等待）
+        var styleReady = [];
+        for (var n1 = 0; n1 < bookNodes.length; n1++) {
+            var clone = bookNodes[n1].cloneNode(true);
+            clone.setAttribute('data-mirad-book', '1');
+            if (clone.tagName === 'LINK') {
+                var href = clone.getAttribute('href');
+                if (href) {
+                    try {
+                        clone.setAttribute('href', new URL(href, resolvedBase || document.baseURI).href);
+                    } catch (e) {
+                    }
+                }
+                styleReady.push(new Promise(function (resolve) {
+                    var done = false;
+                    var finishStyle = function () {
+                        if (!done) {
+                            done = true;
+                            resolve();
+                        }
+                    };
+                    clone.addEventListener('load', finishStyle);
+                    clone.addEventListener('error', finishStyle);
+                    window.setTimeout(finishStyle, 1500);
+                }));
+            }
+            document.head.appendChild(clone);
+        }
+
+        // 5) 原书 html/body 呈现属性：目标章没有就清除，避免继承上一章的特殊样式
+        document.body.className = mergeBookClasses(appBodyBase, bookBodyClass);
+        if (bookBodyStyle) document.body.setAttribute('style', bookBodyStyle);
+        else document.body.removeAttribute('style');
+        document.documentElement.className = mergeBookClasses(appHtmlBase, bookHtmlClass);
+        if (bookDir) document.documentElement.setAttribute('dir', bookDir);
+        else document.documentElement.removeAttribute('dir');
+        if (bookLang) document.documentElement.setAttribute('lang', bookLang);
+        else document.documentElement.removeAttribute('lang');
+
+        // 6) 换正文（innerHTML 不会执行书内 <script>，不引入新的脚本执行能力）
         live.innerHTML = incoming.innerHTML;
-        for (var i = 0; i < incoming.attributes.length; i++) {
-            var attr = incoming.attributes[i];
+        for (var a1 = 0; a1 < incoming.attributes.length; a1++) {
+            var attr = incoming.attributes[a1];
             if (attr && attr.name) live.setAttribute(attr.name, attr.value);
         }
         state.ready = false;
         bottomSentFor = null;
         lastReportedPage = -1;
+        state.pendingEndAnchor = !!toBottom;
         // 先让新章内容立刻出现在屏幕上（滚动到顶部），再重建模型/布局。
-        // 旧实现把整段重建卡在"换内容"这一帧里，观感就是接章时顿一下。
         if (!toBottom) window.scrollTo(0, 0);
         var finish = function () {
+            if (gen !== resourceGen) return;   // 更快的换章已经接管
             // 关键：applyLayout() 会按 state.page 恢复滚动位置。原地换章时这个值还是
-            // 上一章的页号，不清零就会把新章滚到"后面"去（重载路径天然是 0，所以以前没暴露）。
+            // 上一章的页号，不清零就会把新章滚到"后面"去。
             state.page = 0;
             buildInitialModelAndLayout();
-            // 布局重建后才知道新章高度：往回翻时停在上一章末尾，向前翻则回到开头。
             window.scrollTo(0, toBottom ? document.documentElement.scrollHeight : 0);
             state.page = Math.floor((window.scrollY || 0) / viewportHeight());
             lastReportedPage = state.page;
@@ -1021,11 +1118,20 @@
                 }
             }
             reportState();
+            // 新章的图片/字体可能晚于布局才展开：重新监听并重排（按代次丢弃旧回调）
+            watchResources(gen);
         };
-        if (window.requestAnimationFrame) {
-            requestAnimationFrame(function () { requestAnimationFrame(finish); });
+        var start = function () {
+            if (window.requestAnimationFrame) {
+                requestAnimationFrame(function () { requestAnimationFrame(finish); });
+            } else {
+                finish();
+            }
+        };
+        if (styleReady.length && window.Promise) {
+            Promise.all(styleReady).then(start);
         } else {
-            finish();
+            start();
         }
         return true;
     }
@@ -1142,6 +1248,8 @@
     var swipeStartY = null;
     document.addEventListener('touchstart', function (e) {
         swipeStartY = (e.touches && e.touches.length) ? e.touches[0].clientY : null;
+        // 用户开始操作后，取消"保持章末"的意图，改以当前锚点为准
+        state.pendingEndAnchor = false;
     }, {passive: true});
     document.addEventListener('touchend', function (e) {
         if (CFG.mode !== 'SCROLL' || swipeStartY === null) return;
@@ -1200,6 +1308,9 @@
         /** 首次初始化（页面加载完成后调用）。 */
         init: function (config) {
             Object.assign(CFG, config || {});
+            // 记录应用自己写在 html/body 上的类，换章同步书籍属性时不能把它们覆盖掉
+            appBodyBase = (document.body && document.body.className) || '';
+            appHtmlBase = (document.documentElement && document.documentElement.className) || '';
             // 窗口模式先把初始章包成 <section>，再建模型（模型只覆盖活动章）
             wrapInitialSection();
             buildInitialModelAndLayout();
@@ -1224,13 +1335,6 @@
                 window.setTimeout(function () {
                     if (windowed()) ensureWindows();
                 }, 300);
-            }
-            try {
-                console.log('MIRAD init mode=' + CFG.mode + ' windowed=' + windowed() +
-                    ' docH=' + documentHeight() + ' vh=' + viewportHeight() +
-                    ' secs=' + container().querySelectorAll('section.mirad-chapter').length +
-                    ' nodes=' + state.nodes.length + ' pages=' + state.pages + ' page=' + state.page);
-            } catch (e) {
             }
         },
 
@@ -1431,13 +1535,11 @@
     }
 
     /** 图片/字体加载完成后重新分页（保持当前字符位置）。 */
-    function watchResources() {
+    function watchResources(gen) {
         var pending = 0;
         var finish = function () {
             pending--;
-            if (pending <= 0) {
-                window.MiradReader.relayout(true);
-            }
+            if (pending <= 0) scheduleRelayout(gen);
         };
         var imgs = document.images || [];
         for (var i = 0; i < imgs.length; i++) {
@@ -1449,7 +1551,7 @@
         }
         if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
             document.fonts.ready.then(function () {
-                window.MiradReader.relayout(true);
+                scheduleRelayout(gen);
             });
         }
     }

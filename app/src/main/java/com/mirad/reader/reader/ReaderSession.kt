@@ -158,7 +158,7 @@ class ReaderSession(
     private fun onJsChapterChanged(index: Int) {
         if (index !in chapters.indices) return
         if (index == _state.value.chapterIndex) return
-        _state.update { it.copy(chapterIndex = index, page = 0, offset = 0) }
+        _state.update { it.copy(chapterIndex = index, chapterTitle = chapters[index].title, page = 0, offset = 0) }
         recomputePercent()
         scheduleProgressSave()
         renderHighlights()

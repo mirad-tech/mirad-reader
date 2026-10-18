@@ -6,6 +6,10 @@ import android.webkit.JavascriptInterface
 
 /**
  * reader.js → 原生层的回调桥。JS 桥接线程不是主线程，统一转回主线程。
+ *
+ * 注意：每个 `@JavascriptInterface` 方法内部必须显式取**函数属性**再调用。
+ * 直接写 `onReady(a, b)` 会解析到同名成员函数自身——元数相同时会无限递归自我 post，
+ * 真正的回调永远不执行（onReady / onMetrics / onChapterChanged 都曾踩到）。
  */
 class ReaderJsBridge(
     private val onReady: (pages: Int, textLength: Int) -> Unit,
@@ -22,31 +26,38 @@ class ReaderJsBridge(
 
     @JavascriptInterface
     fun onRequestNextChapter(index: Int) {
-        main.post { onRequestNextChapter(index) }
+        // 显式取函数属性，避免调用到本方法自身导致递归
+        val callback = this.onRequestNextChapter
+        main.post { callback(index) }
     }
 
     @JavascriptInterface
     fun onChapterChanged(index: Int) {
-        main.post { onChapterChanged(index) }
+        val callback = this.onChapterChanged
+        main.post { callback(index) }
     }
 
     @JavascriptInterface
     fun onReady(pages: Int, textLength: Int) {
-        main.post { onReady(pages, textLength) }
+        val callback = this.onReady
+        main.post { callback(pages, textLength) }
     }
 
     @JavascriptInterface
     fun onState(page: Int, pages: Int, offset: Int, textLength: Int, scrollY: Int) {
-        main.post { onState(page, pages, offset, textLength) }
+        val callback = this.onState
+        main.post { callback(page, pages, offset, textLength) }
     }
 
     @JavascriptInterface
     fun onMetrics(insetLeft: Int, columnWidth: Int) {
-        main.post { onMetrics(insetLeft, columnWidth) }
+        val callback = this.onMetrics
+        main.post { callback(insetLeft, columnWidth) }
     }
 
     @JavascriptInterface
     fun onSelection(start: Int, end: Int, text: String) {
-        main.post { onSelection(start, end, text) }
+        val callback = this.onSelection
+        main.post { callback(start, end, text) }
     }
 }
