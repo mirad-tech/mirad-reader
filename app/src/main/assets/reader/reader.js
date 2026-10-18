@@ -106,8 +106,8 @@
 
     // ---------------------------------------------------------------- 文本模型
 
-    function buildTextModel() {
-        var root = content();
+    function buildTextModel(root) {
+        root = root || activeRoot();
         var nodes = [];
         var text = '';
         var lastBlock = null;
@@ -152,6 +152,188 @@
     }
 
     // ---------------------------------------------------------------- 分页布局
+
+    // ---------------------------------------------------------------- 窗口化连续滚动（P2）
+    //
+    // 只启用 SCROLL；windowedScroll 关闭时全部退化为原来的单章行为。
+    // 偏移语义不变：每个 section 各自建文本模型，models/points 都是**章内**坐标，
+    // 原生侧仍然只认 chapterIndex + charOffset。
+
+    function windowed() {
+        return CFG.mode === 'SCROLL' && CFG.windowedScroll !== false;
+    }
+
+    var win = { active: null, loading: false, trimTimer: null, switching: false };
+
+    function container() {
+        return document.getElementById('mirad-content') || document.body;
+    }
+
+    /** 测量与建模型的根：窗口模式取当前活动章，否则就是容器。 */
+    function activeRoot() {
+        return (windowed() && win.active) ? win.active : content();
+    }
+
+    function sectionIndex(el) {
+        var n = parseInt(el && el.getAttribute ? el.getAttribute('data-chapter') : '', 10);
+        return isNaN(n) ? -1 : n;
+    }
+
+    function sectionTop(el) {
+        return el.getBoundingClientRect().top + (window.scrollY || 0);
+    }
+
+    /** 视口顶部所在的 section。 */
+    function sectionAt(offset) {
+        var list = container().querySelectorAll('section.mirad-chapter');
+        var best = null;
+        for (var i = 0; i < list.length; i++) {
+            if (sectionTop(list[i]) <= offset + 2) best = list[i];
+        }
+        return best || list[0] || null;
+    }
+
+    function fragmentUrlOf(index) {
+        return location.pathname.replace(/\/chapter\/\d+$/, '/fragment/' + index) + location.search;
+    }
+
+    /** 首次进入窗口模式：把初始章内容包成 <section>，保持结构统一。 */
+    function wrapInitialSection() {
+        if (!windowed()) return;
+        var c = container();
+        if (!c || c.querySelector('section.mirad-chapter')) return;
+        var raw = c.getAttribute('data-chapter');
+        var idx = parseInt(raw, 10);
+        if (isNaN(idx)) idx = 0;
+        try {
+            console.log('MIRAD wrap raw=' + raw + ' idx=' + idx);
+        } catch (e) {
+        }
+        var sec = document.createElement('section');
+        sec.className = 'mirad-chapter';
+        sec.setAttribute('data-chapter', String(idx));
+        while (c.firstChild) sec.appendChild(c.firstChild);
+        c.appendChild(sec);
+        win.active = sec;
+    }
+
+    function insertSection(node, index, atTop) {
+        if (!node || node.tagName !== 'SECTION') return;
+        node.setAttribute('data-chapter', String(index));
+        node.className = 'mirad-chapter';
+        var c = container();
+        if (atTop) c.insertBefore(node, c.firstChild); else c.appendChild(node);
+    }
+
+    function documentHeight() {
+        return Math.max(document.documentElement.scrollHeight, container().scrollHeight);
+    }
+
+    /** 视口所在章变化：重建该章的文本模型与分页，并把章号告诉原生层。 */
+    function refreshActive() {
+        if (!windowed() || win.switching) return;
+        var el = sectionAt(window.scrollY || 0);
+        if (!el || el === win.active) return;
+        win.switching = true;
+        var idx = sectionIndex(el);
+        // 记录视口在新章内部的相对位置，布局后按它恢复，避免被 applyPosition 重置到章首
+        var relInSection = Math.max(0, (window.scrollY || 0) - sectionTop(el));
+        win.active = el;
+        state.ready = false;
+        state.page = 0;
+        buildTextModel(el);
+        applyLayout();
+        window.scrollTo(0, sectionTop(el) + relInSection);
+        state.page = Math.floor(relInSection / viewportHeight());
+        state.ready = true;
+        var b = bridge();
+        if (b && b.onChapterChanged) {
+            try {
+                b.onChapterChanged(idx);
+            } catch (e) {
+            }
+        }
+        reportState();
+        win.switching = false;
+        scheduleTrim();
+    }
+
+    /** 只在活动章稳定后裁剪，避免快速滚动时反复增删。 */
+    function scheduleTrim() {
+        if (win.trimTimer) window.clearTimeout(win.trimTimer);
+        win.trimTimer = window.setTimeout(function () {
+            win.trimTimer = null;
+            trimWindow();
+        }, 800);
+    }
+
+    /** 窗口固定 3 章（活动章前后各 1）；裁上方时补偿滚动，避免视口跳动。 */
+    function trimWindow() {
+        if (!windowed() || !win.active) return;
+        var c = container();
+        var list = Array.prototype.slice.call(c.querySelectorAll('section.mirad-chapter'));
+        if (list.length <= 3) return;
+        var activeIdx = sectionIndex(win.active);
+        var removedAbove = 0;
+        for (var i = 0; i < list.length; i++) {
+            var el = list[i];
+            var idx = sectionIndex(el);
+            if (Math.abs(idx - activeIdx) > 1) {
+                if (idx < activeIdx) removedAbove += el.getBoundingClientRect().height;
+                el.parentNode.removeChild(el);
+            }
+        }
+        if (removedAbove > 0) {
+            window.scrollTo(0, Math.max(0, (window.scrollY || 0) - removedAbove));
+        }
+        // 裁剪后可能又不足两屏：补回来，避免"裁剪完就滚不动了"
+        if (documentHeight() < viewportHeight() * 2) ensureWindows();
+    }
+
+    /** 距顶/距底 2 屏时补一章；追加在视口外，视觉零跳动。 */
+    function ensureWindows() {
+        if (!windowed() || win.loading) return;
+        var vh = viewportHeight();
+        var total = documentHeight();
+        var top = window.scrollY || 0;
+        if (top + vh * 2 >= total) ensureSection(+1);
+        // 只在接近章首（半屏内）才前插：2 屏就前插会连着补好几章，观感是"内容忽然变多"
+        if (top < vh * 0.5) ensureSection(-1);
+    }
+
+    function ensureSection(dir) {
+        var active = win.active || sectionAt(window.scrollY || 0);
+        if (!active) return;
+        // 兜底：section 上的 data-chapter 没拿到时，用容器的章号（HTML 由原生注入）
+        var base = sectionIndex(active);
+        if (base < 0) base = parseInt(container().getAttribute('data-chapter'), 10);
+        if (isNaN(base) || base < 0) return;
+        var idx = base + dir;
+        if (idx < 0 || idx > lastChapterIndex()) return;
+        if (container().querySelector('section.mirad-chapter[data-chapter="' + idx + '"]')) return;
+        if (win.loading) return;
+        win.loading = true;
+        fetch(fragmentUrlOf(idx))
+            .then(function (r) { return r.ok ? r.text() : null; })
+            .then(function (html) {
+                win.loading = false;
+                if (!html) return;
+                var doc = new DOMParser().parseFromString(html, 'text/html');
+                var sec = doc.querySelector('section.mirad-chapter');
+                if (!sec) return;
+                var before = documentHeight();
+                insertSection(sec, idx, dir < 0);
+                if (dir < 0) {
+                    // 前插把内容整体下移，等量补偿 scrollY 才能保持在原处
+                    var after = documentHeight();
+                    window.scrollTo(0, Math.max(0, (window.scrollY || 0) + (after - before)));
+                }
+                scheduleTrim();
+                // 短章（不足两屏）时没有滚动事件可触发补章，这里主动补到可滚动为止
+                if (documentHeight() < viewportHeight() * 2) ensureWindows();
+            })
+            .catch(function () { win.loading = false; });
+    }
 
     function applyLayout() {
         var c = content();
@@ -209,17 +391,34 @@
             c.style.minHeight = '0';
             c.style.overflow = 'visible';
             c.style.transform = 'none';
-            state.pages = Math.max(1, Math.ceil((c.scrollHeight + geo.padTop + geo.padBottom) / h));
+            var measure = activeRoot();
+            state.pages = Math.max(1, Math.ceil((((measure && measure.scrollHeight) || c.scrollHeight) + geo.padTop + geo.padBottom) / h));
+        }
+        var anchorOffset = -1;
+        var anchorDelta = 0;
+        if (windowed() && win.active && !win.switching) {
+            // 重排后按"当前可见字符"恢复滚动，避免改字号/行距时跳位置
+            anchorOffset = offsetAtPage(state.page);
+            var beforePos = precisePos(anchorOffset);
+            anchorDelta = (beforePos === null) ? 0 : ((window.scrollY || 0) - beforePos);
         }
         buildPoints();
         state.page = Math.min(state.page, state.pages - 1);
-        applyPosition(false);
+        if (windowed() && win.active && !win.switching) {
+            var afterPos = precisePos(anchorOffset);
+            if (afterPos !== null) window.scrollTo(0, Math.max(0, afterPos + anchorDelta));
+            state.page = Math.floor(Math.max(0, (window.scrollY || 0) - sectionTop(win.active)) / viewportHeight());
+            reportState();
+        } else if (!win.switching) {
+            // 换章过程中不要重定位：refreshActive 会在布局后按新章内的相对位置恢复滚动
+            applyPosition(false);
+        }
         reportMetrics();
     }
 
     /** 记录每个文本节点在分列流（或纵向滚动流）中的像素位置，用于偏移↔页互转。 */
     function buildPoints() {
-        var c = content();
+        var c = activeRoot();
         var rootRect = c.getBoundingClientRect();
         var points = [];
         var paged = CFG.mode === 'PAGED';
@@ -277,7 +476,7 @@
         var len = entry.len || 0;
         if (len <= 0) return null;
         var inNode = Math.max(0, Math.min(offset - entry.start, len - 1));
-        var c = content();
+        var c = activeRoot();
         if (!c) return null;
         try {
             var range = document.createRange();
@@ -650,7 +849,7 @@
     var bottomSentFor = null;
 
     function chapterKey() {
-        var c = content();
+        var c = activeRoot();
         if (!c || !c.getAttribute) return '';
         return c.getAttribute('data-chapter') || '';
     }
@@ -685,12 +884,35 @@
 
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
+        try {
+            console.log('MIRAD scroll y=' + Math.round(window.scrollY || 0) + ' win=' + windowed());
+        } catch (e) {
+        }
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
             // 不再"滚到底就自动接章"：最后一段刚露出来时用户还没读完，
             // 自动跳会让人觉得"没看完就被切走"。接章改为到底后继续上滑（见 touchend / scrollStep）。
             var top = window.scrollY || 0;
             var view = viewportHeight();
+            if (windowed()) {
+                // 窗口模式：先补章、再确认视口落在哪一章，页号一律按活动章计算
+                ensureWindows();
+                refreshActive();
+                var relTop = Math.max(0, top - (win.active ? sectionTop(win.active) : 0));
+                var winPage = Math.floor(relTop / view);
+                try {
+                    console.log('MIRAD win y=' + Math.round(top) + ' rel=' + Math.round(relTop) +
+                        ' page=' + winPage + ' pages=' + state.pages +
+                        ' secs=' + container().querySelectorAll('section.mirad-chapter').length +
+                        ' idx=' + sectionIndex(win.active) + ' docH=' + documentHeight() + ' vh=' + view);
+                } catch (e) {
+                }
+                if (winPage === lastReportedPage) return;
+                lastReportedPage = winPage;
+                state.page = Math.min(winPage, state.pages - 1);
+                reportState();
+                return;
+            }
             var total = Math.max(
                 document.documentElement.scrollHeight,
                 document.body ? document.body.scrollHeight : 0
@@ -824,6 +1046,8 @@
 
     /** 用户明确要继续读下一章时才走这里：优先原地换章，失败才请原生重载。 */
     function advanceChapter() {
+        // 窗口模式下章与章首尾相连，自然滚动即可接章，不再需要"到底再上滑"
+        if (windowed()) return false;
         if (CFG.mode !== 'SCROLL' || !state.ready) return false;
         var idx = currentChapterIndex();
         if (idx < 0) return false;
@@ -890,6 +1114,8 @@
 
     /** 在章首继续下拉：回到上一章并停在它的末尾（连续阅读，不重载文档）。 */
     function retreatChapter() {
+        // 窗口模式：向上滚动自然看到上一章，不再整章替换
+        if (windowed()) return false;
         if (CFG.mode !== 'SCROLL' || !state.ready) return false;
         var idx = currentChapterIndex();
         if (idx <= 0) return false;
@@ -974,6 +1200,8 @@
         /** 首次初始化（页面加载完成后调用）。 */
         init: function (config) {
             Object.assign(CFG, config || {});
+            // 窗口模式先把初始章包成 <section>，再建模型（模型只覆盖活动章）
+            wrapInitialSection();
             buildInitialModelAndLayout();
             state.ready = true;
             var b = bridge();
@@ -990,6 +1218,20 @@
             }
             reportState();
             watchResources();
+            // 短章不足一屏时没有任何滚动事件：初始化后立刻补下一章，否则永远滚不动
+            if (windowed()) {
+                ensureWindows();
+                window.setTimeout(function () {
+                    if (windowed()) ensureWindows();
+                }, 300);
+            }
+            try {
+                console.log('MIRAD init mode=' + CFG.mode + ' windowed=' + windowed() +
+                    ' docH=' + documentHeight() + ' vh=' + viewportHeight() +
+                    ' secs=' + container().querySelectorAll('section.mirad-chapter').length +
+                    ' nodes=' + state.nodes.length + ' pages=' + state.pages + ' page=' + state.page);
+            } catch (e) {
+            }
         },
 
         /** 只更新样式/模式，不重新加载章节；尽量保持当前字符位置。 */

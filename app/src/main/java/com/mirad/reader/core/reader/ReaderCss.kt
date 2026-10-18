@@ -122,6 +122,9 @@ object ReaderCss {
         sb.append("mark.mirad-note{background:rgba(140,200,255,0.55);}\n")
         sb.append("span.mirad-tts{background:rgba(255,180,80,0.35);border-radius:2px;}\n")
         sb.append("mark.mirad-search{background:rgba(255,120,120,0.45);color:inherit;}\n")
+        // 滚动窗口模式下章与章首尾相连：用分隔线 + 间距区分，避免正文黏在一起
+        sb.append("section.mirad-chapter{display:block;}\n")
+        sb.append("section.mirad-chapter + section.mirad-chapter{margin-top:1.8em;padding-top:1.2em;border-top:1px solid rgba(128,128,128,0.28);}\n")
         return sb.toString()
     }
 

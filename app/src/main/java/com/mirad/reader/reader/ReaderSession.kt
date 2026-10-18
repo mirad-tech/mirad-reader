@@ -385,7 +385,7 @@ class ReaderSession(
         }
         return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
             """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim",""" +
-            """chapterCount:${chapters.size}}"""
+            """chapterCount:${chapters.size},windowedScroll:${config.windowedScroll}}"""
     }
 
     /**
