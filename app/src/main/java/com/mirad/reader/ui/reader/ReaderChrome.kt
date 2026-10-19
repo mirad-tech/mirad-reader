@@ -73,6 +73,7 @@ fun ReaderTopBar(
     onNotes: () -> Unit,
     onSearch: () -> Unit,
     onToc: () -> Unit,
+    onAutoRead: () -> Unit,
     onSettings: () -> Unit,
     onToggleTts: () -> Unit
 ) {
@@ -125,6 +126,7 @@ fun ReaderTopBar(
                         onClick = { menu = false; onToggleTts() }
                     )
                     DropdownMenuItem(text = { Text("全书搜索") }, onClick = { menu = false; onSearch() })
+                    DropdownMenuItem(text = { Text("自动阅读") }, onClick = { menu = false; onAutoRead() })
                     DropdownMenuItem(text = { Text("阅读设置") }, onClick = { menu = false; onSettings() })
                 }
             }

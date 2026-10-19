@@ -54,6 +54,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -182,9 +183,18 @@ private fun ReaderContent(
     var showNotes by remember { mutableStateOf(false) }
     var showSearch by remember { mutableStateOf(false) }
     var showTts by remember { mutableStateOf(false) }
+    var showAutoRead by remember { mutableStateOf(false) }
     var toast by remember { mutableStateOf<String?>(null) }
     var pendingNote by remember { mutableStateOf<Triple<Int, Int, String>?>(null) }
     var noteDraft by remember { mutableStateOf("") }
+
+    val autoReadState by session.autoReadState.collectAsState()
+    val autoReadNotice by session.autoReadNotice.collectAsState()
+    LaunchedEffect(autoReadNotice) {
+        val message = autoReadNotice ?: return@LaunchedEffect
+        toast = message
+        session.consumeAutoReadNotice()
+    }
 
     val tts = remember { TtsController(container.context) }
     DisposableEffect(Unit) { onDispose { tts.stop() } }
@@ -229,6 +239,8 @@ private fun ReaderContent(
     }
 
     fun startTts(fromBeginning: Boolean) {
+        // 朗读与自动阅读都控制阅读位置：启动朗读先暂停自动阅读，且不自动恢复。
+        session.pauseAutoRead()
         ensureNotificationPermission()
         scope.launch {
             val sentences = ensureTtsSentences()
@@ -250,6 +262,11 @@ private fun ReaderContent(
                 pitch = config.ttsPitch
             )
         }
+    }
+
+    // 朗读与自动阅读互斥：通知栏/耳机等外部入口恢复朗读时，也要暂停自动阅读。
+    LaunchedEffect(ttsState.playing) {
+        if (ttsState.playing) session.pauseAutoRead()
     }
 
     // 朗读时高亮当前句并跟随滚动
@@ -289,12 +306,30 @@ private fun ReaderContent(
     // 屏幕亮度 / 常亮 / 方向 / 全屏
     ApplyWindowSettings(config)
 
+    // 打开目录/设置/搜索/朗读等弹层，或呼出上下工具栏：自动阅读暂停，关闭后也不自动继续。
+    val overlayVisible = showToc || showSettings || showProgress || showNotes ||
+        showSearch || showTts || showAutoRead || pendingNote != null
+    LaunchedEffect(overlayVisible, chromeVisible) {
+        if (overlayVisible || chromeVisible) session.pauseAutoRead()
+    }
+
+    // 横竖屏切换会重排正文：屏幕方向变化时暂停自动阅读（尺寸/安全区域变化由 updateInsets 兜底）。
+    val configuration = LocalConfiguration.current
+    LaunchedEffect(configuration.orientation) {
+        session.pauseAutoRead()
+    }
+
     // 前后台切换时结算阅读时长（后台计时不算入统计）
     val lifecycleOwner = context as? androidx.lifecycle.LifecycleOwner
     DisposableEffect(lifecycleOwner, session) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             when (event) {
-                androidx.lifecycle.Lifecycle.Event.ON_STOP -> session.endSession()
+                androidx.lifecycle.Lifecycle.Event.ON_STOP -> {
+                    // 切后台/锁屏：暂停自动阅读并保存当前位置；回到前台由用户手动继续。
+                    session.pauseAutoRead()
+                    session.saveProgressNow()
+                    session.endSession()
+                }
                 androidx.lifecycle.Lifecycle.Event.ON_START -> session.startSession()
                 else -> Unit
             }
@@ -323,17 +358,28 @@ private fun ReaderContent(
         animating = false
     }
 
-    fun performTurn(delta: Int) {
+    /**
+     * 开启或继续自动阅读：先关掉弹层与工具栏，再开始，避免面板遮住正文。
+     * 朗读正在占用阅读位置时先暂停朗读；两者都不会自动恢复对方。
+     */
+    fun beginAutoRead() {
+        if (ttsState.active) tts.pause()
+        showAutoRead = false
+        chromeVisible = false
+        session.startAutoRead()
+    }
+
+    fun performTurn(delta: Int, auto: Boolean = false): Boolean {
         // 上下滚动模式：点击左右两侧按屏平滑滚动，不整页跳（翻页动画也不适用）
         if (config.pageMode == PageMode.SCROLL) {
             session.scrollStep(delta)
-            return
+            return false
         }
         val view = session.webView
         val useOverlay = config.pageAnim == PageAnim.COVER && view != null && state.ready && !animating
         if (!useOverlay) {
-            val switched = session.turnPage(delta)
-            if (!switched && session.state.value.ready) {
+            val switched = session.turnPage(delta, pauseAuto = !auto)
+            if (!auto && !switched && session.state.value.ready) {
                 val s = session.state.value
                 if ((delta > 0 && s.page >= s.pages - 1 && s.chapterIndex >= s.chapterCount - 1) ||
                     (delta < 0 && s.page <= 0 && s.chapterIndex <= 0)
@@ -341,17 +387,18 @@ private fun ReaderContent(
                     toast = if (delta > 0) "已经是最后一章" else "已经是第一章"
                 }
             }
-            return
+            return switched
         }
+        var switched = false
         captureView(view!!) { bitmap ->
             if (bitmap == null) {
-                session.turnPage(delta)
+                switched = session.turnPage(delta, pauseAuto = !auto)
                 return@captureView
             }
             overlay = bitmap.asImageBitmap()
             overlayX = 0f
             animating = true
-            session.turnPage(delta)
+            switched = session.turnPage(delta, pauseAuto = !auto)
             val distance = if (delta > 0) -view.width.toFloat() else view.width.toFloat()
             android.animation.ValueAnimator.ofFloat(0f, distance).apply {
                 duration = 260
@@ -370,6 +417,15 @@ private fun ReaderContent(
                 start()
             }
         }
+        return switched
+    }
+
+    // 自动翻页复用界面层的 performTurn（含覆盖翻页动画）；每次重组更新为最新配置。
+    SideEffect {
+        session.autoPageTurn = { performTurn(1, auto = true) }
+    }
+    DisposableEffect(session) {
+        onDispose { session.autoPageTurn = null }
     }
 
     // 系统栏预留：正文避开状态栏与底部手势条（沉浸式仍然保留，只是正文不贴边）
@@ -382,6 +438,15 @@ private fun ReaderContent(
 
     session.onTap = tap@{ x, y ->
         val view = session.webView ?: return@tap
+        // 事件优先级（自上而下）：
+        // 1) 有弹层：由弹层处理，正文不接管；
+        // 2) 工具栏显示：整块正文区域单击只关闭工具栏，不翻页、不滚动；
+        // 3) 工具栏隐藏：才进入原有的分页/滚动点击分区。
+        if (overlayVisible) return@tap
+        if (chromeVisible) {
+            chromeVisible = false
+            return@tap
+        }
         // 上下滚动模式按"竖向分区"响应：上 1/3 往回滚一屏、下 1/3 往前滚一屏、中间呼出菜单。
         // 章首/章末继续同一方向时，由 scrollStep 接到上一章末尾 / 下一章开头。
         if (config.pageMode == PageMode.SCROLL) {
@@ -398,7 +463,13 @@ private fun ReaderContent(
         val ratio = if (width > 0) x / width else 0.5f
         when (config.tapZone) {
             "NONE" -> chromeVisible = !chromeVisible
-            "TWO" -> if (ratio < 0.5f) performTurn(-1) else performTurn(1)
+            // 两分模式：左右仍然各翻一页，但中央留一条窄带专门呼出菜单。
+            // 否则 chromeVisible 初始为 false、返回键退出阅读、长按用于选词，用户就再也打不开目录/设置了。
+            "TWO" -> when {
+                ratio < 0.40f -> performTurn(-1)
+                ratio > 0.60f -> performTurn(1)
+                else -> chromeVisible = !chromeVisible
+            }
             else -> when {
                 ratio < 0.32f -> performTurn(-1)
                 ratio > 0.68f -> performTurn(1)
@@ -409,9 +480,9 @@ private fun ReaderContent(
 
     BackHandler(enabled = true) {
         when {
-            showToc || showSettings || showProgress || showNotes || showSearch || showTts -> {
+            showToc || showSettings || showProgress || showNotes || showSearch || showTts || showAutoRead -> {
                 showToc = false; showSettings = false; showProgress = false
-                showNotes = false; showSearch = false; showTts = false
+                showNotes = false; showSearch = false; showTts = false; showAutoRead = false
             }
             chromeVisible -> chromeVisible = false
             else -> {
@@ -509,6 +580,11 @@ private fun ReaderContent(
                 onNotes = { showNotes = true },
                 onSearch = { showSearch = true },
                 onToc = { showToc = true },
+                onAutoRead = {
+                    // 打开面板即暂停：调速时保持暂停，继续时再用新速度启动。
+                    session.pauseAutoRead()
+                    showAutoRead = true
+                },
                 onSettings = { showSettings = true },
                 onToggleTts = {
                     if (tts.isSpeaking) {
@@ -566,6 +642,8 @@ private fun ReaderContent(
                 config = config,
                 onChange = applyConfig,
                 onStart = { resume ->
+                    // 继续/开始朗读前先暂停自动阅读，两者不同时控制阅读位置。
+                    session.pauseAutoRead()
                     if (resume && ttsState.active) tts.resume() else startTts(false)
                 },
                 onClose = { showTts = false }
@@ -617,6 +695,12 @@ private fun ReaderContent(
             isEpub = book.format == com.mirad.reader.data.db.entity.BookFormat.EPUB,
             config = config,
             onChange = applyConfig,
+            onOpenAutoRead = {
+                // 两个入口打开同一个自动阅读弹层；先收起设置面板，避免两个弹层叠在一起。
+                session.pauseAutoRead()
+                showSettings = false
+                showAutoRead = true
+            },
             onResetGlobal = {
                 scope.launch {
                     container.settings.clearBookConfig(book.id)
@@ -625,6 +709,17 @@ private fun ReaderContent(
                 }
             },
             onDismiss = { showSettings = false }
+        )
+    }
+
+    if (showAutoRead) {
+        AutoReadSheet(
+            config = config,
+            state = autoReadState,
+            onChange = applyConfig,
+            onStart = { beginAutoRead() },
+            onStop = { session.stopAutoRead() },
+            onDismiss = { showAutoRead = false }
         )
     }
 

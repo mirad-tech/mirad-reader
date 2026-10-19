@@ -39,7 +39,10 @@
         FIGCAPTION: 1, PRE: 1, BODY: 1
     };
 
-    var animating = false;
+    // 程序滚动（点按翻屏 / 定位动画 / 自动下滑）共用一套可取消机制。
+    // 任何新手势、新定位或模式变化都要先取消旧动画，避免两个循环同时写 scrollTop。
+    var pageMotion = {active: false, token: 0, raf: 0, target: 0};
+    var scrollMotion = {token: 0, raf: 0};
 
     function content() {
         return document.getElementById('mirad-content') || document.body;
@@ -160,7 +163,8 @@
     // 原生侧仍然只认 chapterIndex + charOffset。
 
     function windowed() {
-        return CFG.mode === 'SCROLL' && CFG.windowedScroll !== false;
+        // 只有显式开启才进入窗口引擎；缺省/旧调用方一律走稳定的单章路径。
+        return CFG.mode === 'SCROLL' && CFG.windowedScroll === true;
     }
 
     var win = { active: null, loading: false, trimTimer: null, switching: false };
@@ -331,6 +335,27 @@
             .catch(function () { win.loading = false; });
     }
 
+    /** 真正的滚动容器（body/html 谁在滚以浏览器为准）。 */
+    function scrollEl() {
+        return document.scrollingElement || document.documentElement;
+    }
+
+    /**
+     * 当前滚动页码信息：pages 与 page 用**同一份**高度与视口，且 page 一定被 clamp。
+     *
+     * 旧实现的 pages 把 padTop/padBottom 又加在 scrollHeight 上（这两段留白其实已经在
+     * scrollHeight 里了），算出的页数偏小；page 又由 scrollY/h 独立算、从不 clamp，
+     * 于是换章/图片展开后会出现「第 2/1 页」这种 page > pages 的显示。
+     */
+    function scrollPageInfo() {
+        var el = scrollEl();
+        var h = viewportHeight();
+        var total = Math.max(1, el ? el.scrollHeight : viewportHeight());
+        var pages = Math.max(1, Math.ceil(total / h));
+        var page = Math.min(pages - 1, Math.max(0, Math.floor((window.scrollY || 0) / h)));
+        return { pages: pages, page: page };
+    }
+
     function applyLayout() {
         var c = content();
         if (!c) return;
@@ -387,8 +412,7 @@
             c.style.minHeight = '0';
             c.style.overflow = 'visible';
             c.style.transform = 'none';
-            var measure = activeRoot();
-            state.pages = Math.max(1, Math.ceil((((measure && measure.scrollHeight) || c.scrollHeight) + geo.padTop + geo.padBottom) / h));
+            state.pages = scrollPageInfo().pages;
         }
         var anchorOffset = -1;
         var anchorDelta = 0;
@@ -520,32 +544,55 @@
         return found;
     }
 
-    function offsetAtPage(page) {
-        if (CFG.mode !== 'PAGED') {
-            var y = window.scrollY || 0;
-            var points = state.points;
-            for (var j = 0; j < points.length; j++) {
-                if (points[j].pos >= y - 2) return points[j].start;
+    /**
+     * 在字符区间 [lo, hi) 内二分，找出"流内位置 >= targetPos"的最小字符偏移。
+     * 逐点用 [precisePos] 测量（它本身是节点二分 + 一次 Range 测量），因此不需要扫描所有字符。
+     */
+    function charAtFlowPos(targetPos, lo, hi) {
+        if (lo >= hi) return null;
+        var low = lo;
+        var high = hi - 1;
+        var best = -1;
+        while (low <= high) {
+            var mid = (low + high) >> 1;
+            var pos = precisePos(mid);
+            if (pos === null) return null;
+            if (pos >= targetPos - 2) {
+                best = mid;
+                high = mid - 1;
+            } else {
+                low = mid + 1;
             }
-            // 滚动模式下 points 同样是段落级粒度：单段落章节的表里只有一个 pos=0 的条目，
-            // "滚到 y>2"永远查不到点，旧实现直接 return 0 —— 于是每次重排都把阅读位置清回章首。
-            // 与 PAGED 分支同一病因，同样用反向测量兜底。
-            var measured = offsetAtPos(y);
-            if (measured !== null) return measured;
-            return points.length ? points[points.length - 1].start : 0;
         }
-        var target = page * step();
-        var points2 = state.points;
-        for (var i = 0; i < points2.length; i++) {
-            if (points2[i].pos >= target - 2) return points2[i].start;
+        return best < 0 ? hi : best;
+    }
+
+    /**
+     * 当前页（分页）或当前滚动位置（滚动）对应的**实际可见字符**偏移。
+     *
+     * 旧实现：在段落起点表里找第一个 pos >= 目标位置的条目并直接返回它 —— 当当前段落跨页、
+     * 后面还有段落时，返回的其实是**尚未读到的后一段**，于是"记下锚点再恢复"会往后跳好几页。
+     * 现在段落表只用于把查找区间收窄到 [上一段起点, 下一段起点)，真正的答案由 Range 测量二分给出。
+     */
+    function offsetAtPage(page) {
+        var target = CFG.mode === 'PAGED' ? page * step() : (window.scrollY || 0);
+        var points = state.points;
+        var before = null;
+        var after = null;
+        for (var i = 0; i < points.length; i++) {
+            if (points[i].pos >= target - 2) {
+                after = points[i];
+                break;
+            }
+            before = points[i];
         }
-        // 没有任何点到达目标页：典型情况是"整章只有一个长段落"，points 只有段落起点。
-        // 旧实现返回 textLength-1（末尾）——于是每一次重排把锚点回写时都会跳到本章末尾。
-        // 这里改为跨全部文本节点反向测量出该页真正的起始字符偏移。
-        var measuredPos = offsetAtPos(target);
-        if (measuredPos !== null) return measuredPos;
-        var last = points2.length ? points2[points2.length - 1] : null;
-        return last ? last.start : 0;
+        var lo = before ? before.start : 0;
+        var hi = after ? after.start : state.textLength;
+        if (hi <= lo) hi = Math.min(state.textLength, lo + 1);
+        var exact = charAtFlowPos(target, lo, hi);
+        if (exact !== null) return exact;
+        // 测量不可用时退回段落表（至少不会退到章末或章首）
+        return after ? after.start : (before ? before.start : 0);
     }
 
     /**
@@ -624,6 +671,8 @@
     function applyPosition(animate) {
         var c = content();
         if (!c) return;
+        // 定位是新的位置意图：先结束旧的滚动动画，保证同一时刻只有一个写入者。
+        cancelScrollMotion();
         if (CFG.mode === 'PAGED') {
             var x = state.page * step();
             if (animate && CFG.anim === 'SLIDE') {
@@ -632,7 +681,9 @@
                 c.scrollLeft = x;
             }
         } else {
-            var y = state.page * viewportHeight();
+            // 用 clamp 后的页号算 scrollTop，避免未 clamp 的 page 把视图滚到文档之外
+            var idx = Math.max(0, Math.min(state.page, state.pages - 1));
+            var y = idx * viewportHeight();
             if (animate && CFG.anim === 'SLIDE') {
                 animateScrollTop(y);
             } else {
@@ -642,49 +693,80 @@
         reportState();
     }
 
-    function animateScrollLeft(el, target) {
-        if (animating) {
-            el.scrollLeft = target;
-            return;
+    /** 取消水平翻页动画。snap=true 时直接落到目标列，避免停在两页之间。 */
+    function cancelPageMotion(snap) {
+        if (pageMotion.raf) {
+            window.cancelAnimationFrame(pageMotion.raf);
+            pageMotion.raf = 0;
         }
-        animating = true;
+        pageMotion.token++;
+        if (pageMotion.active && snap) {
+            var c = content();
+            if (c && CFG.mode === 'PAGED') c.scrollLeft = pageMotion.target;
+        }
+        pageMotion.active = false;
+    }
+
+    /** 取消纵向定位/翻屏/自动下滑动画。不改变当前位置，交给新的手势或新的目标接管。 */
+    function cancelScrollMotion() {
+        scrollMotion.token++;
+        if (scrollMotion.raf) {
+            window.cancelAnimationFrame(scrollMotion.raf);
+            scrollMotion.raf = 0;
+        }
+    }
+
+    function animateScrollLeft(el, target) {
+        cancelPageMotion(false);
+        var token = pageMotion.token;
+        pageMotion.active = true;
+        pageMotion.target = target;
         var start = el.scrollLeft;
         var delta = target - start;
         if (Math.abs(delta) < 1) {
-            animating = false;
+            pageMotion.active = false;
             el.scrollLeft = target;
             return;
         }
         var duration = Math.min(320, 140 + Math.abs(delta) * 0.35);
         var startTime = null;
         function frame(ts) {
+            if (token !== pageMotion.token) return;
             if (startTime === null) startTime = ts;
             var t = Math.min(1, (ts - startTime) / duration);
             var eased = 1 - Math.pow(1 - t, 3);
             el.scrollLeft = start + delta * eased;
             if (t < 1) {
-                window.requestAnimationFrame(frame);
+                pageMotion.raf = window.requestAnimationFrame(frame);
             } else {
-                animating = false;
+                pageMotion.active = false;
+                pageMotion.raf = 0;
                 reportState();
             }
         }
-        window.requestAnimationFrame(frame);
+        pageMotion.raf = window.requestAnimationFrame(frame);
     }
 
     function animateScrollTop(target) {
+        cancelScrollMotion();
+        var token = scrollMotion.token;
         var start = window.scrollY || 0;
         var duration = 260;
         var startTime = null;
         function frame(ts) {
+            if (token !== scrollMotion.token) return;
             if (startTime === null) startTime = ts;
             var t = Math.min(1, (ts - startTime) / duration);
             var eased = 1 - Math.pow(1 - t, 3);
             window.scrollTo(0, start + (target - start) * eased);
-            if (t < 1) window.requestAnimationFrame(frame);
-            else reportState();
+            if (t < 1) {
+                scrollMotion.raf = window.requestAnimationFrame(frame);
+            } else {
+                scrollMotion.raf = 0;
+                reportState();
+            }
         }
-        window.requestAnimationFrame(frame);
+        scrollMotion.raf = window.requestAnimationFrame(frame);
     }
 
     // ---------------------------------------------------------------- 标注渲染
@@ -821,6 +903,15 @@
     function reportState() {
         var b = bridge();
         if (!b) return;
+        // 上报前统一收口：滚动模式下页码/页数同源重算，其余模式至少保证 page <= pages-1。
+        // 这一层是"永远不把 page > pages 报给原生"的最后保证。
+        if (CFG.mode === 'SCROLL' && !windowed()) {
+            var info = scrollPageInfo();
+            state.pages = info.pages;
+            state.page = info.page;
+        } else if (state.pages > 0) {
+            state.page = Math.max(0, Math.min(state.page, state.pages - 1));
+        }
         var page = state.page;
         var offset = offsetAtPage(page);
         try {
@@ -841,8 +932,124 @@
 
     var scrollTimer = null;
     var lastReportedPage = -1;
+    var lastScrollReportAt = 0;
     /** 已经为哪一章发过"到底"信号。按章记录，切章自动失效，且改字号重排不会误触发。 */
     var bottomSentFor = null;
+
+    // 用户手指/惯性滚动状态：只在这段时间内推迟资源重排（图片/字体展开），
+    // 避免拖动过程中被"恢复到旧锚点"打断。
+    var userScroll = {touching: false, driven: false, idleTimer: null};
+
+    function nowMs() {
+        return (window.performance && window.performance.now) ? window.performance.now() : Date.now();
+    }
+
+    function isUserScrolling() {
+        return userScroll.touching || userScroll.driven;
+    }
+
+    /** 滚动事件延续"用户正在滚"的判定；惯性滚动也会持续续期。 */
+    function markUserScroll() {
+        userScroll.driven = true;
+        if (userScroll.idleTimer) window.clearTimeout(userScroll.idleTimer);
+        userScroll.idleTimer = window.setTimeout(function () {
+            userScroll.idleTimer = null;
+            userScroll.driven = false;
+            flushDeferredRelayout();
+        }, 180);
+    }
+
+    // ---------------------------------------------------------------- 自动下滑
+    //
+    // 单一 requestAnimationFrame 循环：按真实时间差累计位移并保留小数余量；
+    // 长帧最多按 50ms 计算，切后台回来不会突然跳过一段。
+    // 只在启动/暂停/调速/结束时与原生同步，不逐帧调用 JS Bridge。
+
+    var autoScroll = {active: false, seconds: 30, pxPerMs: 0, raf: 0, lastTs: 0, acc: 0, endSentFor: null};
+
+    function readableHeight() {
+        return Math.max(1, viewportHeight() - (CFG.padTop || 0) - (CFG.padBottom || 0));
+    }
+
+    function normalizeAutoSeconds(seconds) {
+        var value = Math.round(Number(seconds) || 0);
+        if (!value) value = 30;
+        return Math.max(5, Math.min(120, value));
+    }
+
+    function autoScrollSpeed(seconds) {
+        // 一屏 = 扣除正文上下安全留白后的可读高度。
+        return readableHeight() / (normalizeAutoSeconds(seconds) * 1000);
+    }
+
+    function stopAutoScrollInternal() {
+        autoScroll.active = false;
+        if (autoScroll.raf) {
+            window.cancelAnimationFrame(autoScroll.raf);
+            autoScroll.raf = 0;
+        }
+        autoScroll.lastTs = 0;
+        autoScroll.acc = 0;
+    }
+
+    function notifyAutoScrollEnd() {
+        stopAutoScrollInternal();
+        var idx = currentChapterIndex();
+        if (autoScroll.endSentFor === idx) return;
+        autoScroll.endSentFor = idx;
+        var b = bridge();
+        if (b && b.onAutoScrollEnd) {
+            try {
+                b.onAutoScrollEnd(idx);
+            } catch (e) {
+            }
+        }
+    }
+
+    function autoScrollFrame(ts) {
+        autoScroll.raf = 0;
+        if (!autoScroll.active || CFG.mode !== 'SCROLL') return;
+        // 短章或已经停在章末：立刻通知原生进入"停留 → 接下一章"。
+        if (atBottom(2)) {
+            notifyAutoScrollEnd();
+            return;
+        }
+        if (!autoScroll.lastTs) autoScroll.lastTs = ts;
+        var dt = Math.min(50, Math.max(0, ts - autoScroll.lastTs));
+        autoScroll.lastTs = ts;
+        if (dt > 0) {
+            autoScroll.acc += autoScroll.pxPerMs * dt;
+            var delta = Math.floor(autoScroll.acc);
+            if (delta > 0) {
+                autoScroll.acc -= delta;
+                window.scrollTo(0, (window.scrollY || 0) + delta);
+            }
+        }
+        if (atBottom(2)) {
+            notifyAutoScrollEnd();
+            return;
+        }
+        autoScroll.raf = window.requestAnimationFrame(autoScrollFrame);
+    }
+
+    function setAutoScrollInternal(active, secondsPerScreen) {
+        autoScroll.seconds = normalizeAutoSeconds(secondsPerScreen);
+        autoScroll.pxPerMs = autoScrollSpeed(autoScroll.seconds);
+        if (!active || CFG.mode !== 'SCROLL' || !state.ready) {
+            stopAutoScrollInternal();
+            autoScroll.endSentFor = null;
+            return;
+        }
+        // 已在运行：只更新速度。保证任何时刻只有一个 rAF 循环。
+        if (autoScroll.active) return;
+        cancelScrollMotion();
+        cancelPageMotion(true);
+        autoScroll.active = true;
+        autoScroll.lastTs = 0;
+        autoScroll.acc = 0;
+        autoScroll.endSentFor = null;
+        autoScroll.raf = window.requestAnimationFrame(autoScrollFrame);
+    }
 
     function chapterKey() {
         var c = activeRoot();
@@ -851,12 +1058,13 @@
     }
 
     /** 是否已经滚到本章底部（留 8px 容差，避免小数像素永远差一点）。 */
-    function atBottom() {
+    function atBottom(slack) {
+        var tol = (typeof slack === 'number') ? slack : 8;
         var top = window.scrollY || 0;
         var view = viewportHeight();
         var bodyHeight = document.body ? document.body.scrollHeight : 0;
         var total = Math.max(document.documentElement.scrollHeight, bodyHeight);
-        return total > 0 && top + view >= total - 8;
+        return total > 0 && top + view >= total - tol;
     }
 
     /**
@@ -878,40 +1086,57 @@
         return true;
     }
 
+    /**
+     * 滚动位置回报：最多每 200ms 一次；滚动停止后再补报一次**最终位置**。
+     * 不依赖"页号变了"才回报（长页内滚动同样会有进度变化），也不在这里重建文本模型。
+     */
+    function reportScrollProgress(force) {
+        if (CFG.mode !== 'SCROLL') return;
+        var top = window.scrollY || 0;
+        var view = viewportHeight();
+        if (windowed()) {
+            // 窗口模式：先补章、再确认视口落在哪一章，页号一律按活动章计算
+            ensureWindows();
+            refreshActive();
+            var relTop = Math.max(0, top - (win.active ? sectionTop(win.active) : 0));
+            var winPage = Math.floor(relTop / view);
+            if (winPage === lastReportedPage && !force) return;
+            lastReportedPage = winPage;
+            state.page = Math.min(winPage, state.pages - 1);
+            reportState();
+            return;
+        }
+        var total = Math.max(
+            document.documentElement.scrollHeight,
+            document.body ? document.body.scrollHeight : 0
+        );
+        // 还剩一屏半时就把下一章取到内存，真正换章时几乎零等待。
+        if (total > 0 && top + view * 1.5 >= total) prefetchNextChapter();
+        if (top < view) prefetchPreviousChapter();
+        var info = scrollPageInfo();
+        state.pages = info.pages;
+        state.page = info.page;
+        lastReportedPage = state.page;
+        reportState();
+    }
+
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
+        // 触摸期间/惯性期间续期，资源重排会推迟到滚动稳定之后。
+        if (userScroll.touching || userScroll.driven) markUserScroll();
+        var now = nowMs();
+        if (now - lastScrollReportAt >= 200) {
+            lastScrollReportAt = now;
+            reportScrollProgress(false);
+        }
         if (scrollTimer) window.clearTimeout(scrollTimer);
         scrollTimer = window.setTimeout(function () {
-            // 不再"滚到底就自动接章"：最后一段刚露出来时用户还没读完，
-            // 自动跳会让人觉得"没看完就被切走"。接章改为到底后继续上滑（见 touchend / scrollStep）。
-            var top = window.scrollY || 0;
-            var view = viewportHeight();
-            if (windowed()) {
-                // 窗口模式：先补章、再确认视口落在哪一章，页号一律按活动章计算
-                ensureWindows();
-                refreshActive();
-                var relTop = Math.max(0, top - (win.active ? sectionTop(win.active) : 0));
-                var winPage = Math.floor(relTop / view);
-                if (winPage === lastReportedPage) return;
-                lastReportedPage = winPage;
-                state.page = Math.min(winPage, state.pages - 1);
-                reportState();
-                return;
-            }
-            var total = Math.max(
-                document.documentElement.scrollHeight,
-                document.body ? document.body.scrollHeight : 0
-            );
-            // 还剩一屏半时就把下一章取到内存，真正换章时几乎零等待。
-            if (total > 0 && top + view * 1.5 >= total) prefetchNextChapter();
-            if (top < view) prefetchPreviousChapter();
-            var page = Math.floor(top / view);
-            // 页号没变就不回报，滚动过程不打扰原生层（否则每帧穿透到 Compose 会顿）。
-            if (page === lastReportedPage) return;
-            lastReportedPage = page;
-            state.page = page;
-            reportState();
-        }, 140);
+            scrollTimer = null;
+            lastScrollReportAt = nowMs();
+            // 最终位置即使和上次同页也要补报：进度、书签判断都依赖它。
+            reportScrollProgress(true);
+            if (!isUserScrolling()) flushDeferredRelayout();
+        }, 160);
     }
 
     // ---------------------------------------------------------------- 滚动模式：无感接章
@@ -967,9 +1192,22 @@
     var appBodyBase = '';     // 应用自己写在 body 上的类（如 mirad-txt），换章时保留
     var appHtmlBase = '';
     var relayoutScheduled = false;
+    var deferredRelayoutGen = null;
 
-    /** 合并同一帧内的多个资源事件，避免重复全量重排。 */
+    /**
+     * 合并同一帧内的多个资源事件，避免重复全量重排。
+     * 手动拖动或惯性期间只登记、不执行：滚动稳定后再处理，避免重排把阅读锚点拉回旧位置。
+     */
     function scheduleRelayout(gen) {
+        if (gen !== undefined && gen !== resourceGen) return;
+        if (isUserScrolling()) {
+            deferredRelayoutGen = (gen === undefined) ? resourceGen : gen;
+            return;
+        }
+        scheduleRelayoutNow(gen);
+    }
+
+    function scheduleRelayoutNow(gen) {
         if (gen !== undefined && gen !== resourceGen) return;
         if (relayoutScheduled) return;
         relayoutScheduled = true;
@@ -977,6 +1215,11 @@
             relayoutScheduled = false;
             if (gen !== undefined && gen !== resourceGen) return;
             if (!state.ready) return;
+            // 调度期间用户又开始拖动：继续推迟，不能在拖动中恢复旧锚点。
+            if (isUserScrolling()) {
+                deferredRelayoutGen = (gen === undefined) ? resourceGen : gen;
+                return;
+            }
             window.MiradReader.relayout(true);
             // 向后换章且用户还没动过：图片展开后仍应停在新的章末
             if (state.pendingEndAnchor) {
@@ -988,6 +1231,15 @@
         };
         if (window.requestAnimationFrame) requestAnimationFrame(run);
         else window.setTimeout(run, 16);
+    }
+
+    /** 用户滚动稳定后，补做被推迟的资源重排（代次已过期则丢弃）。 */
+    function flushDeferredRelayout() {
+        if (deferredRelayoutGen === null) return;
+        var gen = deferredRelayoutGen;
+        deferredRelayoutGen = null;
+        if (gen !== resourceGen) return;
+        scheduleRelayoutNow(gen);
     }
 
     /** 保留应用类，同时套用书籍类（同名去重）。 */
@@ -1244,21 +1496,59 @@
         return true;
     }
 
-    // 单屏短章没有滚动事件：手指在底部继续上滑也算"要继续读下一章"。
-    var swipeStartY = null;
+    // 触摸手势：
+    //  - 手指按下立即暂停自动下滑、取消程序滚动动画（同一次手势随后仍可正常拖动）
+    //  - 手动跨章只在**手势开始时已位于边界 8px 内**、且继续向外滑动至少 48px 才执行
+    //  - 拖动/惯性期间由 scheduleRelayout 推迟资源重排，滚动稳定后再补做
+    var gesture = {startY: null, startAtTop: false, startAtBottom: false};
+
     document.addEventListener('touchstart', function (e) {
-        swipeStartY = (e.touches && e.touches.length) ? e.touches[0].clientY : null;
+        var y = (e.touches && e.touches.length) ? e.touches[0].clientY : null;
+        gesture.startY = y;
+        gesture.startAtTop = CFG.mode === 'SCROLL' && nearTop(8);
+        gesture.startAtBottom = CFG.mode === 'SCROLL' && nearBottom(8);
+        userScroll.touching = true;
+        if (userScroll.idleTimer) {
+            window.clearTimeout(userScroll.idleTimer);
+            userScroll.idleTimer = null;
+        }
+        // 新手指手势优先：先停掉自动下滑和所有程序滚动，避免两个写入者抢位置。
+        stopAutoScrollInternal();
+        cancelScrollMotion();
+        cancelPageMotion(true);
         // 用户开始操作后，取消"保持章末"的意图，改以当前锚点为准
         state.pendingEndAnchor = false;
     }, {passive: true});
+
     document.addEventListener('touchend', function (e) {
-        if (CFG.mode !== 'SCROLL' || swipeStartY === null) return;
+        userScroll.touching = false;
+        if (CFG.mode === 'SCROLL') markUserScroll();
+        if (CFG.mode !== 'SCROLL' || gesture.startY === null) {
+            gesture.startY = null;
+            return;
+        }
         var endY = (e.changedTouches && e.changedTouches.length) ? e.changedTouches[0].clientY : null;
-        var dy = (endY === null) ? 0 : (endY - swipeStartY);
-        swipeStartY = null;
-        // 容差放宽：手指抬起时惯性还没落定，严格 atBottom 会让人"再滑一次才进下一章"
-        if (dy <= -48 && nearBottom(96)) advanceChapter();
-        else if (dy >= 48 && nearTop(96)) retreatChapter();
+        var dy = (endY === null) ? 0 : (endY - gesture.startY);
+        var startedAtTop = gesture.startAtTop;
+        var startedAtBottom = gesture.startAtBottom;
+        gesture.startY = null;
+        gesture.startAtTop = false;
+        gesture.startAtBottom = false;
+        // 短章一屏内同时是章首和章末：按滑动方向决定上一章/下一章。
+        // 每次手势最多换一章（只执行一个分支）。
+        if (dy <= -48 && startedAtBottom) {
+            advanceChapter();
+        } else if (dy >= 48 && startedAtTop) {
+            retreatChapter();
+        }
+    }, {passive: true});
+
+    document.addEventListener('touchcancel', function () {
+        userScroll.touching = false;
+        gesture.startY = null;
+        gesture.startAtTop = false;
+        gesture.startAtBottom = false;
+        if (CFG.mode === 'SCROLL') markUserScroll();
     }, {passive: true});
 
     document.addEventListener('scroll', onScroll, true);
@@ -1341,7 +1631,15 @@
         /** 只更新样式/模式，不重新加载章节；尽量保持当前字符位置。 */
         applyConfig: function (config) {
             var anchor = offsetAtPage(state.page);
+            var prevMode = CFG.mode;
+            var prevWindowed = CFG.windowedScroll;
             Object.assign(CFG, config || {});
+            if (prevMode !== CFG.mode || prevWindowed !== CFG.windowedScroll) {
+                // 模式变化：旧模式的自动下滑/定位动画不能继续写滚动位置。
+                stopAutoScrollInternal();
+                cancelScrollMotion();
+                cancelPageMotion(false);
+            }
             buildInitialModelAndLayout();
             window.MiradReader.gotoOffset(anchor, false);
         },
@@ -1352,7 +1650,14 @@
          */
         setThemeCssOnly: function (css, config) {
             var anchor = offsetAtPage(state.page);
+            var prevMode = CFG.mode;
+            var prevWindowed = CFG.windowedScroll;
             Object.assign(CFG, config || {});
+            if (prevMode !== CFG.mode || prevWindowed !== CFG.windowedScroll) {
+                stopAutoScrollInternal();
+                cancelScrollMotion();
+                cancelPageMotion(false);
+            }
             var element = document.getElementById('mirad-theme');
             if (element) {
                 element.textContent = css;
@@ -1401,7 +1706,9 @@
                 pages: state.pages,
                 offset: offsetAtPage(state.page),
                 textLength: state.textLength,
-                mode: CFG.mode
+                mode: CFG.mode,
+                autoScroll: autoScroll.active,
+                scrollY: window.scrollY || 0
             });
         },
 
@@ -1439,6 +1746,35 @@
             return true;
         },
 
+        /**
+         * 自动阅读：启动/停止/调速。只在状态切换时由原生调用，**不逐帧过桥**。
+         * secondsPerScreen 是「秒/屏」；一屏按扣除正文上下安全留白后的可读高度计算。
+         */
+        setAutoScroll: function (active, secondsPerScreen) {
+            setAutoScrollInternal(!!active, secondsPerScreen);
+            return autoScroll.active;
+        },
+
+        /** 用户手势或模式变化时取消所有程序滚动，避免旧动画继续写位置。 */
+        cancelProgrammaticScroll: function () {
+            cancelScrollMotion();
+            cancelPageMotion(true);
+            stopAutoScrollInternal();
+            return true;
+        },
+
+        /** 自动滚动到章末后由原生调用：进入下一章（预取优先，失败走原生兜底）。 */
+        advanceChapterForAuto: function () {
+            if (CFG.mode !== 'SCROLL' || !state.ready) return false;
+            var idx = currentChapterIndex();
+            if (idx < 0) return false;
+            if (idx >= lastChapterIndex()) {
+                notifyBottomOnce();
+                return false;
+            }
+            return advanceChapter();
+        },
+
         gotoPage: function (page, animate) {
             var target = Math.min(Math.max(page | 0, 0), state.pages - 1);
             var changed = target !== state.page;
@@ -1457,6 +1793,7 @@
                 // 直接用 pageFromOffset 的返回值：滚动模式下它就是精确测量出的流内位置。
                 // 旧实现退回 nearestPoint(offset).pos（段落起点），于是长段落里的跳转又落回段首——
                 // 与 PAGED 分支修掉的是同一个病。
+                cancelScrollMotion();
                 if (animate) animateScrollTop(Math.max(0, page - 8));
                 else window.scrollTo(0, Math.max(0, page - 8));
                 state.page = Math.floor((window.scrollY || 0) / viewportHeight());

@@ -20,9 +20,17 @@ class ReaderJsBridge(
     /** JS 已在同一文档内换到别的章（滚动模式无感接章），原生层据此同步章节状态。 */
     private val onChapterChanged: (index: Int) -> Unit = {},
     /** JS 原地换章失败时，显式请求原生重载目标章（唯一的失败兜底入口）。 */
-    private val onRequestNextChapter: (index: Int) -> Unit = {}
+    private val onRequestNextChapter: (index: Int) -> Unit = {},
+    /** 自动下滑到达本章末尾（章节代次随章号校验）。 */
+    private val onAutoScrollEnd: (chapterIndex: Int) -> Unit = {}
 ) {
     private val main = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onAutoScrollEnd(chapterIndex: Int) {
+        val callback = this.onAutoScrollEnd
+        main.post { callback(chapterIndex) }
+    }
 
     @JavascriptInterface
     fun onRequestNextChapter(index: Int) {

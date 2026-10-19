@@ -31,6 +31,10 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     private var index = 0
     private var playing = false
     private var title: String = "墨读"
+    /** 引擎尚未就绪时的待播放请求：就绪后自动续播，用户不必再点一次。 */
+    private var pendingPlay = false
+    private var pendingRate = 1f
+    private var pendingPitch = 1f
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -43,7 +47,10 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         engineReady = status == TextToSpeech.SUCCESS
         if (!engineReady) {
-            TtsBus.update { it.copy(error = "语音引擎初始化失败") }
+            // 初始化失败要结束等待：否则界面会永久停在"正在播放"
+            pendingPlay = false
+            playing = false
+            TtsBus.update { it.copy(playing = false, error = "语音引擎初始化失败") }
             return
         }
         engine?.language = Locale.CHINA
@@ -73,6 +80,24 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                 TtsBus.update { it.copy(playing = false) }
             }
         })
+        // 只续播"初始化期间用户确实请求过"的播放；服务因别的原因启动时不应自动开口
+        if (pendingPlay) {
+            pendingPlay = false
+            playOrDefer()
+        }
+    }
+
+    /** 引擎就绪就立刻朗读；未就绪则记下这一请求，等 onInit 回调再续播。 */
+    private fun playOrDefer() {
+        if (texts.isEmpty()) return
+        if (engineReady) {
+            playing = true
+            speakCurrent()
+        } else {
+            playing = true
+            pendingPlay = true
+            TtsBus.update { it.copy(active = true, playing = true) }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -80,33 +105,28 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
             TtsBus.ACTION_PLAY -> {
                 readPlaylist(intent)
                 startForeground(NOTIFICATION_ID, buildNotification())
-                playing = true
-                speakCurrent()
+                playOrDefer()
             }
             TtsBus.ACTION_PAUSE -> {
+                pendingPlay = false
                 playing = false
                 engine?.stop()
                 TtsBus.update { it.copy(playing = false) }
                 notifyUpdate()
             }
             TtsBus.ACTION_RESUME -> {
-                if (texts.isNotEmpty()) {
-                    playing = true
-                    speakCurrent()
-                }
+                if (texts.isNotEmpty()) playOrDefer()
             }
             TtsBus.ACTION_NEXT -> {
                 if (index < texts.size - 1) {
                     index++
-                    playing = true
-                    speakCurrent()
+                    playOrDefer()
                 }
             }
             TtsBus.ACTION_PREV -> {
                 if (index > 0) {
                     index--
-                    playing = true
-                    speakCurrent()
+                    playOrDefer()
                 }
             }
             TtsBus.ACTION_STOP -> {
@@ -124,6 +144,9 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
         title = intent.getStringExtra(TtsBus.EXTRA_TITLE) ?: "墨读"
         val rate = intent.getFloatExtra(TtsBus.EXTRA_RATE, 1f)
         val pitch = intent.getFloatExtra(TtsBus.EXTRA_PITCH, 1f)
+        // 记下用户选的语速/音调：引擎晚就绪时 onInit 要用它们，而不是默认值
+        pendingRate = rate
+        pendingPitch = pitch
         engine?.setSpeechRate(rate.coerceIn(0.4f, 2.5f))
         engine?.setPitch(pitch.coerceIn(0.5f, 2f))
         TtsBus.update {
@@ -160,6 +183,7 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun stopEverything() {
+        pendingPlay = false
         playing = false
         engine?.stop()
         TtsBus.reset()

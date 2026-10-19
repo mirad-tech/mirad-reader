@@ -9,6 +9,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.mirad.reader.AppContainer
+import com.mirad.reader.core.model.AutoReadSpeed
 import com.mirad.reader.core.model.BackgroundType
 import com.mirad.reader.core.model.BuiltinBackgrounds
 import com.mirad.reader.core.model.EpubLayoutMode
@@ -32,10 +33,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import kotlin.coroutines.resume
 
@@ -76,6 +79,41 @@ class ReaderSession(
 
     private val _state = MutableStateFlow(ReaderSessionState())
     val state: StateFlow<ReaderSessionState> = _state.asStateFlow()
+
+    // ---- 自动阅读 ----
+    // 运行状态只存在会话里，不落库：重新打开书籍一律从关闭开始。
+    private val _autoReadNotice = MutableStateFlow<String?>(null)
+    val autoReadNotice: StateFlow<String?> = _autoReadNotice.asStateFlow()
+
+    private val autoRead = AutoReadController(
+        scope = scope,
+        host = object : AutoReadController.Host {
+            override fun isPaged(): Boolean = _state.value.config.pageMode != PageMode.SCROLL
+
+            override fun pageIntervalSeconds(): Int =
+                AutoReadSpeed.clamp(_state.value.config.autoPageSeconds)
+
+            override fun scrollSecondsPerScreen(): Int =
+                AutoReadSpeed.clamp(_state.value.config.autoScrollSecondsPerScreen)
+
+            override suspend fun turnPageForAuto(): AutoTurnResult = autoTurnPage()
+
+            override suspend fun advanceScrollChapter(): AutoAdvanceResult = autoAdvanceScrollChapter()
+
+            override fun startAutoScroll(secondsPerScreen: Int) {
+                evaluate("if (window.MiradReader) { MiradReader.setAutoScroll(true, $secondsPerScreen); }")
+            }
+
+            override fun stopAutoScroll() {
+                evaluate("if (window.MiradReader) { MiradReader.setAutoScroll(false, 0); }")
+            }
+
+            override fun notify(message: String) {
+                _autoReadNotice.value = message
+            }
+        }
+    )
+    val autoReadState: StateFlow<AutoReadState> = autoRead.state
 
     var chapters: List<ChapterEntity> = emptyList()
         private set
@@ -143,7 +181,12 @@ class ReaderSession(
         onChapterChanged = { index -> onJsChapterChanged(index) },
         onRequestNextChapter = { index ->
             // 只有 JS 侧原地换章失败（fetch/解析出错）才会走到这里：显式重载目标章。
-            if (index in chapters.indices) gotoChapter(index, 0)
+            // 这是换章兜底，不是用户操作，不能把自动阅读暂停掉。
+            if (index in chapters.indices) gotoChapterInternal(index, 0, pauseAuto = false)
+        },
+        onAutoScrollEnd = { index ->
+            // 旧章/旧页面的迟到回调不能启动已经暂停或关闭的自动阅读：章号与运行状态都要匹配。
+            if (index == _state.value.chapterIndex) autoRead.onScrollChapterEnd()
         }
     )
 
@@ -231,8 +274,11 @@ class ReaderSession(
             ): Boolean = true
 
             override fun onPageFinished(view: WebView, url: String) {
-                // about:blank 等中间页面会先触发回调，必须按 URL 过滤
-                if (url.startsWith(ReaderResourceProvider.ORIGIN)) {
+                // about:blank 等中间页面会先触发回调，必须按 URL 过滤；
+                // 同时忽略已被新一次 loadUrl 取代的旧章节，避免旧页面的回调把新章标成就绪。
+                val expected = ReaderResourceProvider.chapterUrl(book.id, _state.value.chapterIndex)
+                val normalized = url.substringBefore('#').substringBefore('?').trimEnd('/')
+                if (normalized == expected) {
                     onChapterRendered()
                 }
             }
@@ -247,18 +293,35 @@ class ReaderSession(
             }
         }
         view.onTap = { x, y -> onTap?.invoke(x, y) }
+        view.onTouchDown = {
+            // 手指按下立即暂停自动阅读（不等待 JS touchstart）；同一次手势仍可正常拖动。
+            if (autoRead.isRunning) {
+                autoRead.pause()
+                evaluate("if (window.MiradReader) { MiradReader.cancelProgrammaticScroll(); }")
+            }
+        }
         loadCurrentChapter(initial = true)
     }
 
     var onTap: ((x: Float, y: Float) -> Unit)? = null
 
+    /**
+     * 界面侧自动翻页入口。由阅读界面注入 `performTurn(1, auto=true)`，
+     * 这样覆盖翻页等 Compose 动画与手动翻页走同一条路径；为空时退回会话内翻页。
+     */
+    var autoPageTurn: (() -> Boolean)? = null
+
     private var chapterRendered = false
     private var renderAttempts = 0
+
+    /** 最近一次真正完成 init 的章节号；自动翻页等换章就绪判断以它为准。 */
+    private val _renderedChapter = MutableStateFlow(-1)
 
     private fun loadCurrentChapter(initial: Boolean) {
         val index = _state.value.chapterIndex
         chapterRendered = false
         renderAttempts = 0
+        _renderedChapter.value = -1
         _state.update { it.copy(ready = false) }
         // restoreOffset 已由调用方决定（进度恢复，或 gotoChapter 传入的显式偏移）。
         // 这里不能再覆盖成 0：否则"在章首点左键回上一章"会落到上一章开头，而不是它的末尾。
@@ -276,12 +339,126 @@ class ReaderSession(
                 val configJson = jsConfig()
                 val offset = restoreOffset.coerceAtLeast(0)
                 evaluate("MiradReader.init($configJson); MiradReader.gotoOffset($offset, false); true;")
+                _renderedChapter.value = _state.value.chapterIndex
                 renderHighlights()
                 scope.launch { refreshBookmarkFlagNow() }
             } else if (renderAttempts < 8) {
                 renderAttempts++
                 view.postDelayed({ onChapterRendered() }, 150)
             }
+        }
+    }
+
+    // ------------------------------------------------------------------ 自动阅读
+
+    /** 开始或继续自动阅读。只有正文已就绪时才允许启动，避免在加载页上创建空任务。 */
+    fun startAutoRead() {
+        if (!_state.value.ready) return
+        autoRead.start()
+    }
+
+    /** 暂停自动阅读（可重复调用）：取消计时任务/JS 滚动循环，等待用户手动继续。 */
+    fun pauseAutoRead() {
+        autoRead.pause()
+    }
+
+    /** 关闭自动阅读：立即取消任务并停止 JS 自动下滑。 */
+    fun stopAutoRead() {
+        autoRead.stop()
+    }
+
+    fun consumeAutoReadNotice() {
+        _autoReadNotice.value = null
+    }
+
+    /**
+     * 分页自动翻页：先确认当前页显示完成，再翻页；换章时等新章真正就绪。
+     * 返回后控制器才开始下一轮完整间隔的计时，因此不会把动画/加载时间算进阅读时间。
+     */
+    private suspend fun autoTurnPage(): AutoTurnResult {
+        if (!_state.value.ready) return AutoTurnResult.LOAD_FAILED
+        if (_state.value.config.pageMode == PageMode.SCROLL) return AutoTurnResult.LOAD_FAILED
+        val before = _state.value
+        if (before.page >= before.pages - 1 && before.chapterIndex >= chapters.size - 1) {
+            return AutoTurnResult.BOOK_END
+        }
+        // 优先走界面注入的翻页入口，让覆盖翻页等现有动画也被复用；
+        // 没有界面 hook 时退回会话内翻页（仍复用 reader.js 的翻页入口）。
+        val turner = autoPageTurn
+        val switched = if (turner != null) turner() else turnPageInternal(1)
+        if (switched) {
+            val targetChapter = _state.value.chapterIndex
+            delay(pageSettleDelayMs())
+            // 等新章真正完成 init，而不是等任意一次 onState（旧页面的迟到回报也可能把它置为 ready）。
+            val ready = withTimeoutOrNull(AUTO_CHAPTER_TIMEOUT_MS) {
+                _renderedChapter.first { it == targetChapter }
+            }
+            if (ready == null) return AutoTurnResult.LOAD_FAILED
+        } else {
+            // 单页翻页：等现有翻页动画结束再开始计时（无动画时不必等待）。
+            val settle = pageSettleDelayMs()
+            if (settle > 0) delay(settle)
+        }
+        return AutoTurnResult.TURNED
+    }
+
+    /**
+     * 滚动自动接章：JS 原地换章是异步的，这里等新章号 + ready 同时成立才返回。
+     * 等待期间 JS 自动下滑已经停止，所以不会累计位移，也不会重复触发换章。
+     */
+    private suspend fun autoAdvanceScrollChapter(): AutoAdvanceResult {
+        if (!_state.value.ready) return AutoAdvanceResult.LOAD_FAILED
+        val before = _state.value.chapterIndex
+        if (before >= chapters.size - 1) return AutoAdvanceResult.BOOK_END
+        val started = evaluateBoolean(
+            "if (window.MiradReader && MiradReader.advanceChapterForAuto) { MiradReader.advanceChapterForAuto(); } else { false; }"
+        )
+        if (started != true) {
+            return if (before >= chapters.size - 1) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.LOAD_FAILED
+        }
+        val changed = withTimeoutOrNull(AUTO_CHAPTER_TIMEOUT_MS) {
+            state.first { it.ready && it.chapterIndex != before }
+        }
+        return if (changed != null) AutoAdvanceResult.ADVANCED else AutoAdvanceResult.LOAD_FAILED
+    }
+
+    /** 翻页动画的保守时长：滑动动画最长 320ms、覆盖动画 260ms；无动画不等待。 */
+    private fun pageSettleDelayMs(): Long = when (_state.value.config.pageAnim) {
+        PageAnim.SLIDE -> 360L
+        PageAnim.COVER -> 300L
+        else -> 0L
+    }
+
+    /** 排版相关配置发生变化时暂停自动阅读；仅调速不打断。 */
+    private fun layoutChanged(previous: ReaderConfig, next: ReaderConfig): Boolean =
+        previous.pageMode != next.pageMode ||
+            previous.fontSizeSp != next.fontSizeSp ||
+            previous.lineHeightMultiplier != next.lineHeightMultiplier ||
+            previous.paragraphSpacingEm != next.paragraphSpacingEm ||
+            previous.letterSpacingEm != next.letterSpacingEm ||
+            previous.firstLineIndentEm != next.firstLineIndentEm ||
+            previous.horizontalPaddingDp != next.horizontalPaddingDp ||
+            previous.maxColumnWidthEm != next.maxColumnWidthEm ||
+            previous.textAlign != next.textAlign ||
+            previous.boldText != next.boldText ||
+            previous.fontFamily != next.fontFamily ||
+            previous.customFontAsset != next.customFontAsset ||
+            previous.customFontPath != next.customFontPath ||
+            previous.epubLayoutMode != next.epubLayoutMode ||
+            previous.allowImages != next.allowImages
+
+    private suspend fun evaluateBoolean(script: String): Boolean? = suspendCancellableCoroutine { continuation ->
+        val view = webView
+        if (view == null) {
+            continuation.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        runCatching {
+            view.evaluateJavascript(script) { value ->
+                if (continuation.isActive) continuation.resume(value == "true")
+            }
+        }.onFailure {
+            if (continuation.isActive) continuation.resume(null)
         }
     }
 
@@ -357,8 +534,13 @@ class ReaderSession(
 
     /** 配置变更后刷新 WebView 中的样式（不重载章节）。 */
     fun applyConfigToWebView(config: ReaderConfig, systemDark: Boolean) {
+        val previous = _state.value.config
         this.systemDark = systemDark
         updateConfig(config)
+        // 阅读模式/排版变化会重排正文并可能移动锚点：自动阅读先暂停，由用户手动继续。
+        if (layoutChanged(previous, config)) pauseAutoRead()
+        // 调速不重建循环；运行中的滚动只在这里同步一次新速度。
+        autoRead.onSpeedChanged()
         val css = jsQuote(resources.currentThemeCss())
         // 样式、版心和安全区域同批更新；由 DOM 记录更新前的阅读锚点。
         // 不重建文本/高亮，避免每次拖动清掉搜索与朗读标记。
@@ -396,13 +578,21 @@ class ReaderSession(
         if (insetTopDp == topDp && insetBottomDp == bottomDp) return
         insetTopDp = topDp
         insetBottomDp = bottomDp
+        // 屏幕旋转/系统栏安全区域变化：正文需重排，自动阅读暂停等待用户继续。
+        pauseAutoRead()
         if (_state.value.ready) applyConfigToWebView(_state.value.config, systemDark)
     }
 
     // ------------------------------------------------------------------ 翻页与跳转
 
     /** 统一翻页：章内翻页，边界处跨章。返回是否发生了跨章切换。 */
-    fun turnPage(delta: Int): Boolean {
+    fun turnPage(delta: Int, pauseAuto: Boolean = true): Boolean {
+        // 手动翻页（点按/音量键）是阅读位置变更：先暂停自动阅读。
+        if (pauseAuto) pauseAutoRead()
+        return turnPageInternal(delta)
+    }
+
+    private fun turnPageInternal(delta: Int): Boolean {
         val current = _state.value
         if (!current.ready) return false
         val target = current.page + delta
@@ -412,14 +602,19 @@ class ReaderSession(
         }
         val nextChapter = current.chapterIndex + delta
         if (nextChapter in chapters.indices) {
-            gotoChapter(nextChapter, if (delta > 0) 0 else Int.MAX_VALUE)
+            gotoChapterInternal(nextChapter, if (delta > 0) 0 else Int.MAX_VALUE, pauseAuto = false)
             return true
         }
         return false
     }
 
     fun gotoChapter(index: Int, offset: Int = 0) {
-        val chapter = chapters.getOrNull(index) ?: return
+        gotoChapterInternal(index, offset, pauseAuto = true)
+    }
+
+    private fun gotoChapterInternal(index: Int, offset: Int = 0, pauseAuto: Boolean): Boolean {
+        val chapter = chapters.getOrNull(index) ?: return false
+        if (pauseAuto) pauseAutoRead()
         saveProgressNow()
         restoreOffset = if (offset == Int.MAX_VALUE) Int.MAX_VALUE else offset
         _state.update {
@@ -430,15 +625,18 @@ class ReaderSession(
             _state.update { it.copy(highlightCount = count) }
         }
         loadCurrentChapter(initial = false)
+        return true
     }
 
     fun jumpToOffset(offset: Int, mark: Boolean = false) {
+        pauseAutoRead()
         restoreOffset = offset
         evaluate("MiradReader.gotoOffset($offset, true);")
         if (mark) evaluate("MiradReader.markSearch($offset, ${offset + 1});")
     }
 
     fun jumpToPercent(percent: Float) {
+        pauseAutoRead()
         val total = chapterCharCounts.sum()
         if (total <= 0L) return
         val locator = ProgressMath.fromPercent(chapterCharCounts, percent)
@@ -458,8 +656,10 @@ class ReaderSession(
      * 点击左右两侧时按模式分流，避免上下滚动时还在整页跳。
      */
     fun scrollStep(direction: Int) {
+        // 点按滚动/音量键滚动都是手动位置变更：自动阅读暂停，交给用户。
+        pauseAutoRead()
         if (_state.value.config.pageMode != PageMode.SCROLL) {
-            turnPage(direction)
+            turnPageInternal(direction)
             return
         }
         evaluate("if (window.MiradReader) { MiradReader.scrollStep($direction); }")
@@ -651,6 +851,9 @@ class ReaderSession(
     }
 
     fun release() {
+        // 退出阅读页：先取消自动阅读的计时任务/JS 滚动，再保存进度、释放 WebView。
+        autoRead.release()
+        _autoReadNotice.value = null
         saveJob?.cancel()
         saveProgressNow()
         endSession()
@@ -715,5 +918,7 @@ class ReaderSession(
 
     companion object {
         const val DEFAULT_HIGHLIGHT_COLOR = 0x8C_FFD666.toInt()
+        /** 自动阅读等待换章就绪的上限；超时按加载失败处理并关闭自动阅读。 */
+        private const val AUTO_CHAPTER_TIMEOUT_MS = 12_000L
     }
 }

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
+import com.mirad.reader.core.model.AutoReadSpeed
 import com.mirad.reader.core.model.EpubLayoutMode
 import com.mirad.reader.core.model.NoteAnchor
 import com.mirad.reader.core.model.NoteExporter
@@ -51,6 +52,7 @@ import com.mirad.reader.data.repo.SearchHit
 import com.mirad.reader.data.repo.SearchOptions
 import com.mirad.reader.data.repo.SearchProgress
 import com.mirad.reader.reader.ReaderSession
+import com.mirad.reader.reader.AutoReadState
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
 import com.mirad.reader.ui.common.*
@@ -72,6 +74,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.roundToInt
 
 // ---------------------------------------------------------------- 目录
 
@@ -227,6 +230,7 @@ fun ReaderSettingsSheet(
     isEpub: Boolean = false,
     config: ReaderConfig,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    onOpenAutoRead: () -> Unit,
     onResetGlobal: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -297,6 +301,13 @@ fun ReaderSettingsSheet(
                 SettingCard { FontSizeControl(config, onChange) }
                 BrightnessSettings(config, onChange)
                 SettingCard {
+                    SettingNavRow(
+                        label = "自动阅读",
+                        value = AutoReadSpeed.summary(config),
+                        subtitle = if (config.pageMode == PageMode.SCROLL) "匀速下滑，章末停留后接下一章" else "定时翻页，章末按间隔进入下一章",
+                        onClick = onOpenAutoRead
+                    )
+                    CardDivider()
                     listOf(SettingsCategory.TYPOGRAPHY, SettingsCategory.THEME, SettingsCategory.INTERACTION, SettingsCategory.SCREEN)
                         .plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
                         .forEach { item -> SettingNavRow(item.title, onClick = { category = item }) }
@@ -633,6 +644,108 @@ fun TtsSheet(
                 )
             }
             ReaderSettingsContent(SettingsCategory.TTS, config, onChange)
+            Spacer(modifier = Modifier.height(Spacing.sm))
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 自动阅读
+
+/**
+ * 自动阅读设置弹层：「更多」菜单与阅读设置首页共用这一个入口。
+ *
+ * 只保存速度，不保存运行状态；打开面板本身会暂停自动阅读，调速后需要手动「继续」。
+ */
+@Composable
+fun AutoReadSheet(
+    config: ReaderConfig,
+    state: AutoReadState,
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val paged = config.pageMode != PageMode.SCROLL
+    val active = state != AutoReadState.OFF
+    val speed = if (paged) {
+        AutoReadSpeed.clamp(config.autoPageSeconds)
+    } else {
+        AutoReadSpeed.clamp(config.autoScrollSecondsPerScreen)
+    }
+    SheetScaffold(
+        title = "自动阅读",
+        subtitle = if (paged) "左右翻页 · 定时翻到下一页" else "上下滚动 · 按真实时间匀速下滑",
+        onDismiss = onDismiss
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Spacing.xl),
+            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
+        ) {
+            SettingCard {
+                SettingSwitchRow(
+                    label = "自动阅读",
+                    subtitle = when (state) {
+                        AutoReadState.RUNNING -> "正在运行"
+                        AutoReadState.PAUSED -> "已暂停，需要手动继续"
+                        AutoReadState.OFF -> "关闭"
+                    },
+                    checked = active,
+                    onCheckedChange = { enabled ->
+                        // 关闭开关立即取消；开启会在关闭弹层与工具栏后开始。
+                        if (enabled) onStart() else onStop()
+                    }
+                )
+                if (paged) {
+                    LabeledSlider(
+                        label = "翻页间隔",
+                        value = speed.toFloat(),
+                        valueText = "$speed 秒/页",
+                        range = AutoReadSpeed.MIN_SECONDS.toFloat()..AutoReadSpeed.MAX_SECONDS.toFloat(),
+                        steps = AutoReadSpeed.MAX_SECONDS - AutoReadSpeed.MIN_SECONDS - 1,
+                        onChange = { value ->
+                            onChange { it.copy(autoPageSeconds = AutoReadSpeed.clamp(value.roundToInt())) }
+                        }
+                    )
+                } else {
+                    LabeledSlider(
+                        label = "下滑速度",
+                        value = speed.toFloat(),
+                        valueText = "$speed 秒/屏",
+                        range = AutoReadSpeed.MIN_SECONDS.toFloat()..AutoReadSpeed.MAX_SECONDS.toFloat(),
+                        steps = AutoReadSpeed.MAX_SECONDS - AutoReadSpeed.MIN_SECONDS - 1,
+                        onChange = { value ->
+                            onChange { it.copy(autoScrollSecondsPerScreen = AutoReadSpeed.clamp(value.roundToInt())) }
+                        }
+                    )
+                    Text(
+                        text = "一屏按扣除正文上下安全留白后的可读高度计算。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                CardDivider()
+                Text(
+                    text = if (paged) {
+                        "到章末后按同一间隔进入下一章；章节加载完成后重新计时。"
+                    } else {
+                        "到章末后停留一个「翻页间隔」，再进入下一章。"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (state == AutoReadState.PAUSED) {
+                OutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                    Text("继续自动阅读")
+                }
+            }
+            Text(
+                text = "触摸正文、打开菜单或切到后台会暂停；暂停后不会自动继续。速度按本书保存。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }

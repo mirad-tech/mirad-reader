@@ -143,7 +143,16 @@ data class ReaderConfig(
     // ---- TTS ----
     val ttsSpeechRate: Float = 1.0f,
     val ttsPitch: Float = 1.0f,
-    val ttsAutoNextChapter: Boolean = true
+    val ttsAutoNextChapter: Boolean = true,
+
+    // ---- 自动阅读 ----
+    /**
+     * 分页模式的翻页间隔（秒/页），5..120。
+     * 只保存速度，不保存运行状态：每次重新打开书籍自动阅读都从关闭开始。
+     */
+    val autoPageSeconds: Int = AutoReadSpeed.DEFAULT_PAGE_SECONDS,
+    /** 滚动模式的下滑速度（秒/屏），5..120；一屏按扣除正文上下留白后的可读高度计算。 */
+    val autoScrollSecondsPerScreen: Int = AutoReadSpeed.DEFAULT_SCROLL_SECONDS
 ) {
     companion object {
         val DEFAULT = ReaderConfig()

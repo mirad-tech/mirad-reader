@@ -20,12 +20,24 @@ class ReaderWebView(context: Context) : WebView(context) {
     var onSelectionAction: ((SelectionAction) -> Unit)? = null
     var onTap: ((x: Float, y: Float) -> Unit)? = null
 
+    /** 手指按下：阅读会话据此立即暂停自动阅读（在 WebView 开始拖动之前）。 */
+    var onTouchDown: (() -> Unit)? = null
+
+    /** 本次手势是否已经进入长按（长按选词不触发翻页）。 */
+    private var longPressed = false
+
     private val gestureDetector = GestureDetector(
         context,
         object : GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e: MotionEvent): Boolean = false
 
+            override fun onLongPress(e: MotionEvent) {
+                longPressed = true
+            }
+
             override fun onSingleTapUp(e: MotionEvent): Boolean {
+                // 长按选词结束时不再当成一次正文单击，避免"选完字顺手翻页/关菜单"。
+                if (longPressed) return true
                 onTap?.invoke(e.x, e.y)
                 return true
             }
@@ -35,6 +47,10 @@ class ReaderWebView(context: Context) : WebView(context) {
     init {
         // 返回 false：事件继续交给 WebView，保证长按选词、链接点击等原生行为不受影响。
         setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                longPressed = false
+                onTouchDown?.invoke()
+            }
             gestureDetector.onTouchEvent(event)
             false
         }
