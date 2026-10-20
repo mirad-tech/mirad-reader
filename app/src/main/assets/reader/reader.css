@@ -4,12 +4,25 @@ html, body {
     margin: 0;
     padding: 0;
     width: 100%;
+    overflow-anchor: none;
 }
 
 #mirad-content {
     box-sizing: border-box;
     overflow-wrap: break-word;
-    word-break: break-word;
+    word-break: break-all;
+    line-break: strict;
+    -webkit-line-break: strict;
+    overflow-anchor: none;
+}
+
+/* 连续滚动下的章节 section 结构 */
+section.mirad-chapter {
+    display: block;
+    position: relative;
+    box-sizing: border-box;
+    margin-bottom: 3.5em;
+    overflow-anchor: none;
 }
 
 /* 图片/表格尽量不跨列断开 */

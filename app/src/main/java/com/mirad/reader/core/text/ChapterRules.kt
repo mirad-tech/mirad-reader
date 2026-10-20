@@ -41,9 +41,9 @@ object ChapterRules {
         id = CN_GENERIC,
         name = "中文章节（第X章/节/回）",
         patterns = listOf(
-            "^第\\s*$CN_NUM\\s*[章节節回][\\s\\p{Punct}]*.{0,70}$",
+            "^第\\s*$CN_NUM\\s*[章节節回][\\s\\p{P}\\p{Punct}]*.{0,70}$",
             "^第\\s*$CN_NUM\\s*[章节節回]\\s*.{0,70}$",
-            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外)[\\s\\p{Punct}]*.{0,70}$"
+            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外)([\\s\\p{P}\\p{Punct}卷部].{0,70}|${'$'})"
         )
     )
 
@@ -51,7 +51,7 @@ object ChapterRules {
         id = CN_VOLUME_ONLY,
         name = "分卷（第X卷/部/篇）",
         patterns = listOf(
-            "^第\\s*$CN_NUM\\s*[卷部篇集][\\s\\p{Punct}]*.{0,70}$"
+            "^第\\s*$CN_NUM\\s*[卷部篇集][\\s\\p{P}\\p{Punct}]*.{0,70}$"
         )
     )
 
@@ -89,7 +89,7 @@ object ChapterRules {
         id = SPECIAL,
         name = "特殊标记（正文/序章/楔子）",
         patterns = listOf(
-            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)[\\s\\p{Punct}]*.{0,70}$"
+            "^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)([\\s\\p{P}\\p{Punct}卷部].{0,70}|${'$'})"
         )
     )
 

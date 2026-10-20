@@ -21,10 +21,10 @@ data class DecodedText(
  *   3. 文件内声明的 charset（EPUB 的 `<?xml encoding>` / `<meta charset>`）
  *   4. 严格 UTF-8 校验
  *   5. 多候选评分（GB18030 / BIG5 / SHIFT_JIS / windows-1252）
- *   6. GB18030 宽松兜底
+ *   6. UTF-8 默认兜底
  *
  * 关键点：绝不能让"能解码"等同于"猜对了"——GB18030 几乎能解码任意字节序列，
- * 所以它只能靠评分胜出，不能靠 chardet 断言。
+ * 所以它只能靠评分胜出，不能靠 chardet 断言；默认未知时以 UTF-8 为基准。
  */
 object TextCodec {
 
@@ -88,8 +88,8 @@ object TextCodec {
             return DecodedText(clean(String(bytes, scored.first)), scored.first.name(), source)
         }
 
-        val gb = Charset.forName("GB18030")
-        return DecodedText(clean(String(bytes, gb)), gb.name(), "fallback")
+        val utf8 = Charsets.UTF_8
+        return DecodedText(clean(String(bytes, utf8)), "UTF-8", "fallback")
     }
 
     /**

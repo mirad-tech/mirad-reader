@@ -1,13 +1,31 @@
 package com.mirad.reader.core.model
 
+import kotlinx.serialization.Serializable
+
 /**
- * 阅读位置。以「章内字符偏移」为准，页码只用于显示，换字号/换模式后仍可精确恢复。
+ * 阅读位置抽象模型（借鉴 Readium Locator 规范）。
+ * 结合「章内字符偏移」与「文本上下文快照」，同时支持 CFI 与全书/章内进度。
+ * 换字号/换模式/重排后，可通过偏移或上下文模糊匹配精确恢复。
  */
+@Serializable
 data class Locator(
     val chapterIndex: Int = 0,
     val charOffset: Int = 0,
     val pageIndex: Int = 0,
-    val pageCount: Int = 0
+    val pageCount: Int = 0,
+    val href: String? = null,
+    val title: String? = null,
+    val progression: Float = 0f,
+    val totalProgression: Float = 0f,
+    val cfi: String? = null,
+    val text: TextQuote? = null
+)
+
+@Serializable
+data class TextQuote(
+    val before: String? = null,
+    val highlight: String? = null,
+    val after: String? = null
 )
 
 /** 进度换算。纯函数，便于单元测试。 */

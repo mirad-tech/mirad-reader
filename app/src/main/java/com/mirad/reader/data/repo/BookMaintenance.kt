@@ -94,6 +94,7 @@ class BookMaintenance(
                     startByte = slice.startByte, endByte = slice.endByte, charCount = slice.charCount.toLong(),
                     titleLineChars = slice.titleLineChars, isVolume = slice.isVolume)
             }
+            database.searchFtsDao().deleteForBook(book.id)
             books.saveChapters(book.id, chapters)
             books.updateIndexInfo(book.id, chapters.size, text.length.toLong(), preview.ruleId, null, current.encoding)
             bookmarks.forEach { bookmark ->
@@ -153,6 +154,7 @@ class BookMaintenance(
             val decoded = TextCodec.decode(bytes, manual = charsetHint)
             val normalized = TextNormalizer.normalize(decoded.text)
             if (normalized.isBlank()) throw IllegalStateException("重新解码后没有正文内容")
+            database.searchFtsDao().deleteForBook(book.id)
             writeContent(book, normalized)
             val chapters = index(book, normalized)
             books.updateBook(

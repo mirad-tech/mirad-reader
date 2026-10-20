@@ -145,6 +145,7 @@ fun ShelfScreen(
     var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameDraft by remember { mutableStateOf("") }
     var toast by remember { mutableStateOf<String?>(null) }
+    var showUrlImportDialog by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) {
@@ -230,6 +231,10 @@ fun ShelfScreen(
                         DropdownMenuItem(
                             text = { Text("导入文件夹") },
                             onClick = { importMenu = false; folderPicker.launch(null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("输入书源网址导入") },
+                            onClick = { importMenu = false; showUrlImportDialog = true }
                         )
                         if (BuildConfig.DEBUG) {
                             DropdownMenuItem(
@@ -543,6 +548,16 @@ fun ShelfScreen(
 
     toast?.let { message ->
         ShelfToast(message = message, onDismiss = { toast = null })
+    }
+
+    if (showUrlImportDialog) {
+        UrlImportDialog(
+            container = container,
+            onDismiss = { showUrlImportDialog = false },
+            onSuccess = { bookTitle ->
+                toast = "正在将《$bookTitle》加入书架"
+            }
+        )
     }
 
     if (summary != null) {

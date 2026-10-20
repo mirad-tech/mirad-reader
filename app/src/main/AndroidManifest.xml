@@ -28,6 +28,7 @@
         android:largeHeap="true"
         android:supportsRtl="false"
         android:theme="@style/Theme.MiradReader"
+        android:usesCleartextTraffic="true"
         tools:targetApi="34">
 
         <activity

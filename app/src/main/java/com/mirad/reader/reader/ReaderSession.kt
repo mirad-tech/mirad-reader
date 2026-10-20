@@ -21,6 +21,7 @@ import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.ThemePaletteResolver
 import com.mirad.reader.core.reader.ReaderCss
 import com.mirad.reader.data.db.entity.BookEntity
+import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
@@ -565,9 +566,10 @@ class ReaderSession(
             PageAnim.CURL -> "CURL"
             else -> "SLIDE"
         }
+        val isWindowed = config.windowedScroll && !(book.format == BookFormat.EPUB && config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
         return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
             """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim",""" +
-            """chapterCount:${chapters.size},windowedScroll:${config.windowedScroll}}"""
+            """chapterCount:${chapters.size},windowedScroll:$isWindowed}"""
     }
 
     /**

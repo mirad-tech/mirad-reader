@@ -49,8 +49,21 @@ object ChapterDetector {
         val combineStrong = rule.id in setOf(ChapterRules.CN_GENERIC, ChapterRules.CN_WITH_BRACKET, ChapterRules.ENGLISH, ChapterRules.SPECIAL)
         var ownMatch = false
         while (pos < text.length) {
-            val end = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
-            val next = if (end < text.length) end + 1 else end
+            var end = pos
+            while (end < text.length && text[end] != '\r' && text[end] != '\n') {
+                end++
+            }
+            var next = end
+            if (next < text.length) {
+                if (text[next] == '\r') {
+                    next++
+                    if (next < text.length && text[next] == '\n') {
+                        next++
+                    }
+                } else if (text[next] == '\n') {
+                    next++
+                }
+            }
             val title = text.substring(pos, end).trim()
             val volume = ChapterRules.CN_VOLUME_RULE.matches(title)
             val volumeOnly = volume && !Regex("[章节節回]").containsMatchIn(title)

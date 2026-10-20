@@ -208,19 +208,20 @@ class ImportPipeline(
         if (size > MAX_TXT_BYTES) {
             throw ImportException("TXT 文件过大（${size / 1024 / 1024} MB，上限 80 MB）")
         }
-        val bytes = target.readBytes()
-        if (bytes.isEmpty()) throw ImportException("文件内容为空")
-
-        val decoded = com.mirad.reader.core.text.TextCodec.decode(bytes)
-        val normalized = TextNormalizer.normalize(decoded.text)
-        if (normalized.isBlank()) throw ImportException("未解析出正文内容")
+        if (size == 0L || !target.exists()) throw ImportException("文件内容为空")
 
         val contentFile = paths.contentFile(token)
-        contentFile.writeText(normalized, Charsets.UTF_8)
+        val streamResult = try {
+            com.mirad.reader.core.text.StreamingTxtProcessor.process(
+                sourceFile = target,
+                targetContentFile = contentFile,
+                manualEncoding = null
+            )
+        } catch (e: Throwable) {
+            throw ImportException("TXT 解析失败: ${e.message ?: "未知错误"}")
+        }
 
-        val detection = com.mirad.reader.core.text.ChapterDetector.detect(normalized)
-        val effectiveRule = detection.rule
-        val slices = ChapterSplitter.split(normalized, detection)
+        val slices = streamResult.slices
         if (slices.isEmpty()) throw ImportException("无法切分正文")
 
         val chapters = slices.mapIndexed { index, slice ->
@@ -248,19 +249,19 @@ class ImportPipeline(
             coverPath = if (hasCover) coverFile.absolutePath else null,
             sourceUri = sourceUriOf(source),
             fileSize = size,
-            encoding = decoded.charsetName,
-            chapterRuleId = effectiveRule?.id,
+            encoding = streamResult.charset,
+            chapterRuleId = streamResult.ruleId,
             totalChapters = chapters.size,
-            totalChars = normalized.length.toLong(),
+            totalChars = streamResult.totalChars,
             addedAt = System.currentTimeMillis()
         )
         return PreparedBook(
             book = book,
             chapters = chapters,
-            encoding = decoded.charsetName,
-            ruleId = effectiveRule?.id,
-            regex = null,
-            totalChars = normalized.length.toLong()
+            encoding = streamResult.charset,
+            ruleId = streamResult.ruleId,
+            regex = streamResult.regex,
+            totalChars = streamResult.totalChars
         )
     }
 
@@ -355,17 +356,20 @@ class ImportPipeline(
     }
 
     private fun guessExtension(source: ImportSource): String {
-        val name = source.displayName.lowercase()
-        if (name.endsWith(".$EPUB_EXT")) return EPUB_EXT
-        if (name.endsWith(".$TXT_EXT")) return TXT_EXT
-        // 通过文件头判断 zip（EPUB 本质是 zip）
-        return runCatching {
+        // 严格通过 4 字节魔数判断是否为 ZIP/EPUB（0x50, 0x4B, 0x03, 0x04，杜绝以 PK 开头的普通 TXT 误判）
+        val isZipHeader = runCatching {
             openInput(source).use { input ->
                 val head = ByteArray(4)
                 val read = input.read(head)
-                if (read == 4 && head[0] == 0x50.toByte() && head[1] == 0x4B.toByte()) EPUB_EXT else TXT_EXT
+                read == 4 &&
+                    head[0] == 0x50.toByte() &&
+                    head[1] == 0x4B.toByte() &&
+                    head[2] == 0x03.toByte() &&
+                    head[3] == 0x04.toByte()
             }
-        }.getOrDefault(TXT_EXT)
+        }.getOrDefault(false)
+
+        return detectExtension(source.displayName, isZipHeader)
     }
 
     private fun copyTo(source: ImportSource, target: File, onProgress: (Float) -> Unit): Long {
@@ -423,5 +427,13 @@ class ImportPipeline(
         const val EPUB_EXT = "epub"
         const val TXT_EXT = "txt"
         const val MAX_TXT_BYTES = 80L * 1024 * 1024
+
+        internal fun detectExtension(name: String, isZip: Boolean): String {
+            if (isZip) return EPUB_EXT
+            val lower = name.lowercase()
+            if (lower.endsWith(".$EPUB_EXT")) return EPUB_EXT
+            if (lower.endsWith(".$TXT_EXT")) return TXT_EXT
+            return TXT_EXT
+        }
     }
 }

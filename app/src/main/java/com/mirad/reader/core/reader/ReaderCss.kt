@@ -83,11 +83,18 @@ object ReaderCss {
             .append("font-family:inherit").append(important).append(";")
             .append("line-height:").append(config.lineHeightMultiplier).append(important).append(";")
             .append("letter-spacing:").append(config.letterSpacingEm).append("em").append(important).append(";")
+            .append("line-break:strict;-webkit-line-break:strict;")
+            .append("word-break:break-all;overflow-wrap:break-word;")
+            .append("font-feature-settings:\"chws\" 1,\"halt\" 1;")
             .append("}\n")
 
         sb.append("p{margin:0 0 ").append(config.paragraphSpacingEm).append("em 0").append(important).append(";")
             .append("text-indent:").append(config.firstLineIndentEm).append("em").append(important).append(";")
-            .append("text-align:").append(align).append(important).append(";}\n")
+            .append("text-align:").append(align).append(important).append(";")
+        if (align == "justify") {
+            sb.append("text-justify:inter-ideograph;")
+        }
+        sb.append("}\n")
 
         if (force) {
             sb.append("div,section,article,blockquote,li{text-indent:0;text-align:inherit;}\n")

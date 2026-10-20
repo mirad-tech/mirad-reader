@@ -24,7 +24,8 @@ class BookRepository(
     private val bookDao: BookDao,
     private val chapterDao: ChapterDao,
     private val progressDao: ProgressDao,
-    private val paths: AppPaths
+    private val paths: AppPaths,
+    private val searchFtsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null
 ) {
 
     fun observeShelf(): Flow<List<ShelfBook>> = combine(
@@ -73,6 +74,7 @@ class BookRepository(
 
     suspend fun saveChapters(bookId: Long, chapters: List<ChapterEntity>) {
         chapterDao.deleteForBook(bookId)
+        searchFtsDao?.deleteForBook(bookId)
         if (chapters.isNotEmpty()) chapterDao.insertAll(chapters)
         bookDao.updateCounts(bookId, chapters.size, chapters.sumOf { it.charCount })
     }
@@ -96,6 +98,7 @@ class BookRepository(
     /** 删除书籍及其全部文件。 */
     suspend fun deleteBook(book: BookEntity) {
         paths.deleteBookFiles(tokenOf(book), book.coverPath)
+        searchFtsDao?.deleteForBook(book.id)
         bookDao.delete(book)
     }
 

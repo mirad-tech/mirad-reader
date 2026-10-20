@@ -198,7 +198,10 @@
     }
 
     function fragmentUrlOf(index) {
-        return location.pathname.replace(/\/chapter\/\d+$/, '/fragment/' + index) + location.search;
+        if (location.pathname.indexOf('/chapter/') >= 0) {
+            return location.pathname.replace(/\/chapter\/\d+$/, '/fragment/' + index) + location.search;
+        }
+        return '/fragment/' + index;
     }
 
     /** 首次进入窗口模式：把初始章内容包成 <section>，保持结构统一。 */
@@ -267,27 +270,71 @@
         }, 800);
     }
 
-    /** 窗口固定 3 章（活动章前后各 1）；裁上方时补偿滚动，避免视口跳动。 */
+    function loadedRange() {
+        var c = container();
+        var list = c ? c.querySelectorAll('section.mirad-chapter') : [];
+        if (!list || list.length === 0) return null;
+        var min = Infinity, max = -Infinity;
+        for (var i = 0; i < list.length; i++) {
+            var idx = sectionIndex(list[i]);
+            if (idx >= 0) {
+                if (idx < min) min = idx;
+                if (idx > max) max = idx;
+            }
+        }
+        if (min === Infinity) return null;
+        return { min: min, max: max };
+    }
+
+    /** 窗口固定 3 章（活动章前后各 1）；裁上方时按视口相对坐标补偿滚动，避免视口跳动与回顶。 */
+    /** 窗口裁剪：上方裁远端并补偿滚动，下方确保保留至少 2.5 屏高，坚决不在裁剪内递归补章。 */
     function trimWindow() {
         if (!windowed() || !win.active) return;
         var c = container();
         var list = Array.prototype.slice.call(c.querySelectorAll('section.mirad-chapter'));
         if (list.length <= 3) return;
         var activeIdx = sectionIndex(win.active);
-        var removedAbove = 0;
+        var vh = viewportHeight();
+
+        // 记录活动章在删除前相对于视口顶部的精确坐标
+        var anchorTopBefore = win.active.getBoundingClientRect().top;
+        var removedAny = false;
+
+        // 1. 处理上方章节：仅当章节在活动章上方两章以上 (idx < activeIdx - 1) 时裁剪
         for (var i = 0; i < list.length; i++) {
             var el = list[i];
             var idx = sectionIndex(el);
-            if (Math.abs(idx - activeIdx) > 1) {
-                if (idx < activeIdx) removedAbove += el.getBoundingClientRect().height;
+            if (idx < activeIdx - 1) {
                 el.parentNode.removeChild(el);
+                removedAny = true;
             }
         }
-        if (removedAbove > 0) {
-            window.scrollTo(0, Math.max(0, (window.scrollY || 0) - removedAbove));
+
+        // 2. 处理下方章节：从最末尾向内检查，必须保证删除后剩余总高度 >= 2.5 屏高才允许删
+        var remainingList = Array.prototype.slice.call(c.querySelectorAll('section.mirad-chapter'));
+        for (var j = remainingList.length - 1; j >= 0; j--) {
+            var bottomEl = remainingList[j];
+            var bIdx = sectionIndex(bottomEl);
+            if (bIdx > activeIdx + 1) {
+                var elHeight = bottomEl.getBoundingClientRect().height || 0;
+                if (documentHeight() - elHeight >= vh * 2.5) {
+                    bottomEl.parentNode.removeChild(bottomEl);
+                    removedAny = true;
+                } else {
+                    // 下方高度已到临界值，停止向内裁剪以保护视口填满
+                    break;
+                }
+            }
         }
-        // 裁剪后可能又不足两屏：补回来，避免"裁剪完就滚不动了"
-        if (documentHeight() < viewportHeight() * 2) ensureWindows();
+
+        if (removedAny && win.active && win.active.parentNode) {
+            // 删除上方节点后，测量活动章的新视口相对位置并补偿差值，确保视口正文绝对稳定
+            var anchorTopAfter = win.active.getBoundingClientRect().top;
+            var drift = anchorTopAfter - anchorTopBefore;
+            if (Math.abs(drift) > 0.5) {
+                window.scrollBy(0, drift);
+            }
+        }
     }
 
     /** 距顶/距底 2 屏时补一章；追加在视口外，视觉零跳动。 */
@@ -302,13 +349,21 @@
     }
 
     function ensureSection(dir) {
+        if (!windowed()) return;
+        var range = loadedRange();
         var active = win.active || sectionAt(window.scrollY || 0);
-        if (!active) return;
-        // 兜底：section 上的 data-chapter 没拿到时，用容器的章号（HTML 由原生注入）
-        var base = sectionIndex(active);
+        var base = active ? sectionIndex(active) : -1;
         if (base < 0) base = parseInt(container().getAttribute('data-chapter'), 10);
-        if (isNaN(base) || base < 0) return;
-        var idx = base + dir;
+        if (isNaN(base) || base < 0) base = 0;
+
+        // 关键：以当前 DOM 中已挂载章节的最大/最小边界向外扩展，而不是以 active 为基准
+        var idx;
+        if (dir > 0) {
+            idx = range ? (range.max + 1) : (base + 1);
+        } else {
+            idx = range ? (range.min - 1) : (base - 1);
+        }
+
         if (idx < 0 || idx > lastChapterIndex()) return;
         if (container().querySelector('section.mirad-chapter[data-chapter="' + idx + '"]')) return;
         if (win.loading) return;
@@ -329,8 +384,13 @@
                     window.scrollTo(0, Math.max(0, (window.scrollY || 0) + (after - before)));
                 }
                 scheduleTrim();
-                // 短章（不足两屏）时没有滚动事件可触发补章，这里主动补到可滚动为止
-                if (documentHeight() < viewportHeight() * 2) ensureWindows();
+                // 连续短章保护：若插入后总高度仍不足两屏且尚未到达书末，持续向前推进加载下一章
+                if (documentHeight() < viewportHeight() * 2) {
+                    var curRange = loadedRange();
+                    if (curRange && curRange.max < lastChapterIndex()) {
+                        ensureSection(+1);
+                    }
+                }
             })
             .catch(function () { win.loading = false; });
     }
@@ -1578,8 +1638,10 @@
         var target = node.nodeType === 3 ? node : null;
         for (var i = 0; i < state.nodes.length; i++) {
             var entry = state.nodes[i];
-            if (entry.node === target) return entry.start + Math.min(offset, entry.len);
-            if (entry.node === node) return entry.start + Math.min(offset, entry.len);
+            if (entry.node === target || entry.node === node) {
+                if (offset > entry.len) return -1;
+                return entry.start + Math.max(0, offset);
+            }
         }
         // 容器节点：取第一个子文本节点
         if (node.nodeType === 1) {
@@ -1588,6 +1650,312 @@
             }
         }
         return -1;
+    }
+
+    // ---------------------------------------------------------------- CFI 与锚点快照
+
+    function isMiradMark(node) {
+        if (!node || node.nodeType !== 1) return false;
+        var tag = node.tagName.toLowerCase();
+        var cls = node.className || '';
+        return (tag === 'mark' && cls.indexOf('mirad-') >= 0) || (tag === 'span' && cls.indexOf('mirad-tts') >= 0);
+    }
+
+    /**
+     * 获取父元素的逻辑子节点列表：将阅读器插入的 mark 包装展开平铺，
+     * 相邻文本节点合并为统一的逻辑文本流，保证划线操作不破坏 CFI 树结构。
+     */
+    function getLogicalChildren(parent) {
+        var result = [];
+        var currentTextGroup = null;
+
+        function collectTextNodes(n) {
+            if (n.nodeType === 3) {
+                if (!currentTextGroup) {
+                    currentTextGroup = { type: 'text', textNodes: [], totalLen: 0 };
+                    result.push(currentTextGroup);
+                }
+                var len = (n.nodeValue || '').length;
+                currentTextGroup.textNodes.push({ node: n, len: len });
+                currentTextGroup.totalLen += len;
+            } else if (n.nodeType === 1 && isMiradMark(n)) {
+                for (var j = 0; j < n.childNodes.length; j++) {
+                    collectTextNodes(n.childNodes[j]);
+                }
+            }
+        }
+
+        var children = parent.childNodes || [];
+        for (var i = 0; i < children.length; i++) {
+            var child = children[i];
+            if (child.nodeType === 3 || (child.nodeType === 1 && isMiradMark(child))) {
+                collectTextNodes(child);
+            } else if (child.nodeType === 1) {
+                currentTextGroup = null;
+                result.push({ type: 'element', element: child });
+            }
+        }
+        return result;
+    }
+
+    function cfiFromNodeOffset(node, offset) {
+        if (!node) return null;
+        var root = activeRoot();
+        var path = [];
+        var curr = node;
+
+        // 若当前节点在 mark 内部，向上追溯到非 mark 的真实父元素
+        while (curr && curr !== root && isMiradMark(curr)) {
+            curr = curr.parentNode;
+        }
+
+        var accumulatedOffset = offset || 0;
+
+        while (curr && curr !== root && curr.parentNode) {
+            var parent = curr.parentNode;
+            while (parent && parent !== root && isMiradMark(parent)) {
+                parent = parent.parentNode;
+            }
+            if (!parent) break;
+
+            var logical = getLogicalChildren(parent);
+            var stepIndex = -1;
+
+            if (curr.nodeType === 3 || isMiradMark(curr)) {
+                // 找到包含 curr 文本节点的逻辑文本组
+                for (var i = 0; i < logical.length; i++) {
+                    var item = logical[i];
+                    if (item.type === 'text') {
+                        var found = false;
+                        var prefixLen = 0;
+                        for (var t = 0; t < item.textNodes.length; t++) {
+                            if (item.textNodes[t].node === curr) {
+                                found = true;
+                                accumulatedOffset += prefixLen;
+                                break;
+                            }
+                            prefixLen += item.textNodes[t].len;
+                        }
+                        if (found) {
+                            stepIndex = i;
+                            break;
+                        }
+                    }
+                }
+            } else {
+                for (var k = 0; k < logical.length; k++) {
+                    if (logical[k].type === 'element' && logical[k].element === curr) {
+                        stepIndex = k;
+                        break;
+                    }
+                }
+            }
+
+            if (stepIndex < 0) stepIndex = 0;
+
+            // 遵循标准 CFI 惯例：元素子节点偶数步长，文本子节点奇数步长
+            var itemType = (stepIndex < logical.length) ? logical[stepIndex].type : 'text';
+            var cfiStep = (itemType === 'element') ? ((stepIndex + 1) * 2) : (stepIndex * 2 + 1);
+            path.unshift(cfiStep);
+            curr = parent;
+        }
+
+        return '/4/' + path.join('/') + ':' + accumulatedOffset;
+    }
+
+    function resolveCfi(cfi) {
+        if (!cfi || typeof cfi !== 'string') return null;
+        // 严格正则验证：必须以 /4/ 开头，路径必须为正整数且由 / 分隔，最后紧跟冒号与非负整数 offset
+        var match = cfi.match(/^\/4\/(\d+(?:\/\d+)*):(\d+)$/);
+        if (!match) return null;
+
+        var stepsStr = match[1];
+        var offsetStr = match[2];
+        var targetOffset = parseInt(offsetStr, 10);
+        if (isNaN(targetOffset) || targetOffset < 0) return null;
+
+        var stepStrs = stepsStr.split('/');
+        var steps = [];
+        for (var s = 0; s < stepStrs.length; s++) {
+            var stepNum = parseInt(stepStrs[s], 10);
+            if (isNaN(stepNum) || stepNum < 1) return null;
+            steps.push(stepNum);
+        }
+
+        var curr = activeRoot();
+        for (var i = 0; i < steps.length; i++) {
+            if (!curr) return null;
+            var logical = getLogicalChildren(curr);
+            var step = steps[i];
+            var isElem = (step % 2 === 0);
+            var targetIdx = isElem ? (step / 2 - 1) : Math.floor(step / 2);
+
+            if (targetIdx < 0 || targetIdx >= logical.length) return null;
+            var targetItem = logical[targetIdx];
+
+            // 步长奇偶性与节点类型必须严格对应：偶数步必须是 element，奇数步必须是 text
+            if (isElem && targetItem.type !== 'element') return null;
+            if (!isElem && targetItem.type !== 'text') return null;
+
+            if (i === steps.length - 1) {
+                // 最终定位目标
+                if (targetItem.type === 'text') {
+                    // 只有文本步长（奇数步）对应文本节点，允许非负偏移量
+                    if (targetOffset > targetItem.totalLen) return null; // 越界拒绝，杜绝截断假阳性
+                    var remaining = targetOffset;
+                    for (var t = 0; t < targetItem.textNodes.length; t++) {
+                        var tn = targetItem.textNodes[t];
+                        if (remaining <= tn.len) {
+                            return { node: tn.node, offset: remaining };
+                        }
+                        remaining -= tn.len;
+                    }
+                    if (targetItem.textNodes.length > 0) {
+                        var lastTn = targetItem.textNodes[targetItem.textNodes.length - 1];
+                        return { node: lastTn.node, offset: lastTn.len };
+                    }
+                    return null;
+                } else {
+                    // 元素节点定位时，offset 必须为 0
+                    if (targetOffset !== 0) return null;
+                    return { node: targetItem.element, offset: 0 };
+                }
+            } else {
+                // 非终止步必须是 element；文本节点作为叶子节点，绝不允许作为中间路径继续穿透
+                if (targetItem.type !== 'element') return null;
+                curr = targetItem.element;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 基于 TextQuote 上下文快照自愈定位（选区自愈）。
+     * 在 DOM 发生结构变化、CFI 失效或章节修订时，通过前导、高亮词与后继文本模糊重定位。
+     * 全文扫描所有候选位置，结合前后文最长公共子串及基准偏移距离加权消歧，杜绝盲目取首项。
+     */
+    function healWithTextQuote(quote, animate) {
+        if (!quote) return -1;
+        var hay = state.text || '';
+        if (!hay) return -1;
+
+        var before = quote.before || '';
+        var highlight = quote.highlight || '';
+        var after = quote.after || '';
+        var targetOffset = (typeof quote.offset === 'number' && !isNaN(quote.offset)) ? quote.offset : 0;
+
+        if (!highlight) {
+            // 没有高亮词，若提供了 targetOffset 则直接使用
+            if (typeof quote.offset === 'number' && quote.offset >= 0 && quote.offset <= hay.length) {
+                window.MiradReader.gotoOffset(quote.offset, !!animate);
+                return quote.offset;
+            }
+            return -1;
+        }
+
+        // 收集所有匹配项
+        var candidates = [];
+        var startPos = 0;
+        while (startPos <= hay.length - highlight.length) {
+            var foundPos = hay.indexOf(highlight, startPos);
+            if (foundPos < 0) break;
+            candidates.push(foundPos);
+            startPos = foundPos + 1;
+        }
+
+        // 容错：去除首尾空白后再试
+        if (candidates.length === 0) {
+            var trimmed = highlight.replace(/^\s+|\s+$/g, '');
+            if (trimmed.length > 0 && trimmed !== highlight) {
+                startPos = 0;
+                while (startPos <= hay.length - trimmed.length) {
+                    var fPos = hay.indexOf(trimmed, startPos);
+                    if (fPos < 0) break;
+                    candidates.push(fPos);
+                    startPos = fPos + 1;
+                }
+            }
+        }
+
+        if (candidates.length === 0) return -1;
+
+        // 如果只有 1 个候选，直接命中
+        if (candidates.length === 1) {
+            var onlyPos = candidates[0];
+            window.MiradReader.gotoOffset(onlyPos, !!animate);
+            return onlyPos;
+        }
+
+        // 多个候选时进行多维评分消歧
+        var bestPos = candidates[0];
+        var bestScore = -Infinity;
+
+        for (var i = 0; i < candidates.length; i++) {
+            var pos = candidates[i];
+            var score = 0;
+
+            // 1. 前缀上下文打分（比较前缀后缀公共长度）
+            if (before.length > 0) {
+                var maxBeforeCheck = Math.min(before.length, pos, 30);
+                var actualBefore = hay.substring(pos - maxBeforeCheck, pos);
+                var expectBefore = before.slice(-maxBeforeCheck);
+                var commonBefore = 0;
+                for (var b = 1; b <= maxBeforeCheck; b++) {
+                    if (actualBefore.slice(-b) === expectBefore.slice(-b)) {
+                        commonBefore = b;
+                    } else {
+                        break;
+                    }
+                }
+                score += commonBefore * 30;
+                if (commonBefore === expectBefore.length) score += 500;
+            }
+
+            // 2. 后缀上下文打分（比较后缀前缀公共长度）
+            if (after.length > 0) {
+                var posAfter = pos + highlight.length;
+                var maxAfterCheck = Math.min(after.length, hay.length - posAfter, 30);
+                var actualAfter = hay.substring(posAfter, posAfter + maxAfterCheck);
+                var expectAfter = after.slice(0, maxAfterCheck);
+                var commonAfter = 0;
+                for (var a = 1; a <= maxAfterCheck; a++) {
+                    if (actualAfter.slice(0, a) === expectAfter.slice(0, a)) {
+                        commonAfter = a;
+                    } else {
+                        break;
+                    }
+                }
+                score += commonAfter * 30;
+                if (commonAfter === expectAfter.length) score += 500;
+            }
+
+            // 3. 距离 targetOffset 越近得分越高（每接近 10 字符得 1 分）
+            var dist = Math.abs(pos - targetOffset);
+            score -= (dist / 10);
+
+            if (score > bestScore) {
+                bestScore = score;
+                bestPos = pos;
+            }
+        }
+
+        window.MiradReader.gotoOffset(bestPos, !!animate);
+        return bestPos;
+    }
+
+    function getAnchorSnapshot(offset) {
+        offset = Math.max(0, Math.min(offset | 0, state.textLength));
+        var pt = locate(offset);
+        var cfi = pt ? cfiFromNodeOffset(pt.node, pt.offset) : null;
+        var beforeStart = Math.max(0, offset - 16);
+        var afterEnd = Math.min(state.textLength, offset + 16);
+        return {
+            offset: offset,
+            cfi: cfi,
+            before: state.text.substring(beforeStart, offset),
+            highlight: state.text.substring(offset, Math.min(state.textLength, offset + 1)),
+            after: state.text.substring(offset + 1, afterEnd)
+        };
     }
 
     // ---------------------------------------------------------------- 对外 API
@@ -1863,6 +2231,59 @@
 
         isReady: function () {
             return state.ready;
+        },
+
+        getCfi: function (offset) {
+            var pt = locate(offset !== undefined ? offset : offsetAtPage(state.page));
+            return pt ? cfiFromNodeOffset(pt.node, pt.offset) : null;
+        },
+
+        resolveCfiOffset: function (cfi) {
+            var target = resolveCfi(cfi);
+            if (!target) return -1;
+            return offsetOfPoint(target.node, target.offset);
+        },
+
+        resolveTextQuoteOffset: function (quote) {
+            return healWithTextQuote(quote, false);
+        },
+
+        gotoCfi: function (cfi, animate, textQuote) {
+            var target = resolveCfi(cfi);
+            if (target) {
+                var off = offsetOfPoint(target.node, target.offset);
+                if (off >= 0) {
+                    window.MiradReader.gotoOffset(off, !!animate);
+                    return true;
+                }
+            }
+            // CFI 定位失败或 DOM 被修改拆分时：尝试利用 TextQuote 模糊自愈恢复
+            if (textQuote) {
+                var healed = healWithTextQuote(textQuote, !!animate);
+                if (healed >= 0) return true;
+            }
+            return false;
+        },
+
+        gotoLocator: function (locator, animate) {
+            if (!locator) return false;
+            if (locator.cfi) {
+                var ok = window.MiradReader.gotoCfi(locator.cfi, animate, locator.text);
+                if (ok) return true;
+            }
+            if (locator.text) {
+                var healed = healWithTextQuote(locator.text, !!animate);
+                if (healed >= 0) return true;
+            }
+            if (typeof locator.charOffset === 'number' && locator.charOffset >= 0) {
+                window.MiradReader.gotoOffset(locator.charOffset, !!animate);
+                return true;
+            }
+            return false;
+        },
+
+        getSnapshot: function (offset) {
+            return getAnchorSnapshot(offset !== undefined ? offset : offsetAtPage(state.page));
         }
     };
 

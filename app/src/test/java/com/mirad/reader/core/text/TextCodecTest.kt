@@ -83,4 +83,13 @@ class TextCodecTest {
         val decoded = TextCodec.decode(traditional.toByteArray(big5))
         assertEquals(traditional, decoded.text)
     }
+
+    @Test
+    fun fallbackDefaultCharsetIsUtf8() {
+        // 当文本无特征且无法通过评分明确判定为遗留编码时，默认编码必须回退为 UTF-8
+        val ambiguousBytes = byteArrayOf(0x80.toByte(), 0x81.toByte(), 0x82.toByte(), 0x83.toByte())
+        val decoded = TextCodec.decode(ambiguousBytes)
+        assertEquals("UTF-8", decoded.charsetName)
+        assertEquals("fallback", decoded.source)
+    }
 }

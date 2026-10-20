@@ -1,6 +1,6 @@
 # 墨读 · MiradReader
 
-当前发行版：**1.0.10**（versionCode 11）。[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [版本更新说明](docs/releases/1.0.10.md)
+当前发行版：**1.0.11**（versionCode 12）。[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [版本更新说明](docs/releases/1.0.11.md)
 
 一个**书库与阅读数据只存在本机**的安卓小说阅读器：导入 `txt` / `epub`，书架管理，阅读器内可调字体、背景、排版与翻页方式，并提供目录、进度记忆、书签、划线笔记、全文搜索、阅读统计与 TTS 朗读。
 

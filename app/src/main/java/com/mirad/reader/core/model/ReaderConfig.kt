@@ -94,10 +94,9 @@ data class ReaderConfig(
     val pageMode: String = PageMode.PAGED,
     /**
      * 滚动模式「连续接章」开关（见 docs/continuous-scroll-plan.md）。
-     * 默认**关闭**：P2 窗口引擎尚未完成（活动章号取值有误），先保持 1.0.8 行为；
-     * 实现稳定后再改成默认开。
+     * 启用 3 章动态滑动窗口引擎，实现平滑无感接章与回滚。
      */
-    val windowedScroll: Boolean = false,
+    val windowedScroll: Boolean = true,
     val pageAnim: String = PageAnim.SLIDE,
 
     // ---- 背景与主题 ----

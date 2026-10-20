@@ -34,7 +34,7 @@ class AppContainer(app: Application) {
         app,
         AppDatabase::class.java,
         "mirad-reader.db"
-    ).build()
+    ).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
 
     val settings: SettingsRepository = SettingsRepository(database.preferenceDao())
 
@@ -42,7 +42,8 @@ class AppContainer(app: Application) {
         bookDao = database.bookDao(),
         chapterDao = database.chapterDao(),
         progressDao = database.progressDao(),
-        paths = paths
+        paths = paths,
+        searchFtsDao = database.searchFtsDao()
     )
 
     val notes: NoteRepository = NoteRepository(
@@ -61,7 +62,7 @@ class AppContainer(app: Application) {
 
     val fonts: FontManager = FontManager(app, paths)
 
-    val search: SearchRepository = SearchRepository(textProvider)
+    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao())
 
     val importer: ImportPipeline = ImportPipeline(
         context = app,
@@ -69,6 +70,12 @@ class AppContainer(app: Application) {
         books = books,
         scope = appScope
     )
+
+    val networkDownloader: com.mirad.reader.data.imports.NetworkBookDownloader =
+        com.mirad.reader.data.imports.NetworkBookDownloader(
+            context = app,
+            importer = importer
+        )
 
     val context: Application get() = application
 }
