@@ -45,6 +45,10 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
 
     val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     stateHolder.SaveableStateProvider(current.toString()) {
+    com.mirad.reader.ui.common.PageSurface(
+        pageKey = current.toString(), bounded = current != Screen.Shelf && current !is Screen.Reader,
+        animate = current !is Screen.Reader
+    ) {
     when (current) {
         Screen.Shelf -> ShelfScreen(
             container = container,
@@ -78,6 +82,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         )
         Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
     }
+}
 }
 
 }

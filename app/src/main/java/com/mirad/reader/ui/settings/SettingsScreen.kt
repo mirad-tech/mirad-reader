@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -86,6 +86,8 @@ fun SettingsScreen(
     val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
     var renameTarget by remember { mutableStateOf<GroupEntity?>(null) }
     var renameDraft by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<GroupEntity?>(null) }
+    val feedback = com.mirad.reader.ui.common.rememberFeedbackState("settings")
 
     val hiddenCount = shelf.count { it.book.isHidden }
 
@@ -143,6 +145,7 @@ fun SettingsScreen(
     CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) },
         topBar = { ScreenHeader(title = category?.title ?: "设置", onBack = onBack,
             subtitle = if (category != null && category != SettingsCategory.SHELF && category != SettingsCategory.ABOUT) "全局默认" else null) }
     ) { padding ->
@@ -151,7 +154,7 @@ fun SettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = Spacing.xl)
+                .padding(horizontal = Spacing.lg)
         ) {
             Spacer(modifier = Modifier.height(Spacing.sm))
             if (category == null) {
@@ -205,7 +208,7 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = "$group.name（$count 本）",
+                                text = "${group.name}（$count 本）",
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f)
                             )
@@ -214,7 +217,7 @@ fun SettingsScreen(
                                 renameDraft = group.name
                             }) { Text("重命名") }
                             TextButton(onClick = {
-                                scope.launch { container.groups.delete(group) }
+                                deleteTarget = group
                             }) { Text("删除") }
                         }
                     }
@@ -239,7 +242,7 @@ fun SettingsScreen(
     renameTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { renameTarget = null },
-            title = { Text("重命名分组") },
+            title = { Text("重命名分组「${target.name}」") },
             text = {
                 OutlinedTextField(
                     value = renameDraft,
@@ -249,15 +252,34 @@ fun SettingsScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = renameDraft.isNotBlank(), onClick = {
                     val name = renameDraft.trim()
                     renameTarget = null
                     if (name.isNotEmpty() && name != target.name) {
-                        scope.launch { container.groups.rename(target, name) }
+                        scope.launch {
+                            container.groups.rename(target, name)
+                            feedback.show("已重命名为「$name」")
+                        }
                     }
                 }) { Text("保存") }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } }
         )
     }
+    deleteTarget?.let { group ->
+        com.mirad.reader.ui.common.MiradDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除分组「${group.name}」") },
+            text = { Text("组内书籍会回到「未分组」，书籍本身不会被删除。") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    container.groups.delete(group)
+                    deleteTarget = null
+                    feedback.show("已删除分组「${group.name}」")
+                }
+            }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+        )
+    }
+
 }

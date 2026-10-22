@@ -59,14 +59,14 @@ val MiradTypography = Typography(
         letterSpacing = 0.2.sp
     ),
     labelMedium = TextStyle(
-        fontSize = 11.sp,
-        lineHeight = 16.sp,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.Medium,
         letterSpacing = 0.3.sp
     ),
     labelSmall = TextStyle(
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        fontSize = 12.sp,
+        lineHeight = 18.sp,
         fontWeight = FontWeight.Normal,
         letterSpacing = 0.3.sp
     )

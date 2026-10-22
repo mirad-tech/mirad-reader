@@ -18,10 +18,7 @@ import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.repo.BookRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -44,61 +41,35 @@ class ImportPipeline(
     private val scope: CoroutineScope
 ) {
 
-    private val _state = MutableStateFlow(ImportState())
-    val state: StateFlow<ImportState> = _state.asStateFlow()
-
+    private val batches = ImportBatchQueue()
+    val state: StateFlow<ImportState> = batches.state
+    val lastSummary: StateFlow<ImportSummary?> = batches.summary
     private val mutex = Mutex()
 
-    /** 最近一次导入结果汇总（UI 提示后可清除）。 */
-    private val _lastSummary = MutableStateFlow<ImportSummary?>(null)
-    val lastSummary: StateFlow<ImportSummary?> = _lastSummary.asStateFlow()
-
-    fun clearSummary() {
-        _lastSummary.value = null
+    fun clearSummary(batchId: String? = lastSummary.value?.batchId) {
+        batches.acknowledge(batchId)
     }
 
-    fun import(sources: List<ImportSource>, force: Boolean = false) {
-        if (sources.isEmpty()) return
-        val items = sources.map {
-            ImportItem(id = UUID.randomUUID().toString(), displayName = it.displayName)
-        }
-        _state.update { it.copy(items = it.items + items, running = true) }
-        scope.launch {
-            mutex.withLock {
-                for (index in sources.indices) {
-                    importOne(sources[index], items[index].id, force)
-                }
-            }
-            finishBatch()
-        }
+    fun import(sources: List<ImportSource>, force: Boolean = false): String? {
+        if (sources.isEmpty()) return null
+        val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
+        val batch = batches.enqueue(items)
+        scope.launch { runBatch(batch, sources, items, force) }
+        return batch.id
     }
 
-    /** 供测试或调试入口直接等待完成。 */
     suspend fun importAndWait(sources: List<ImportSource>, force: Boolean = false): ImportSummary {
-        val items = sources.map { ImportItem(id = UUID.randomUUID().toString(), displayName = it.displayName) }
-        _state.update { it.copy(items = it.items + items, running = true) }
-        mutex.withLock {
-            for (index in sources.indices) {
-                importOne(sources[index], items[index].id, force)
-            }
-        }
-        return finishBatch()
+        if (sources.isEmpty()) return ImportSummary(0, 0, 0, emptyList())
+        val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
+        val batch = batches.enqueue(items)
+        return runBatch(batch, sources, items, force)
     }
 
-    private fun finishBatch(): ImportSummary {
-        _state.update { it.copy(running = false) }
-        val snapshot = _state.value
-        val messages = snapshot.items
-            .filter { it.stage == ImportStage.FAILED || it.stage == ImportStage.SKIPPED }
-            .map { "${it.displayName}：${it.message ?: ""}" }
-        val summary = ImportSummary(
-            success = snapshot.successCount,
-            failed = snapshot.failedCount,
-            skipped = snapshot.skippedCount,
-            messages = messages
-        )
-        _lastSummary.value = summary
-        return summary
+    private suspend fun runBatch(
+        batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean
+    ): ImportSummary = mutex.withLock {
+        for (index in sources.indices) importOne(sources[index], items[index].id, force)
+        batches.complete(batch)
     }
 
     // ------------------------------------------------------------------ 单个文件
@@ -345,9 +316,7 @@ class ImportPipeline(
     // ------------------------------------------------------------------ 工具
 
     private fun updateItem(id: String, transform: (ImportItem) -> ImportItem) {
-        _state.update { state ->
-            state.copy(items = state.items.map { if (it.id == id) transform(it) else it })
-        }
+        batches.update(id, transform)
     }
 
     private fun sourceUriOf(source: ImportSource): String = when (source) {

@@ -57,7 +57,9 @@ fun NotesScreen(
     var chapterTotals by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var chapterLengths by remember { mutableStateOf<Map<Long, List<Int>>>(emptyMap()) }
     var pendingExport by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
+    var pendingDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+    val feedback = com.mirad.reader.ui.common.rememberFeedbackState("notes")
+    var message by feedback
 
     suspend fun reload() = withContext(Dispatchers.IO) {
         highlights = container.notes.allHighlights().sortedByDescending { it.createdAt }
@@ -108,10 +110,11 @@ fun NotesScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) },
         topBar = {
             ScreenHeader(
                 title = "笔记与书签",
-                subtitle = message ?: "划线 ${highlights.size} · 书签 ${bookmarks.size}",
+                subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}",
                 onBack = onBack,
                 actions = {
                     TextButton(
@@ -166,9 +169,12 @@ fun NotesScreen(
                                 } else "",
                             trailing = {
                                 TextButton(onClick = {
-                                    scope.launch {
-                                        withContext(Dispatchers.IO) { container.notes.deleteHighlight(item) }
-                                        reload()
+                                    pendingDelete = "划线" to {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { container.notes.deleteHighlight(item) }
+                                            reload()
+                                            feedback.show("已删除划线")
+                                        }
                                     }
                                 }) { Text("删除") }
                             },
@@ -190,9 +196,12 @@ fun NotesScreen(
                                 } else "",
                             trailing = {
                                 TextButton(onClick = {
-                                    scope.launch {
-                                        withContext(Dispatchers.IO) { container.notes.deleteBookmark(item) }
-                                        reload()
+                                    pendingDelete = "书签" to {
+                                        scope.launch {
+                                            withContext(Dispatchers.IO) { container.notes.deleteBookmark(item) }
+                                            reload()
+                                            feedback.show("已删除书签")
+                                        }
                                     }
                                 }) { Text("删除") }
                             },
@@ -203,6 +212,22 @@ fun NotesScreen(
                 }
             }
         }
+    }
+
+    pendingDelete?.let { pending ->
+        com.mirad.reader.ui.common.MiradDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("删除${pending.first}") },
+            text = { Text("删除后无法恢复，确定要删除吗？") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val action = pending.second
+                    pendingDelete = null
+                    action()
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } }
+        )
     }
 }
 

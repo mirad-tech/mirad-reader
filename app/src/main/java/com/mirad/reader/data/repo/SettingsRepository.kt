@@ -17,12 +17,12 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * 阅读配置仓库：全局默认配置 + 每本书覆盖配置（覆盖值以 JSON 存放）。
+ * 阅读配置仓库：全书通用阅读配置。
+ * 用户在任何一本书籍或全局设置中所做的修改，均作为统一的通用阅读习惯同步生效，
+ * 避免用户在打开新书或切换书籍时需要重新配置。
  */
 class SettingsRepository(private val dao: PreferenceDao) {
     private val bookWrites = Mutex()
-    private val pendingBooks = ConcurrentHashMap<Long, ReaderConfig>()
-    private val saveJobs = ConcurrentHashMap<Long, Job>()
     private val globalWrites = Mutex()
     private val pendingGlobal = MutableStateFlow<ReaderConfig?>(null)
     private var globalSaveJob: Job? = null
@@ -44,25 +44,13 @@ class SettingsRepository(private val dao: PreferenceDao) {
         pendingGlobal.compareAndSet(value, null)
     }
 
-    /** UI previews are immediate; pending values survive leaving and reopening the reader. */
+    /** 阅读设置全书通用：书籍内调整设置直接同步为全局通用设置。 */
     fun queueBookConfig(bookId: Long, config: ReaderConfig, scope: CoroutineScope) {
-        pendingBooks[bookId] = config
-        saveJobs.remove(bookId)?.cancel()
-        saveJobs[bookId] = scope.launch {
-            delay(400)
-            persistPending(bookId)
-        }
+        queueGlobalConfig(config, scope)
     }
 
     fun flushBookConfig(bookId: Long, scope: CoroutineScope) {
-        saveJobs.remove(bookId)?.cancel()
-        scope.launch { persistPending(bookId) }
-    }
-
-    private suspend fun persistPending(bookId: Long) = bookWrites.withLock {
-        val value = pendingBooks[bookId] ?: return@withLock
-        dao.put(PreferenceEntity(bookKey(bookId), ReaderConfigJson.encode(value), System.currentTimeMillis()))
-        pendingBooks.remove(bookId, value)
+        flushGlobalConfig(scope)
     }
 
     val global: Flow<ReaderConfig> = combine(dao.observe(KEY_GLOBAL), pendingGlobal) { saved, pending ->
@@ -72,6 +60,7 @@ class SettingsRepository(private val dao: PreferenceDao) {
     suspend fun currentGlobal(): ReaderConfig = pendingGlobal.value ?: ReaderConfigJson.decode(dao.get(KEY_GLOBAL))
 
     suspend fun saveGlobal(config: ReaderConfig) = globalWrites.withLock {
+        pendingGlobal.value = null
         dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(config), System.currentTimeMillis()))
     }
 
@@ -79,34 +68,21 @@ class SettingsRepository(private val dao: PreferenceDao) {
         saveGlobal(transform(currentGlobal()))
     }
 
-    /** 本书是否已有独立配置。 */
-    suspend fun hasBookConfig(bookId: Long): Boolean = pendingBooks.containsKey(bookId) || dao.get(bookKey(bookId)) != null
+    /** 阅读设置已全书通用，不再维护独立单书覆盖。 */
+    suspend fun hasBookConfig(bookId: Long): Boolean = false
 
-    fun observeEffective(bookId: Long): Flow<ReaderConfig> = combine(
-        dao.observe(bookKey(bookId)),
-        dao.observe(KEY_GLOBAL)
-    ) { override, global ->
-        if (override == null) ReaderConfigJson.decode(global) else ReaderConfigJson.decode(override)
-    }
+    fun observeEffective(bookId: Long): Flow<ReaderConfig> = global
 
-    /** 实际生效配置：有本书覆盖则用覆盖值，否则用全局值。 */
-    suspend fun effective(bookId: Long): ReaderConfig {
-        pendingBooks[bookId]?.let { return it }
-        val override = dao.get(bookKey(bookId))
-        return if (override == null) currentGlobal() else ReaderConfigJson.decode(override)
-    }
+    /** 实际生效配置：统一采用全局通用阅读配置。 */
+    suspend fun effective(bookId: Long): ReaderConfig = currentGlobal()
 
-    suspend fun saveBookConfig(bookId: Long, config: ReaderConfig) = bookWrites.withLock {
-        dao.put(PreferenceEntity(bookKey(bookId), ReaderConfigJson.encode(config), System.currentTimeMillis()))
-    }
+    suspend fun saveBookConfig(bookId: Long, config: ReaderConfig) = saveGlobal(config)
 
     suspend fun updateBookConfig(bookId: Long, transform: (ReaderConfig) -> ReaderConfig) {
-        saveBookConfig(bookId, transform(effective(bookId)))
+        saveGlobal(transform(currentGlobal()))
     }
 
     suspend fun clearBookConfig(bookId: Long) {
-        saveJobs.remove(bookId)?.cancel()
-        pendingBooks.remove(bookId)
         bookWrites.withLock { dao.remove(bookKey(bookId)) }
     }
 

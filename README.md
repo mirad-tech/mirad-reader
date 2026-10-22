@@ -1,171 +1,71 @@
 # 墨读 · MiradReader
 
-当前发行版：**1.0.11**（versionCode 12）。[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [版本更新说明](docs/releases/1.0.11.md)
+Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-一个**书库与阅读数据只存在本机**的安卓小说阅读器：导入 `txt` / `epub`，书架管理，阅读器内可调字体、背景、排版与翻页方式，并提供目录、进度记忆、书签、划线笔记、全文搜索、阅读统计与 TTS 朗读。
+**当前版本：1.0.12（versionCode 13）**
 
-关于联网：应用不注册、不登录、不上传任何数据，书库原文件、正文、进度与笔记都只写入本机（且已关闭系统备份与换机迁移）。但它**声明了 `INTERNET` 权限**——因为朗读用的是系统 TTS 引擎，部分引擎（如某些在线语音）会联网合成语音；WebView 渲染层也需要网络权限。若要彻底断网使用，可在系统设置里禁用本应用的联网权限，本地阅读与系统离线语音不受影响。
+[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.0.12.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
-- 包名 / applicationId：`com.mirad.reader`
-- minSdk 26（Android 8.0） · targetSdk 36 · compileSdk 36.1
-- Kotlin 2.2.10 · Jetpack Compose(Material3) · Room · AGP 9.2.0 · Gradle 9.4.1
+## 安装
+
+从 Releases 下载 `mirad-reader-1.0.12-release.apk`。支持 Android 8.0 及以上。正式版本沿用同一发行证书，可覆盖同签名的旧正式版；无需先卸载旧版。
+
+如需核验文件完整性，请对照同一 Release 附带的 `SHA256SUMS.txt`。Debug 包与正式包可能使用不同签名，不能据此假定它们可以互相覆盖安装。
 
 ## 功能
 
-### 导入
-- 支持 `txt` 与 `epub`，可一次多选；也可整目录导入（SAF 目录选择器）。
-- 可接收其它 App 分享/打开的 `text/plain`、`application/epub+zip` 文件。
-- TXT 编码自动识别：BOM → juniversalchardet → 严格 UTF-8 校验 → GB18030 / Big5 / Shift_JIS 回退；中文 GBK 小说不会乱码。
-- TXT 分章：内置中文章节规则（第X章/节/回/卷、带括号、数字编号、Chapter N、序章楔子等）自动择优；无标记时按字数兜底分节。
-- EPUB：解析 `container.xml → OPF(metadata/manifest/spine) → 目录(EPUB3 nav 或 EPUB2 NCX)`，读取封面，**不重写原书 XHTML/CSS**。
-- 去重（同名同大小并核对内容指纹后跳过）、导入进度、单文件失败不影响其它文件。
-- 封面：EPUB 使用内嵌封面；TXT 自动生成标题占位封面。
+- **导入与书架**：TXT / EPUB 文件、多文件及目录导入，接收其他应用分享，输入 HTTP/HTTPS 文件直链或网页长文；支持封面、搜索、排序、分组、置顶、隐藏和批量操作。
+- **阅读**：左右分页、上下滚动、目录跳转、进度记忆、音量键翻页、自动阅读，以及字体、字号、行距、背景和主题设置。
+- **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
+- **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
+- **统一界面**：暖纸色与墨绿主题，统一提示、弹窗和设置布局；阅读弹层随当前阅读主题切换明暗，普通操作采用短时过渡。
 
-### 阅读器
-- **阅读方式**：左右分页 / 上下滚动；翻页动画：无动画 / 滑动 / 覆盖。
-- **排版**：字号、行距、段间距、首行缩进、页边距、对齐（两端/左/居中）、正文加粗。
-- **字体**：内置 **霞鹜文楷（楷体）** 与 **思源宋体（宋体）**，两者都按 GB2312 常用字（6763 字）子集化，
-  分别只有 1.6MB / 1.9MB（原始字体 24MB / 66MB）；新书默认使用霞鹜文楷，保证开箱即用的一致观感。
-  另外还有 8 个系统字体预设（系统默认 / 宋体 / 黑体 / 楷体 / 仿宋 / 圆体 / 细黑 / 等宽，都带中文回退栈），
-  以及**导入自己的字体文件**（`.ttf/.otf/.ttc`，复制进私有目录、可单独删除）。
-- **背景与主题**：白、纸色、米黄、护眼、夜间、纯黑、跟随系统、自定义背景色；
-  7 款**内置阅读背景**（纸纹 / 羊皮纸 / 亚麻布 / 淡格纸 / 柔光 / 护眼绿 / 夜间暗纹，共约 113KB），
-  选中内置背景会自动切换到匹配主题（选夜间暗纹→夜间主题），避免深底深字；也可选本机图片做背景，
-  背景图片支持不透明度（用主题底色做半透明覆盖）。
-- **EPUB 排版模式**：统一排版（强制字号行距，保留图片/加粗/层级）或保留原书样式；可开关插图显示。
-- **屏幕**：亮度调节（或跟随系统）、屏幕常亮、全屏沉浸、屏幕方向。
-- **页眉页脚**：章节名、时间、电量、页码、进度百分比，均可单独开关。
-- **交互**：点击区域（左中右三分 / 左右两分 / 仅呼出菜单）、音量键翻页、长按选词。
-- **自动阅读**：分页模式按「秒/页」定时翻页，滚动模式按「秒/屏」匀速下滑（5–120 秒可调，默认 20/30）；
-  触摸正文、打开菜单、切后台、旋转屏幕或改变排版会暂停，需要手动继续；章末按间隔接下一章，读完自动停止。
-  速度按本书保存，运行状态不保存。
-- 目录（卷/章层级，当前章高亮）、进度条拖动跳转、进度自动记忆（精确到章内字符偏移，换字号/换模式后仍能回到原处）。
-- 书签、划线、笔记（长按选中文字后使用原生工具条上的「划线 / 笔记 / 搜索」）。
-- 全文搜索：全书逐章扫描，结果含章节名与片段高亮，点击跳转并就近精确定位。
-- 阅读统计：今日/本周/本月/累计时长、连续阅读天数、今日字数、最近 30 天柱状图。
-- TTS 朗读：系统语音，句级高亮、自动下一章、语速音调可调，前台服务 + 通知栏控制（上一句/暂停/下一句/停止）。
-- 每本书独立阅读配置（含字体与背景），可一键恢复全局默认。
+### 阅读设置的作用范围
 
-### 书架
-- 网格/列表切换，封面、作者、文件大小、阅读进度。
-- 排序：最近阅读 / 添加时间 / 书名 / 作者 / 文件大小。
-- 分组（新建/重命名/删除，移入移出）、置顶、隐藏、多选批量操作、编辑书名作者、删除（连同文件与阅读数据）。
+从 1.0.12 起，阅读设置全书通用：在阅读器中调整的字体、主题等设置会用于其他书籍，已有单书覆盖不再优先生效。阅读进度、书签和笔记仍分别属于各本书。
 
-## 构建与安装
+### 数据与联网
 
-前置条件：JDK 17+ 与 Android SDK（`platforms;android-36` + `build-tools;36.0.0`）。
-在 `local.properties` 中配置 SDK 路径：
+无需注册或登录。书籍、阅读进度、书签、笔记和统计保存在设备的应用私有目录与本地数据库，卸载应用会清除这些数据。应用关闭了系统备份及设备迁移。
 
-```properties
-sdk.dir=C\:\\Android\\Sdk
-```
+输入网址导入时会访问对应网站；系统 TTS 引擎也可能使用在线语音服务。本地阅读不要求在线书城或云账号。应用目前不提供云同步、WebDAV、PDF、MOBI 或 AZW3 支持。
+
+## 开发
+
+- Android：minSdk 26、targetSdk 36、compileSdk 36.1。
+- Kotlin 2.2.10、Compose Material3、Room；版本以 `gradle/libs.versions.toml` 为准。
+- Gradle Wrapper 9.4.1；项目的 Daemon JVM 配置指定 Java 21。
+
+配置 Android SDK 后，在 Windows PowerShell 中运行：
 
 ```powershell
-.\gradlew.bat :app:testDebugUnitTest          # 单元测试
-.\gradlew.bat :app:assembleDebug              # 生成 Debug APK
-adb install -r -g app\build\outputs\apk\debug\app-debug.apk
+.\gradlew.bat :app:testDebugUnitTest --console=plain
+.\gradlew.bat :app:lintDebug --console=plain
+.\gradlew.bat :app:assembleDebug --console=plain
 ```
 
-## 架构
+macOS / Linux 使用 `./gradlew`。Release 构建与签名、浏览器验证和覆盖范围详见[开发文档](docs/DEVELOPMENT.md)。
 
-```
+## 仓库结构
+
+```text
 app/src/main/java/com/mirad/reader/
-├─ core/            纯 Kotlin，无 Android 依赖，可被 JVM 单元测试直接覆盖
-│  ├─ text/         编码检测、正文归一化、章节规则与分章器（字符/字节偏移一次遍历得出）
-│  ├─ epub/         zip 条目读取、EPUB/OPF/NCX/nav 解析、路径规范化
-│  ├─ html/         HTML 转义/反转义、纯文本抽取、章节 HTML 生成与 body 包裹
-│  ├─ model/        ReaderConfig、主题配色、定位与进度换算、目录树、统计聚合
-│  └─ reader/       配置 → CSS 映射
-├─ data/            Room 实体与 DAO、仓库、导入管线、封面生成
-├─ reader/          WebView 阅读引擎：资源拦截、JS 桥、阅读会话（进度/标注/统计）
-├─ tts/             句子切分、TTS 前台服务与状态总线
-└─ ui/              Compose 界面：书架、阅读器、设置、笔记、搜索结果、统计
+  core/       编码、分章、EPUB、定位模型与阅读样式
+  data/       Room、导入管线与数据仓库
+  reader/     WebView 桥接、资源加载和阅读会话
+  tts/        朗读控制与服务
+  ui/         Compose 页面、公共组件与主题
+app/src/main/assets/reader/   WebView 阅读引擎
+app/src/test/                JVM 单元测试
+app/schemas/                 Room schema 历史
+tools/                       素材工具与浏览器回归检查
+docs/                        开发说明、发布记录和历史设计文档
 ```
 
-正文渲染统一走 WebView，章节与图片都由 `shouldInterceptRequest` 从内存返回，**App 不发起任何网络请求**：
+`tools/` 包含背景、字体、样书生成工具，以及可独立安装依赖的 `browser-checks/`。测试输出统一放入被忽略的 `build/verification/`；本机临时验证数据放在被忽略的 `verification/`。
 
-```
-https://mirad.local/reader/…               内置 reader.css / reader.js
-https://mirad.local/book/<id>/chapter/<i>  TXT 生成的 HTML 或注入后的 EPUB XHTML
-https://mirad.local/book/<id>/asset/<p>    EPUB zip 内图片 / CSS / 字体（用 <base> 解析相对路径）
-```
+## 验证边界
 
-- 分页用 CSS 多列：`pageCount = ceil(scrollWidth / (视口宽 + 列间距))`，翻页即动画化 `scrollLeft`。
-- 文本模型（reader.js）把 DOM 抽成稳定的字符流，进度、划线、朗读、搜索共用同一套偏移。
-- 阅读中修改字号/主题/背景时，只替换 `<style id="mirad-theme">` 的内容并重排，**不重新加载章节**。
+JVM 单测和 Chromium 检查不能替代 Android 真机验收。TTS 音频质量、系统选词工具条、WebView 版本差异及特定机型的翻页表现仍需设备验证。内置字体为子集，未包含的生僻字由系统字体回退。
 
-## 界面设计
-
-「纸墨」风格：暖白纸面 + 墨绿主色 + 铜色点缀。
-
-- **设计系统集中在 `ui/design/` 与 `ui/common/`**：
-  - `Tokens.kt`：间距令牌（4/8/12/16/20/24）、尺寸令牌、以及 Material 配色之外的语义色
-    （搜索命中 / 朗读高亮 / 笔记高亮 / 封面遮罩 / 空柱子）通过 `LocalMiradColors` 下发。
-  - `SheetScaffold`：**全项目唯一**调用 `ModalBottomSheet` 的地方，统一拖拽把手、标题/副标题、
-    右上角操作与内容最大高度。
-  - `ScreenHeader`：**全项目唯一**的页面顶栏（大标题给一级页、返回箭头给子页）。
-  - `ListRow`：统一列表行（笔记、书签、搜索结果、目录、隐藏书籍共用）。
-  - `ActionSheet` / `EmptyState` / `SettingCard` / `SettingNavRow` / `SettingSwitchRow` / `StatTile` / `InlineBanner`。
-- **一致性可断言**（已核对）：
-  - `ui/` 目录下除 `ui/theme/`、`ui/design/` 外 **0 处**硬编码颜色字面量；
-  - `ModalBottomSheet(` 调用点 **1 处**（仅 `SheetScaffold`）；
-  - `SectionTitle(` 残留 **0**。
-- **完整覆盖 Material3 配色角色**（含 `surfaceContainer*`）。这点很关键：只覆盖 primary 的话，
-  `surfaceVariant` 等角色会落回 Material 默认的紫色系，出现"绿主题配紫控件"的割裂感。
-- 字号体系针对中文调整：正文更大、行高更松，标题用中等字重而非加粗；圆角统一（卡片 16dp、胶囊 full、弹层 28dp）。
-- **页面清单**：书架、阅读器、阅读设置弹层、目录、进度、笔记与书签（含导出）、全书搜索、朗读、
-  统计、全局设置、全局笔记页、隐藏的书籍。子页面走自建返回栈，返回键逐级回退。
-
-## 可用性
-
-- 书架上长按书籍弹出操作面板（继续阅读 / 取消隐藏 / 编辑 / 置顶 / 分组 / 隐藏 / 删除）。
-- **隐藏的书籍可以找回**：书架分组行会出现「已隐藏 N」，也可从设置 →「书架管理 → 隐藏的书籍」进入。
-- **分组可以重命名和删除**：长按书架上的分组胶囊，或在设置 →「书架管理」里操作。
-- **笔记可以导出**：阅读器内「笔记与书签 → 导出」导出单本，书架右上角「⋯ → 笔记与书签 → 全部导出」导出全部，
-  格式为 Markdown（按书、按章分组）。
-- 书架排序与视图切换收在一行；统计页给出今日主卡 + 各时间段瓦片 + 近 30 天柱状图。
-- 阅读器顶栏只留「返回 / 章节信息 / 书签 / 更多」，其余操作收进底部操作条；
-  亮度滑杆放在阅读设置的第一张卡片，不用翻到底。
-
-## 内置素材
-
-| 素材 | 位置 | 生成方式 |
-|---|---|---|
-| 阅读背景 ×7 | `app/src/main/assets/backgrounds/*.jpg` | `python tools/make_backgrounds.py`（共约 113KB） |
-| 内置字体 ×2 | `app/src/main/assets/fonts/*.woff2` | `python tools/make_fonts.py`（下载 OFL 字体 → 子集化，共 3.5MB） |
-| 回归样书 | `verification/samples/`（未纳入版本库） | `python tools/make_samples.py` |
-
-背景图刻意做得几乎看不出纹理：目的是降低大面积纯色的眩光，而不是做装饰。
-字体子集只保留 GB2312 常用字 + ASCII + 中文标点，覆盖绝大多数小说；遇到生僻字会回退到系统字体，不会变方块。
-
-## 测试与验证
-
-- 单元测试：`.\gradlew.bat :app:testDebugUnitTest`，以当前执行报告为准。
-  - 编码检测（UTF-8/BOM/UTF-16/GBK/ASCII/手工指定）
-  - 章节规则与分章器（中文章节、带括号、分卷、字数兜底、字符↔字节偏移一致性、空文本）
-  - EPUB 解析（EPUB2+NCX、EPUB3 nav、缺失 container、路径规范化、无目录时用标题兜底）
-  - HTML 工具、章节 HTML 生成与 body 包裹
-  - 阅读配置 JSON 往返与未知字段容错、主题配色与自动夜间、进度换算
-  - 搜索匹配与片段高亮下标、阅读统计聚合与连续天数
-  - 朗读句子切分与偏移对应
-  - 笔记导出 Markdown（分节、章节/偏移排序、换行压平、空输入返回空串）
-  - 书架筛选与排序（5 种排序、置顶优先、分组/未分组、隐藏书默认不出现）
-  - 字体：8 个预设的字体栈与回退族、细黑字重、自定义字体 @font-face、每个内置背景都能从 `builtin:` URI 还原、
-    深色背景建议深色主题、**内置背景素材文件确实存在且未损坏**
-- 模拟器回归（Pixel 10 Pro Fold / android-37.0）已完成并通过的界面：导入（含去重提示）、书架进度、GBK 中文 TXT 阅读、
-  目录与跨章跳转、EPUB 原书排版与插图、阅读设置面板、夜间主题实时切换、**内置背景选择并实时生效（羊皮纸 + 自动切主题）**、
-  字体选择面板与「导入字体文件」入口、杀进程后进度精确恢复（第四章 59%）、滚动/分页切换、全文搜索、阅读统计。
-- 截图见 `verification/shots/`（39 张回归截图 + `backgrounds-preview.png` 背景素材预览）。
-
-### 尚未验证或未实现
-
-- **TTS 音频**：模拟器语音引擎可能无中文语音数据，只验证了服务启动与状态流转；音质与真机表现需在手机上确认。
-- **划线/笔记的原生选词流程**：代码与数据链路已完成，但长按选词 + 工具条操作依赖触摸手势，未在模拟器上逐项点验。
-- **子集字体的生僻字**：内置字体只含 GB2312 常用字，超出范围的字会回退系统字体（同一段落里字体可能不完全一致）。
-  要覆盖生僻字，可把完整字体放进 `app/src/main/assets/fonts/` 或直接导入。
-- 覆盖翻页动画在部分机型（WebView 无法把内容画进位图）会自动退化为普通翻页。
-- 明确不做：在线书源/书城、WebDAV/局域网传书、云同步、PDF/MOBI/AZW3、竖排/RTL、多语言 UI、桌面小部件。
-
-## 数据与隐私
-
-书籍、封面、进度、书签、笔记、统计全部保存在应用私有目录（`filesDir`）与本地 SQLite，卸载即清除；除系统 TTS 引擎外不访问网络。
+历史方案和交付报告保留在 `docs/` 供追溯，其中的旧版本测试数量、性能描述及截图路径不作为当前版本的验证结论。

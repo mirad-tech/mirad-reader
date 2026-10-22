@@ -26,3 +26,18 @@
 # Operating system files
 .DS_Store
 Thumbs.db
+
+# Developer-only handoff and signing files (never part of a release source tree)
+/agent.md
+*.jks
+*.p12
+*.pfx
+*.key
+*.pem
+/.env
+/.env.*
+!/.env.example
+
+# Node-based developer checks
+**/node_modules/
+npm-debug.log*

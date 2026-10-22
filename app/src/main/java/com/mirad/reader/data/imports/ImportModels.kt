@@ -50,5 +50,6 @@ data class ImportSummary(
     val success: Int,
     val failed: Int,
     val skipped: Int,
-    val messages: List<String>
+    val messages: List<String>,
+    val batchId: String = ""
 )

@@ -87,7 +87,7 @@ private fun StatsContent(stats: ReadingStats) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = Spacing.xl)
+            .padding(horizontal = Spacing.lg)
     ) {
         Spacer(modifier = Modifier.height(Spacing.sm))
 
@@ -95,7 +95,7 @@ private fun StatsContent(stats: ReadingStats) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.shapes.medium)
                 .padding(Spacing.xl)
         ) {
             Text(

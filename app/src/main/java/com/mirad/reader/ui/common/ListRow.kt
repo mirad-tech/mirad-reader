@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +48,7 @@ fun ListRow(
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null
 ) {
+    val selectionColor by animateColorAsState(if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = .5f) else Color.Transparent, tween(120), label = "selection")
     val clickModifier = when {
         onClick != null -> modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
         else -> modifier
@@ -52,10 +56,7 @@ fun ListRow(
     Row(
         modifier = clickModifier
             .fillMaxWidth()
-            .background(
-                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                else Color.Transparent
-            )
+            .background(selectionColor)
             .defaultMinSize(minHeight = Sizes.rowMinHeight)
             .padding(horizontal = Spacing.md, vertical = Spacing.sm),
         verticalAlignment = Alignment.CenterVertically

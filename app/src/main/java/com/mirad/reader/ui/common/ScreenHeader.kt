@@ -59,10 +59,9 @@ fun ScreenHeader(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
-                        style = if (large) MaterialTheme.typography.headlineSmall
-                        else MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onBackground,
-                        maxLines = 1,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (subtitle != null) {
@@ -70,7 +69,7 @@ fun ScreenHeader(
                             text = subtitle,
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

@@ -12,6 +12,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -34,11 +37,14 @@ import kotlinx.coroutines.launch
 @Composable
 fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val feedback = com.mirad.reader.ui.common.rememberFeedbackState("hidden")
+    var deleteTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.BookEntity?>(null) }
     val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
     val hidden = shelf.filter { it.book.isHidden }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) },
         topBar = {
             ScreenHeader(
                 title = "隐藏的书籍",
@@ -76,10 +82,14 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
                         trailing = {
                             Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
                                 TextButton(onClick = {
-                                    scope.launch { container.books.setHidden(item.book.id, false) }
+                                    scope.launch {
+                                        runCatching { container.books.setHidden(item.book.id, false) }
+                                            .onSuccess { feedback.show("已恢复到书架") }
+                                            .onFailure { feedback.show("恢复失败，请重试", com.mirad.reader.ui.common.FeedbackKind.ERROR) }
+                                    }
                                 }) { Text("恢复") }
                                 TextButton(onClick = {
-                                    scope.launch { container.books.deleteBook(item.book) }
+                                    deleteTarget = item.book
                                 }) { Text("删除") }
                             }
                         }
@@ -89,4 +99,20 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
             }
         }
     }
+    deleteTarget?.let { book ->
+        com.mirad.reader.ui.common.MiradDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除《${book.title}》") },
+            text = { Text("书籍及其阅读记录、书签与笔记将被删除，无法恢复。") },
+            confirmButton = { TextButton(onClick = {
+                scope.launch {
+                    runCatching { container.books.deleteBook(book) }
+                        .onSuccess { deleteTarget = null; feedback.show("已删除书籍") }
+                        .onFailure { feedback.show("删除失败，请重试", com.mirad.reader.ui.common.FeedbackKind.ERROR); deleteTarget = null }
+                }
+            }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+        )
+    }
+
 }

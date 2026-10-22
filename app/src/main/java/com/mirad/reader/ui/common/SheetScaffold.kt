@@ -57,6 +57,9 @@ fun SheetScaffold(
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetMaxWidth = 720.dp,
+        shape = MaterialTheme.shapes.extraLarge,
+        containerColor = MaterialTheme.colorScheme.surface,
         contentWindowInsets = { WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout) }
     ) {
         Column(
@@ -73,8 +76,8 @@ fun SheetScaffold(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
+                        style = MaterialTheme.typography.titleLarge,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
                     if (subtitle != null) {
@@ -82,7 +85,7 @@ fun SheetScaffold(
                             text = subtitle,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }

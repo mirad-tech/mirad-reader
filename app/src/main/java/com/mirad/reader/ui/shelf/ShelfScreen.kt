@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -38,7 +39,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AlertDialog
+import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -144,7 +145,9 @@ fun ShelfScreen(
     var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     var groupRenameDraft by remember { mutableStateOf("") }
-    var toast by remember { mutableStateOf<String?>(null) }
+    var groupDeleteTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
+    val feedback = com.mirad.reader.ui.common.rememberFeedbackState("shelf")
+    var toast by feedback
     var showUrlImportDialog by remember { mutableStateOf(false) }
 
     val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -182,6 +185,7 @@ fun ShelfScreen(
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback, Modifier.imePadding()) },
         topBar = {
             ShelfHeader(
                 total = shelf.count { !it.book.isHidden },
@@ -215,7 +219,7 @@ fun ShelfScreen(
                         onClick = { importMenu = true },
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
-                        shape = RoundedCornerShape(18.dp),
+                        shape = MaterialTheme.shapes.medium,
                         elevation = FloatingActionButtonDefaults.elevation(
                             defaultElevation = 2.dp,
                             pressedElevation = 4.dp
@@ -244,7 +248,7 @@ fun ShelfScreen(
                                     scope.launch {
                                         val result = withContext(Dispatchers.IO) { scanSamples(container) }
                                         if (result.sources.isNotEmpty()) container.importer.import(result.sources)
-                                        else toast = "未找到样书：${result.directory}"
+                                        else toast = "未找到调试样书"
                                     }
                                 }
                             )
@@ -281,7 +285,7 @@ fun ShelfScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(MaterialTheme.shapes.medium)
                         .background(MaterialTheme.colorScheme.primaryContainer)
                         .clickable { onOpenBook(item.book.id) }
                         .padding(horizontal = 14.dp, vertical = 10.dp),
@@ -469,7 +473,7 @@ fun ShelfScreen(
                 add(ActionItem("继续阅读") { onOpenBook(book.id) })
                 if (isHidden) {
                     add(ActionItem("取消隐藏") {
-                        scope.launch { container.books.setHidden(book.id, false); toast = "已恢复到书架" }
+                        scope.launch { container.books.setHidden(book.id, false); toast = "已恢复《${book.title}》到书架" }
                     })
                 }
                 add(ActionItem("编辑书名 / 作者") {
@@ -484,8 +488,8 @@ fun ShelfScreen(
                     add(ActionItem("移入分组") { selection = setOf(book.id); groupDialog = true })
                 }
                 if (!isHidden) {
-                    add(ActionItem("在书架隐藏", hint = "隐藏后可从分组行的「已隐藏」里找回") {
-                        scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏，可从分组行的「已隐藏」找回" }
+                    add(ActionItem("在书架隐藏", hint = "可在分组栏「已隐藏」或设置中找回") {
+                        scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏《${book.title}》，可在「已隐藏」中找回" }
                     })
                 }
                 if (book.format == com.mirad.reader.data.db.entity.BookFormat.TXT) {
@@ -536,19 +540,14 @@ fun ShelfScreen(
                     groupRenameDraft = group.name
                 },
                 ActionItem("删除分组", hint = "组内书籍会回到「未分组」", danger = true) {
-                    scope.launch {
-                        container.groups.delete(group)
-                        if (selectedGroup == group.id) selectedGroup = null
-                        toast = "已删除分组「${group.name}」"
-                    }
+                    groupAction = null
+                    groupDeleteTarget = group
                 }
             )
         )
     }
 
-    toast?.let { message ->
-        ShelfToast(message = message, onDismiss = { toast = null })
-    }
+
 
     if (showUrlImportDialog) {
         UrlImportDialog(
@@ -560,31 +559,11 @@ fun ShelfScreen(
         )
     }
 
-    if (summary != null) {
+    if (summary != null && !showUrlImportDialog && !groupDialog && editing == null &&
+        encodingBook == null && chapterBook == null && !confirmDelete && actionBook == null &&
+        !showGroupManager && groupRenameTarget == null && groupAction == null && groupDeleteTarget == null) {
         val result = summary!!
-        AlertDialog(
-            onDismissRequest = { container.importer.clearSummary() },
-            title = { Text("导入完成") },
-            text = {
-                Column {
-                    Text(
-                        text = "成功 ${result.success} 本 · 跳过 ${result.skipped} 本 · 失败 ${result.failed} 本",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    result.messages.take(6).forEach { message ->
-                        Text(
-                            text = "· $message",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { container.importer.clearSummary() }) { Text("好") }
-            }
-        )
+        ImportResultDialog(result) { container.importer.clearSummary(result.batchId) }
     }
 
     if (groupDialog) {
@@ -598,6 +577,7 @@ fun ShelfScreen(
                         scope.launch {
                             selection.forEach { container.books.setGroup(it, null) }
                             selection = emptySet(); groupDialog = false
+                            toast = "已移出分组"
                         }
                     }) { Text("移出分组") }
                     groups.forEach { group ->
@@ -605,6 +585,7 @@ fun ShelfScreen(
                             scope.launch {
                                 selection.forEach { container.books.setGroup(it, group.id) }
                                 selection = emptySet(); groupDialog = false
+                                toast = "已移入分组「${group.name}」"
                             }
                         }) { Text(group.name) }
                     }
@@ -618,13 +599,14 @@ fun ShelfScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = nameDraft.isNotBlank(), onClick = {
                     val name = nameDraft.trim()
-                    if (name.isEmpty()) { groupDialog = false; return@TextButton }
+                    if (name.isEmpty()) return@TextButton
                     scope.launch {
                         val id = container.groups.create(name)
                         selection.forEach { container.books.setGroup(it, id) }
                         selection = emptySet(); groupDialog = false
+                        toast = "已创建分组「$name」并移入"
                     }
                 }) { Text("新建并移入") }
             },
@@ -632,11 +614,36 @@ fun ShelfScreen(
         )
     }
 
+    groupDeleteTarget?.let { target ->
+        val count = shelf.count { it.book.groupId == target.id }
+        AlertDialog(
+            onDismissRequest = { groupDeleteTarget = null },
+            title = { Text("删除分组「${target.name}」") },
+            text = {
+                Text(
+                    if (count > 0) "组内 $count 本书会回到「未分组」，书籍本身不会被删除。"
+                    else "这个分组是空的。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        container.groups.delete(target)
+                        if (selectedGroup == target.id) selectedGroup = null
+                        groupDeleteTarget = null
+                        toast = "已删除分组「${target.name}」"
+                    }
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { groupDeleteTarget = null }) { Text("取消") } }
+        )
+    }
+
     if (groupRenameTarget != null) {
         val target = groupRenameTarget!!
         AlertDialog(
             onDismissRequest = { groupRenameTarget = null },
-            title = { Text("重命名分组") },
+            title = { Text("重命名分组「${target.name}」") },
             text = {
                 OutlinedTextField(
                     value = groupRenameDraft,
@@ -646,11 +653,14 @@ fun ShelfScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = groupRenameDraft.isNotBlank(), onClick = {
                     val name = groupRenameDraft.trim()
                     groupRenameTarget = null
                     if (name.isNotEmpty() && name != target.name) {
-                        scope.launch { container.groups.rename(target, name) }
+                        scope.launch {
+                            container.groups.rename(target, name)
+                            toast = "已重命名为「$name」"
+                        }
                     }
                 }) { Text("保存") }
             },
@@ -659,15 +669,20 @@ fun ShelfScreen(
     }
 
     if (confirmDelete) {
+        val targetBook = if (selection.size == 1) shelf.firstOrNull { it.book.id in selection }?.book else null
+        val targetTitle = targetBook?.let { "《${it.title}》" }
         AlertDialog(
             onDismissRequest = { confirmDelete = false },
-            title = { Text("删除书籍") },
-            text = { Text("将删除所选 ${selection.size} 本书及其阅读记录、书签与笔记，无法恢复。") },
+            title = { Text(if (targetTitle != null) "删除$targetTitle" else "删除 ${selection.size} 本书籍") },
+            text = { Text("将删除${if (targetTitle != null) targetTitle else "所选 ${selection.size} 本书"}及其阅读记录、书签与笔记，无法恢复。") },
             confirmButton = {
                 TextButton(onClick = {
                     scope.launch {
+                        val count = selection.size
+                        val name = targetBook?.title
                         selection.forEach { id -> container.books.getBook(id)?.let { container.books.deleteBook(it) } }
                         selection = emptySet(); confirmDelete = false
+                        toast = if (name != null) "已删除《$name》" else "已删除 $count 本书籍"
                     }
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
@@ -678,7 +693,7 @@ fun ShelfScreen(
     editing?.let { book ->
         AlertDialog(
             onDismissRequest = { editing = null },
-            title = { Text("编辑书籍信息") },
+            title = { Text("编辑《${book.title}》") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
@@ -704,6 +719,7 @@ fun ShelfScreen(
                             editAuthor.trim().ifBlank { null }
                         )
                         editing = null
+                        toast = "已保存修改"
                     }
                 }) { Text("保存") }
             },
@@ -870,7 +886,7 @@ private fun BookGridCard(
             text = item.book.title,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 2,
+            minLines = 2, maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
         Spacer(modifier = Modifier.height(2.dp))
@@ -1018,30 +1034,6 @@ private fun EmptyShelf(searching: Boolean, onImport: () -> Unit) {
 }
 
 // 书籍与分组的操作面板统一用 ui/common/ActionSheet，不再各自实现 ModalBottomSheet。
-
-@Composable
-private fun ShelfToast(message: String, onDismiss: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.inverseSurface,
-        shape = MaterialTheme.shapes.small,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 24.dp, vertical = 84.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.inverseOnSurface,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onDismiss) { Text("知道了") }
-        }
-    }
-}
 
 @Composable
 private fun ImportBar(items: List<ImportItem>, running: Boolean) {

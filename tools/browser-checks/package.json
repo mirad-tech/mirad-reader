@@ -1,0 +1,15 @@
+{
+  "name": "mirad-reader-browser-checks",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local Chromium regression checks for the MiradReader WebView assets",
+  "scripts": {
+    "test": "node auto-read.cjs && node font-browser.cjs && node modern-upgrades.cjs",
+    "test:auto-read": "node auto-read.cjs",
+    "test:font": "node font-browser.cjs",
+    "test:modern": "node modern-upgrades.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

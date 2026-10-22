@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
+import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -65,13 +65,10 @@ fun EncodingDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("重新识别编码") },
+        title = { Text("重新识别《${book.title}》编码") },
         text = {
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 Text(
@@ -80,11 +77,7 @@ fun EncodingDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 error?.let {
-                    Text(
-                        text = it,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
+                    com.mirad.reader.ui.common.ErrorDetails(it)
                 }
                 if (loading) {
                     Text(

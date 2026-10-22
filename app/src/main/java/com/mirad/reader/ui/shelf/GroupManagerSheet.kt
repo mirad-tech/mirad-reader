@@ -5,7 +5,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -100,7 +100,7 @@ fun GroupManagerSheet(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                TextButton(enabled = renameDraft.isNotBlank(), onClick = {
                     val name = renameDraft.trim()
                     renameTarget = null
                     if (name.isNotEmpty() && name != target.name) {

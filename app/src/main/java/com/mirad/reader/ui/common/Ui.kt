@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -23,6 +25,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -76,7 +82,7 @@ fun SettingCard(
                 content()
             }
         }
-        Spacer(modifier = Modifier.height(14.dp))
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
 
@@ -134,6 +140,7 @@ fun LabeledSlider(
 }
 
 /** 胶囊选项，自动按列数换行。选中用主色实心，未选中为描边——比填充灰块更轻。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun <T> ChoiceRow(
     label: String,
@@ -152,17 +159,10 @@ fun <T> ChoiceRow(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            options.chunked(columns).forEach { rowOptions ->
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    rowOptions.forEach { (value, text) ->
-                        ChoiceChip(
-                            text = text,
-                            selected = value == selected,
-                            onClick = { onSelect(value) }
-                        )
-                    }
-                }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = columns) {
+            options.forEach { (value, text) ->
+                ChoiceChip(text = text, selected = value == selected, onClick = { onSelect(value) })
             }
         }
     }
@@ -177,10 +177,11 @@ fun ChoiceChip(
     onLongClick: (() -> Unit)? = null
 ) {
     val shape = RoundedCornerShape(50)
+    val selectedColor by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, tween(120), label = "choice")
     Box(
         modifier = Modifier
             .clip(shape)
-            .background(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent)
+            .background(selectedColor)
             .border(
                 width = 1.dp,
                 color = if (selected) MaterialTheme.colorScheme.primary
@@ -188,7 +189,8 @@ fun ChoiceChip(
                 shape = shape
             )
             .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .padding(horizontal = 14.dp, vertical = 7.dp)
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Text(
             text = text,
@@ -217,14 +219,13 @@ fun <T> SegmentedRow(
     ) {
         options.forEach { (value, text) ->
             val isSelected = value == selected
+            val segmentColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent, tween(120), label = "segment")
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(10.dp))
-                    .background(
-                        if (isSelected) MaterialTheme.colorScheme.surface
-                        else Color.Transparent
-                    )
+                    .background(segmentColor)
+                    .heightIn(min = 48.dp)
                     .clickable { onSelect(value) }
                     .padding(vertical = 8.dp),
                 contentAlignment = Alignment.Center

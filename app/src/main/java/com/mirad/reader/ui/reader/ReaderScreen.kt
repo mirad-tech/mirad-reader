@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -63,6 +64,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.animation.core.tween
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -149,6 +154,10 @@ fun ReaderScreen(
         onDispose { current.release(); com.mirad.reader.reader.ReaderKeys.pager = null }
     }
 
+    val readerState by current.state.collectAsState()
+    com.mirad.reader.ui.theme.MiradTheme(
+        darkTheme = ThemePaletteResolver.resolve(readerState.config, systemDark).isDark
+    ) {
     ReaderContent(
         container = container,
         session = current,
@@ -156,6 +165,7 @@ fun ReaderScreen(
         systemDark = systemDark,
         onBack = onBack
     )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -184,7 +194,9 @@ private fun ReaderContent(
     var showSearch by remember { mutableStateOf(false) }
     var showTts by remember { mutableStateOf(false) }
     var showAutoRead by remember { mutableStateOf(false) }
-    var toast by remember { mutableStateOf<String?>(null) }
+    val feedback = com.mirad.reader.ui.common.rememberFeedbackState("reader:${book.id}")
+    var toast by feedback
+    var bottomControlsHeight by remember { mutableStateOf(0) }
     var pendingNote by remember { mutableStateOf<Triple<Int, Int, String>?>(null) }
     var noteDraft by remember { mutableStateOf("") }
 
@@ -203,14 +215,14 @@ private fun ReaderContent(
     var ttsSentences by remember { mutableStateOf<List<SentenceSplitter.Sentence>>(emptyList()) }
     var ttsChapterIndex by remember { mutableStateOf(-1) }
 
-    // 落库防抖：拖滑杆时每动一下都写数据库既没必要也会拖慢体感，停顿 400ms 再写。
+    // 落库防抖：阅读设置全书通用，拖滑杆时停顿 400ms 再落库全局配置。
     val applyConfig: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
         val updated = transform(session.state.value.config)
         session.applyConfigToWebView(updated, systemDark)
-        container.settings.queueBookConfig(book.id, updated, container.appScope)
+        container.settings.queueGlobalConfig(updated, container.appScope)
     }
-    DisposableEffect(book.id) {
-        onDispose { container.settings.flushBookConfig(book.id, container.appScope) }
+    DisposableEffect(Unit) {
+        onDispose { container.settings.flushGlobalConfig(container.appScope) }
     }
 
     suspend fun ensureTtsSentences(): List<SentenceSplitter.Sentence> {
@@ -565,8 +577,8 @@ private fun ReaderContent(
         // 顶部/底部工具栏
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn() + slideInVertically { -it },
-            exit = fadeOut() + slideOutVertically { -it },
+            enter = fadeIn(tween(160)) + slideInVertically(tween(180)) { -with(density) { 8.dp.roundToPx() } },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { -with(density) { 8.dp.roundToPx() } },
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
             ReaderTopBar(
@@ -599,9 +611,9 @@ private fun ReaderContent(
 
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn() + slideInVertically { it },
-            exit = fadeOut() + slideOutVertically { it },
-            modifier = Modifier.align(Alignment.BottomCenter)
+            enter = fadeIn(tween(160)) + slideInVertically(tween(180)) { with(density) { 8.dp.roundToPx() } },
+            exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { with(density) { 8.dp.roundToPx() } },
+            modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { bottomControlsHeight = it.height }
         ) {
             ReaderBottomBar(
                 percent = state.percent,
@@ -650,30 +662,13 @@ private fun ReaderContent(
             )
         }
 
-        toast?.let { message ->
-            LaunchedEffect(message) {
-                delay(1600)
-                toast = null
-            }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 120.dp),
-                contentAlignment = Alignment.BottomCenter
-            ) {
-                Surface(
-                    color = MaterialTheme.colorScheme.inverseSurface,
-                    shape = MaterialTheme.shapes.medium
-                ) {
-                    Text(
-                        text = message,
-                        color = MaterialTheme.colorScheme.inverseOnSurface,
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
-                    )
-                }
-            }
-        }
+        com.mirad.reader.ui.common.FeedbackHost(
+            feedback,
+            Modifier.align(Alignment.BottomCenter).imePadding().then(
+                if (chromeVisible) Modifier.padding(bottom = with(density) { bottomControlsHeight.toDp() })
+                else Modifier.navigationBarsPadding()
+            )
+        )
     }
 
     if (showToc) {
@@ -703,9 +698,8 @@ private fun ReaderContent(
             },
             onResetGlobal = {
                 scope.launch {
-                    container.settings.clearBookConfig(book.id)
-                    val global = container.settings.currentGlobal()
-                    session.applyConfigToWebView(global, systemDark)
+                    container.settings.saveGlobal(ReaderConfig.DEFAULT)
+                    session.applyConfigToWebView(ReaderConfig.DEFAULT, systemDark)
                 }
             },
             onDismiss = { showSettings = false }
@@ -779,7 +773,7 @@ private fun ReaderContent(
     }
 
     pendingNote?.let { (start, end, text) ->
-        androidx.compose.material3.AlertDialog(
+        com.mirad.reader.ui.common.MiradDialog(
             onDismissRequest = { pendingNote = null },
             title = { Text("写笔记") },
             text = {
@@ -794,7 +788,8 @@ private fun ReaderContent(
                         value = noteDraft,
                         onValueChange = { noteDraft = it },
                         label = { Text("笔记内容") },
-                        modifier = Modifier.height(120.dp)
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
+                        minLines = 3, maxLines = 7
                     )
                 }
             },

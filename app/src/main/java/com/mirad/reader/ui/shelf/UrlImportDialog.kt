@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -63,7 +63,7 @@ fun UrlImportDialog(
         }
     }
 
-    val isBusy = downloadProgress is DownloadProgress.Connecting || downloadProgress is DownloadProgress.Downloading
+    val isBusy = downloadProgress is DownloadProgress.Connecting || downloadProgress is DownloadProgress.Downloading || downloadProgress is DownloadProgress.Success
 
     AlertDialog(
         onDismissRequest = {
@@ -80,15 +80,9 @@ fun UrlImportDialog(
         },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = "支持 TXT / EPUB 直链下载，或输入网页长文链接自动解析入库。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(modifier = Modifier.height(Spacing.md))
-
                 OutlinedTextField(
                     value = urlText,
+                    label = { Text("书籍网址") },
                     onValueChange = { urlText = it },
                     placeholder = { Text("https://example.com/book.txt") },
                     singleLine = false,
@@ -153,11 +147,7 @@ fun UrlImportDialog(
                         )
                     }
                     is DownloadProgress.Error -> {
-                        Text(
-                            text = p.message,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        com.mirad.reader.ui.common.ErrorDetails(p.message)
                     }
                     is DownloadProgress.Success -> {
                         Text(

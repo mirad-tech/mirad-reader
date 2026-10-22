@@ -45,7 +45,7 @@ fun ChapterPreviewSheet(
     }
     BackHandler(enabled = applying) { }
     SheetScaffold(
-        title = "重新识别章节",
+        title = "重新识别《${book.title}》章节",
         onDismiss = { if (!applying) onDismiss() },
         fillHeight = true,
         actions = {
@@ -73,7 +73,9 @@ fun ChapterPreviewSheet(
             Text("正在识别章节…", modifier = Modifier.padding(20.dp))
         }
         error?.let {
-            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
+            Box(Modifier.padding(horizontal = 20.dp)) {
+                com.mirad.reader.ui.common.ErrorDetails(it)
+            }
             TextButton(onClick = { attempt++ }, enabled = !applying) { Text("重新预览") }
         }
         preview?.let { candidate ->

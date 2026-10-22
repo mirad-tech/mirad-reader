@@ -258,7 +258,7 @@ fun ReaderSettingsSheet(
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             scope.launch {
-                val target = File(container.paths.backgroundsDir, "bg_$bookId.jpg")
+                val target = File(container.paths.backgroundsDir, "bg_reader.jpg")
                 val ok = withContext(Dispatchers.IO) {
                     runCatching {
                         (context.contentResolver.openInputStream(uri) ?: return@runCatching false).use { input ->
@@ -283,13 +283,13 @@ fun ReaderSettingsSheet(
     val scrollStates = SettingsCategory.entries.associateWith { rememberScrollState() }
     val homeScroll = rememberScrollState()
     androidx.activity.compose.BackHandler(category != null) { category = null }
-    DisposableEffect(bookId) {
-        onDispose { container.settings.flushBookConfig(bookId, container.appScope) }
+    DisposableEffect(Unit) {
+        onDispose { container.settings.flushGlobalConfig(container.appScope) }
     }
-    CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushBookConfig(bookId, container.appScope) }) {
+    CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
     SheetScaffold(
         title = category?.title ?: "阅读设置",
-        subtitle = "当前书籍",
+        subtitle = "全书通用",
         onDismiss = onDismiss,
         fillHeight = true,
         maxHeightFraction = 0.62f,
@@ -312,7 +312,7 @@ fun ReaderSettingsSheet(
                         .plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
                         .forEach { item -> SettingNavRow(item.title, onClick = { category = item }) }
                 }
-                OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复全局默认设置") }
+                OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复默认设置") }
             } else {
                 ReaderSettingsContent(selected, config, onChange, fonts,
                     onImportFont = { fontPicker.launch(arrayOf("*/*")) },
@@ -398,7 +398,7 @@ fun NotesSheet(
     }
 
     pendingDelete?.let { pending ->
-        androidx.compose.material3.AlertDialog(
+        com.mirad.reader.ui.common.MiradDialog(
             onDismissRequest = { pendingDelete = null },
             title = { Text("删除${pending.first}") },
             text = { Text("删除后无法恢复，确定要删除吗？") },
