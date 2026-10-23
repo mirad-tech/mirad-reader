@@ -25,6 +25,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.heightIn
+import com.mirad.reader.ui.common.glassBackdropSource
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -41,7 +46,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
+import com.mirad.reader.ui.common.GlassDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -51,12 +56,13 @@ import androidx.compose.material3.IconButton
 import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
+import com.mirad.reader.ui.common.MiradOutlinedButton
+import com.mirad.reader.ui.common.MiradTextButton
+import com.mirad.reader.ui.common.MiradButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -66,6 +72,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -104,7 +113,7 @@ enum class ShelfSort(val label: String) {
     SIZE("按大小")
 }
 
-private enum class ShelfLayout { GRID, LIST }
+internal enum class ShelfLayout { GRID, LIST }
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -131,8 +140,6 @@ fun ShelfScreen(
     var query by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var sortMenu by remember { mutableStateOf(false) }
-    var importMenu by remember { mutableStateOf(false) }
     var groupDialog by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<BookEntity?>(null) }
     var editTitle by remember { mutableStateOf("") }
@@ -181,264 +188,43 @@ fun ShelfScreen(
             onlyHidden = showHidden
         )
     }
-    val hiddenCount = remember(shelf) { shelf.count { it.book.isHidden } }
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback, Modifier.imePadding()) },
-        topBar = {
-            ShelfHeader(
-                total = shelf.count { !it.book.isHidden },
-                selectionCount = selection.size,
-                searchVisible = showSearch,
-                onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
-                onStats = onOpenStats,
-                onSettings = onOpenSettings,
-                onNotes = onOpenNotes,
-                onHidden = onOpenHidden,
-                onManageGroups = { showGroupManager = true },
-                onExitSelection = { selection = emptySet() },
-                onSelectAll = { selection = visible.map { it.book.id }.toSet() },
-                onPinSelected = {
-                    scope.launch {
-                        selection.forEach { id ->
-                            val pinned = shelf.firstOrNull { it.book.id == id }?.book?.isPinned == true
-                            container.books.setPinned(id, !pinned)
-                        }
-                        selection = emptySet()
-                    }
-                },
-                onGroupSelected = { groupDialog = true },
-                onDeleteSelected = { confirmDelete = true }
-            )
-        },
-        floatingActionButton = {
-            if (selection.isEmpty()) {
-                Box {
-                    ExtendedFloatingActionButton(
-                        onClick = { importMenu = true },
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary,
-                        shape = MaterialTheme.shapes.medium,
-                        elevation = FloatingActionButtonDefaults.elevation(
-                            defaultElevation = 2.dp,
-                            pressedElevation = 4.dp
-                        ),
-                        icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                        text = { Text("导入") }
-                    )
-                    DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("导入文件（txt / epub）") },
-                            onClick = { importMenu = false; filePicker.launch(arrayOf("*/*")) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("导入文件夹") },
-                            onClick = { importMenu = false; folderPicker.launch(null) }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("输入书源网址导入") },
-                            onClick = { importMenu = false; showUrlImportDialog = true }
-                        )
-                        if (BuildConfig.DEBUG) {
-                            DropdownMenuItem(
-                                text = { Text("导入调试样书（samples 目录）") },
-                                onClick = {
-                                    importMenu = false
-                                    scope.launch {
-                                        val result = withContext(Dispatchers.IO) { scanSamples(container) }
-                                        if (result.sources.isNotEmpty()) container.importer.import(result.sources)
-                                        else toast = "未找到调试样书"
-                                    }
-                                }
-                            )
-                        }
-                    }
+    ShelfContent(
+        state = ShelfContentState(
+            shelf = shelf, visible = visible, groups = groups, sort = sort, layout = layout,
+            selectedGroup = selectedGroup, showHidden = showHidden, query = query,
+            showSearch = showSearch, selection = selection, importItems = importState.items,
+            importing = importState.running
+        ),
+        actions = ShelfContentActions(
+            onOpenBook = onOpenBook, onStats = onOpenStats, onSettings = onOpenSettings,
+            onNotes = onOpenNotes, onHidden = onOpenHidden,
+            onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
+            onQueryChange = { query = it }, onSortChange = { sort = it },
+            onLayoutChange = { layout = it },
+            onSelectGroup = { id, hidden -> selectedGroup = id; showHidden = hidden },
+            onSelectionChange = { selection = it }, onBookAction = { actionBook = it },
+            onGroupAction = { groupAction = it }, onManageGroups = { showGroupManager = true },
+            onSelectAll = { selection = visible.map { it.book.id }.toSet() },
+            onPinSelected = { scope.launch {
+                selection.forEach { id ->
+                    val pinned = shelf.firstOrNull { it.book.id == id }?.book?.isPinned == true
+                    container.books.setPinned(id, !pinned)
                 }
-            }
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            if (showSearch) {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    placeholder = { Text("搜索书名或作者") },
-                    singleLine = true,
-                    shape = MaterialTheme.shapes.medium,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                )
-            }
-
-            // 继续阅读：省得每次都要在书架里翻找上次那本
-            val continueReading = remember(shelf) {
-                shelf.filter { it.lastReadAt > 0L }.maxByOrNull { it.lastReadAt }
-            }
-            continueReading?.let { item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .clickable { onOpenBook(item.book.id) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "继续阅读 · 已读 ${(item.percent * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = item.book.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 1
-                        )
-                    }
-                    Text(
-                        text = formatRelative(item.lastReadAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                }
-            }
-
-            if (groups.isNotEmpty() || hiddenCount > 0) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    item {
-                        ChoiceChip(
-                            text = "全部",
-                            selected = selectedGroup == null && !showHidden,
-                            onClick = { selectedGroup = null; showHidden = false }
-                        )
-                    }
-                    item {
-                        ChoiceChip(
-                            text = "未分组",
-                            selected = selectedGroup == ShelfQuery.GROUP_NONE && !showHidden,
-                            onClick = { selectedGroup = ShelfQuery.GROUP_NONE; showHidden = false }
-                        )
-                    }
-                    items(groups, key = { it.id }) { group ->
-                        ChoiceChip(
-                            text = group.name,
-                            selected = selectedGroup == group.id && !showHidden,
-                            onClick = { selectedGroup = group.id; showHidden = false },
-                            onLongClick = { groupAction = group }
-                        )
-                    }
-                    if (hiddenCount > 0) {
-                        item {
-                            ChoiceChip(
-                                text = "已隐藏 $hiddenCount",
-                                selected = showHidden,
-                                onClick = { selectedGroup = null; showHidden = true }
-                            )
-                        }
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box {
-                    TextButton(onClick = { sortMenu = true }) {
-                        Text("${sort.label}  ▾", style = MaterialTheme.typography.labelLarge)
-                    }
-                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                        ShelfSort.entries.forEach { option ->
-                            DropdownMenuItem(
-                                text = { Text(option.label) },
-                                onClick = { sort = option; sortMenu = false },
-                                trailingIcon = {
-                                    if (option == sort) {
-                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.weight(1f))
-                TextButton(onClick = {
-                    layout = if (layout == ShelfLayout.GRID) ShelfLayout.LIST else ShelfLayout.GRID
-                }) {
-                    Text(
-                        text = if (layout == ShelfLayout.GRID) "网格" else "列表",
-                        style = MaterialTheme.typography.labelLarge
-                    )
-                }
-            }
-
-            when {
-                visible.isEmpty() -> EmptyShelf(
-                    searching = query.isNotBlank() || selectedGroup != null,
-                    onImport = { filePicker.launch(arrayOf("*/*")) }
-                )
-                layout == ShelfLayout.GRID -> LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(visible, key = { it.book.id }) { item ->
-                        BookGridCard(
-                            item = item,
-                            selected = item.book.id in selection,
-                            selectionMode = selection.isNotEmpty(),
-                            onClick = {
-                                if (selection.isEmpty()) onOpenBook(item.book.id)
-                                else selection = toggle(selection, item.book.id)
-                            },
-                            onLongClick = {
-                                if (selection.isEmpty()) actionBook = item.book
-                                else selection = toggle(selection, item.book.id)
-                            }
-                        )
-                    }
-                }
-                else -> LazyColumn(
-                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 96.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(visible, key = { it.book.id }) { item ->
-                        BookListRow(
-                            item = item,
-                            selected = item.book.id in selection,
-                            onClick = {
-                                if (selection.isEmpty()) onOpenBook(item.book.id)
-                                else selection = toggle(selection, item.book.id)
-                            },
-                            onLongClick = {
-                                if (selection.isEmpty()) actionBook = item.book
-                                else selection = toggle(selection, item.book.id)
-                            }
-                        )
-                    }
-                }
-            }
-
-            ImportBar(importState.items, importState.running)
-        }
-    }
+                selection = emptySet()
+            } },
+            onGroupSelected = { groupDialog = true }, onDeleteSelected = { confirmDelete = true },
+            onImportFile = { filePicker.launch(arrayOf("*/*")) },
+            onImportFolder = { folderPicker.launch(null) },
+            onImportUrl = { showUrlImportDialog = true },
+            onImportSamples = { scope.launch {
+                val result = withContext(Dispatchers.IO) { scanSamples(container) }
+                if (result.sources.isNotEmpty()) container.importer.import(result.sources)
+                else toast = "未找到调试样书"
+            } }
+        ),
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback, Modifier.imePadding()) }
+    )
 
     // ---------------- 弹层 ----------------
 
@@ -573,7 +359,7 @@ fun ShelfScreen(
             title = { Text("移入分组") },
             text = {
                 Column {
-                    TextButton(onClick = {
+                    MiradTextButton(onClick = {
                         scope.launch {
                             selection.forEach { container.books.setGroup(it, null) }
                             selection = emptySet(); groupDialog = false
@@ -581,7 +367,7 @@ fun ShelfScreen(
                         }
                     }) { Text("移出分组") }
                     groups.forEach { group ->
-                        TextButton(onClick = {
+                        MiradTextButton(onClick = {
                             scope.launch {
                                 selection.forEach { container.books.setGroup(it, group.id) }
                                 selection = emptySet(); groupDialog = false
@@ -599,9 +385,9 @@ fun ShelfScreen(
                 }
             },
             confirmButton = {
-                TextButton(enabled = nameDraft.isNotBlank(), onClick = {
+                MiradTextButton(enabled = nameDraft.isNotBlank(), onClick = {
                     val name = nameDraft.trim()
-                    if (name.isEmpty()) return@TextButton
+                    if (name.isEmpty()) return@MiradTextButton
                     scope.launch {
                         val id = container.groups.create(name)
                         selection.forEach { container.books.setGroup(it, id) }
@@ -610,7 +396,7 @@ fun ShelfScreen(
                     }
                 }) { Text("新建并移入") }
             },
-            dismissButton = { TextButton(onClick = { groupDialog = false }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { groupDialog = false }) { Text("取消") } }
         )
     }
 
@@ -626,7 +412,7 @@ fun ShelfScreen(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(danger = true, onClick = {
                     scope.launch {
                         container.groups.delete(target)
                         if (selectedGroup == target.id) selectedGroup = null
@@ -635,7 +421,7 @@ fun ShelfScreen(
                     }
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { groupDeleteTarget = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { groupDeleteTarget = null }) { Text("取消") } }
         )
     }
 
@@ -653,7 +439,7 @@ fun ShelfScreen(
                 )
             },
             confirmButton = {
-                TextButton(enabled = groupRenameDraft.isNotBlank(), onClick = {
+                MiradTextButton(enabled = groupRenameDraft.isNotBlank(), onClick = {
                     val name = groupRenameDraft.trim()
                     groupRenameTarget = null
                     if (name.isNotEmpty() && name != target.name) {
@@ -664,7 +450,7 @@ fun ShelfScreen(
                     }
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { groupRenameTarget = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { groupRenameTarget = null }) { Text("取消") } }
         )
     }
 
@@ -676,7 +462,7 @@ fun ShelfScreen(
             title = { Text(if (targetTitle != null) "删除$targetTitle" else "删除 ${selection.size} 本书籍") },
             text = { Text("将删除${if (targetTitle != null) targetTitle else "所选 ${selection.size} 本书"}及其阅读记录、书签与笔记，无法恢复。") },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(danger = true, onClick = {
                     scope.launch {
                         val count = selection.size
                         val name = targetBook?.title
@@ -686,7 +472,7 @@ fun ShelfScreen(
                     }
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { confirmDelete = false }) { Text("取消") } }
         )
     }
 
@@ -711,7 +497,7 @@ fun ShelfScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(onClick = {
                     scope.launch {
                         container.books.updateMeta(
                             book.id,
@@ -723,7 +509,7 @@ fun ShelfScreen(
                     }
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { editing = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { editing = null }) { Text("取消") } }
         )
     }
 }
@@ -1119,3 +905,334 @@ private fun scanSamples(container: AppContainer): SampleScan {
 
 private fun toggle(selection: Set<Long>, id: Long): Set<Long> =
     if (id in selection) selection - id else selection + id
+
+
+/** Read-only input for the shelf's UI; repositories stay in ShelfScreen. */
+internal data class ShelfContentState(
+    val shelf: List<ShelfBook> = emptyList(),
+    val visible: List<ShelfBook> = shelf,
+    val groups: List<com.mirad.reader.data.db.entity.GroupEntity> = emptyList(),
+    val sort: ShelfSort = ShelfSort.RECENT,
+    val layout: ShelfLayout = ShelfLayout.GRID,
+    val selectedGroup: Long? = null,
+    val showHidden: Boolean = false,
+    val query: String = "",
+    val showSearch: Boolean = false,
+    val selection: Set<Long> = emptySet(),
+    val importItems: List<ImportItem> = emptyList(),
+    val importing: Boolean = false
+)
+
+internal data class ShelfContentActions(
+    val onOpenBook: (Long) -> Unit = {},
+    val onStats: () -> Unit = {},
+    val onSettings: () -> Unit = {},
+    val onNotes: () -> Unit = {},
+    val onHidden: () -> Unit = {},
+    val onToggleSearch: () -> Unit = {},
+    val onQueryChange: (String) -> Unit = {},
+    val onSortChange: (ShelfSort) -> Unit = {},
+    val onLayoutChange: (ShelfLayout) -> Unit = {},
+    val onSelectGroup: (Long?, Boolean) -> Unit = { _, _ -> },
+    val onSelectionChange: (Set<Long>) -> Unit = {},
+    val onBookAction: (BookEntity) -> Unit = {},
+    val onGroupAction: (com.mirad.reader.data.db.entity.GroupEntity) -> Unit = {},
+    val onManageGroups: () -> Unit = {},
+    val onSelectAll: () -> Unit = {},
+    val onPinSelected: () -> Unit = {},
+    val onGroupSelected: () -> Unit = {},
+    val onDeleteSelected: () -> Unit = {},
+    val onImportFile: () -> Unit = {},
+    val onImportFolder: () -> Unit = {},
+    val onImportUrl: () -> Unit = {},
+    val onImportSamples: () -> Unit = {}
+)
+
+@Composable
+internal fun ShelfContent(
+    state: ShelfContentState,
+    actions: ShelfContentActions = ShelfContentActions(),
+    snackbarHost: @Composable () -> Unit = {},
+    initialScrollIndex: Int = 0,
+    initialScrollOffset: Int = 0
+) {
+    val shelf = state.shelf
+    val visible = state.visible
+    val groups = state.groups
+    val sort = state.sort
+    val layout = state.layout
+    val selectedGroup = state.selectedGroup
+    val showHidden = state.showHidden
+    val query = state.query
+    val showSearch = state.showSearch
+    val selection = state.selection
+    val hiddenCount = remember(shelf) { shelf.count { it.book.isHidden } }
+    val onOpenBook = actions.onOpenBook
+    var sortMenu by remember { mutableStateOf(false) }
+    var importMenu by remember { mutableStateOf(false) }
+    val gridState = rememberLazyGridState(initialScrollIndex, initialScrollOffset)
+    val listState = rememberLazyListState(initialScrollIndex, initialScrollOffset)
+    // Search moved into the scroll content; opening it must still expose the field.
+    androidx.compose.runtime.LaunchedEffect(showSearch, layout) {
+        if (showSearch) {
+            if (layout == ShelfLayout.GRID) gridState.animateScrollToItem(0)
+            else listState.animateScrollToItem(0)
+        }
+    }
+    val controls: @Composable () -> Unit = {
+        Column {
+            if (showSearch) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = actions.onQueryChange,
+                    placeholder = { Text("搜索书名或作者") },
+                    singleLine = true,
+                    shape = MaterialTheme.shapes.medium,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                )
+            }
+
+            // 继续阅读：省得每次都要在书架里翻找上次那本
+            val continueReading = remember(shelf) {
+                shelf.filter { it.lastReadAt > 0L }.maxByOrNull { it.lastReadAt }
+            }
+            continueReading?.let { item ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp)
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .clickable { onOpenBook(item.book.id) }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "继续阅读 · 已读 ${(item.percent * 100).toInt()}%",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Text(
+                            text = item.book.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1
+                        )
+                    }
+                    Text(
+                        text = formatRelative(item.lastReadAt),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
+            }
+
+            if (groups.isNotEmpty() || hiddenCount > 0) {
+                LazyRow(
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        ChoiceChip(
+                            text = "全部",
+                            selected = selectedGroup == null && !showHidden,
+                            onClick = { actions.onSelectGroup(null, false) }
+                        )
+                    }
+                    item {
+                        ChoiceChip(
+                            text = "未分组",
+                            selected = selectedGroup == ShelfQuery.GROUP_NONE && !showHidden,
+                            onClick = { actions.onSelectGroup(ShelfQuery.GROUP_NONE, false) }
+                        )
+                    }
+                    items(groups, key = { it.id }) { group ->
+                        ChoiceChip(
+                            text = group.name,
+                            selected = selectedGroup == group.id && !showHidden,
+                            onClick = { actions.onSelectGroup(group.id, false) },
+                            onLongClick = { actions.onGroupAction(group) }
+                        )
+                    }
+                    if (hiddenCount > 0) {
+                        item {
+                            ChoiceChip(
+                                text = "已隐藏 $hiddenCount",
+                                selected = showHidden,
+                                onClick = { actions.onSelectGroup(null, true) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box {
+                    MiradTextButton(onClick = { sortMenu = true }) {
+                        Text("${sort.label}  ▾")
+                    }
+                    DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
+                        ShelfSort.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option.label) },
+                                onClick = { actions.onSortChange(option); sortMenu = false },
+                                trailingIcon = {
+                                    if (option == sort) {
+                                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.weight(1f))
+                MiradTextButton(onClick = {
+                    actions.onLayoutChange(if (layout == ShelfLayout.GRID) ShelfLayout.LIST else ShelfLayout.GRID)
+                }) {
+                    Text(
+                        text = if (layout == ShelfLayout.GRID) "网格" else "列表"
+                    )
+                }
+            }
+
+        }
+    }
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = snackbarHost,
+        topBar = {
+            ShelfHeader(
+                total = shelf.count { !it.book.isHidden }, selectionCount = selection.size,
+                searchVisible = showSearch, onToggleSearch = actions.onToggleSearch,
+                onStats = actions.onStats, onSettings = actions.onSettings,
+                onNotes = actions.onNotes, onHidden = actions.onHidden,
+                onManageGroups = actions.onManageGroups,
+                onExitSelection = { actions.onSelectionChange(emptySet()) },
+                onSelectAll = actions.onSelectAll, onPinSelected = actions.onPinSelected,
+                onGroupSelected = actions.onGroupSelected, onDeleteSelected = actions.onDeleteSelected
+            )
+        },
+        floatingActionButton = {
+            if (selection.isEmpty()) {
+                Box {
+                    if (com.mirad.reader.ui.common.LocalGlassLegacy.current) {
+                        ExtendedFloatingActionButton(
+                            onClick = { importMenu = true },
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            shape = MaterialTheme.shapes.medium,
+                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
+                            icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                            text = { Text("导入") }
+                        )
+                    } else {
+                        com.mirad.reader.ui.common.GlassSurface(shape = MaterialTheme.shapes.large) {
+                            Row(
+                                modifier = Modifier
+                                    .heightIn(min = 56.dp)
+                                    .clickable(role = androidx.compose.ui.semantics.Role.Button) { importMenu = true }
+                                    .padding(horizontal = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Text("导入", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+                    }
+                    DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
+                        DropdownMenuItem(text = { Text("导入文件（txt / epub）") },
+                            onClick = { importMenu = false; actions.onImportFile() })
+                        DropdownMenuItem(text = { Text("导入文件夹") },
+                            onClick = { importMenu = false; actions.onImportFolder() })
+                        DropdownMenuItem(text = { Text("输入书源网址导入") },
+                            onClick = { importMenu = false; actions.onImportUrl() })
+                        if (BuildConfig.DEBUG) {
+                            DropdownMenuItem(text = { Text("导入调试样书（samples 目录）") },
+                                onClick = { importMenu = false; actions.onImportSamples() })
+                        }
+                    }
+                }
+            }
+        }
+    ) { padding ->
+        Column(Modifier.fillMaxSize().glassBackdropSource()) {
+            val layoutDirection = LocalLayoutDirection.current
+            val contentPadding = PaddingValues(
+                start = padding.calculateStartPadding(layoutDirection) + 16.dp,
+                end = padding.calculateEndPadding(layoutDirection) + 16.dp,
+                top = padding.calculateTopPadding() + 4.dp,
+                bottom = padding.calculateBottomPadding() + 96.dp
+            )
+            if (layout == ShelfLayout.GRID) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    state = gridState, contentPadding = contentPadding,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f)
+                ) {
+                    item(key = "shelf-controls", span = { GridItemSpan(maxLineSpan) }) { controls() }
+                    if (visible.isEmpty()) {
+                        item(key = "shelf-empty", span = { GridItemSpan(maxLineSpan) }) {
+                            Box(Modifier.fillMaxWidth().heightIn(min = 320.dp)) {
+                                EmptyShelf(query.isNotBlank() || selectedGroup != null, actions.onImportFile)
+                            }
+                        }
+                    }
+                    items(visible, key = { it.book.id }) { item ->
+                        BookGridCard(
+                            item = item, selected = item.book.id in selection,
+                            selectionMode = selection.isNotEmpty(),
+                            onClick = {
+                                if (selection.isEmpty()) onOpenBook(item.book.id)
+                                else actions.onSelectionChange(toggle(selection, item.book.id))
+                            },
+                            onLongClick = {
+                                if (selection.isEmpty()) actions.onBookAction(item.book)
+                                else actions.onSelectionChange(toggle(selection, item.book.id))
+                            }
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    state = listState, contentPadding = contentPadding,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f)
+                ) {
+                    item(key = "shelf-controls") { controls() }
+                    if (visible.isEmpty()) {
+                        item(key = "shelf-empty") {
+                            Box(Modifier.fillMaxWidth().heightIn(min = 320.dp)) {
+                                EmptyShelf(query.isNotBlank() || selectedGroup != null, actions.onImportFile)
+                            }
+                        }
+                    }
+                    items(visible, key = { it.book.id }) { item ->
+                        BookListRow(
+                            item = item, selected = item.book.id in selection,
+                            onClick = {
+                                if (selection.isEmpty()) onOpenBook(item.book.id)
+                                else actions.onSelectionChange(toggle(selection, item.book.id))
+                            },
+                            onLongClick = {
+                                if (selection.isEmpty()) actions.onBookAction(item.book)
+                                else actions.onSelectionChange(toggle(selection, item.book.id))
+                            }
+                        )
+                    }
+                }
+            }
+            ImportBar(state.importItems, state.importing)
+        }
+    }
+}

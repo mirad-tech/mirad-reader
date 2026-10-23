@@ -1,6 +1,15 @@
 package com.mirad.reader.ui.common
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -19,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.RectangleShape
 import com.mirad.reader.ui.design.Spacing
 
 /**
@@ -37,12 +47,23 @@ fun ScreenHeader(
     divider: Boolean = !large,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
-    Surface(color = MaterialTheme.colorScheme.background, modifier = modifier.fillMaxWidth()) {
+    val legacy = LocalGlassLegacy.current
+    Box(modifier.fillMaxWidth()) {
+    Box(Modifier.fillMaxWidth().windowInsetsTopHeight(WindowInsets.statusBars)
+        .background(MaterialTheme.colorScheme.background))
+    Box(Modifier.fillMaxWidth().statusBarsPadding()
+        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)).padding(
+        horizontal = if (legacy) 0.dp else 12.dp,
+        vertical = if (legacy) 0.dp else 8.dp
+    )) {
+    GlassSurface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = if (legacy) RectangleShape else MaterialTheme.shapes.large
+    ) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .statusBarsPadding()
                     .padding(
                         start = if (onBack != null) Spacing.sm else if (large) Spacing.xl else Spacing.lg,
                         end = Spacing.sm,
@@ -76,9 +97,11 @@ fun ScreenHeader(
                 }
                 actions()
             }
-            if (divider) {
+            if (divider && legacy) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             }
         }
+    }
+    }
     }
 }

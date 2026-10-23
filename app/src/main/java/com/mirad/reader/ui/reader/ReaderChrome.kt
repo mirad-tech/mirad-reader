@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -49,6 +51,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import com.mirad.reader.ui.common.GlassSurface
+import com.mirad.reader.ui.common.GlassDropdownMenu
+import com.mirad.reader.ui.common.LocalGlassLegacy
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
@@ -78,11 +84,12 @@ fun ReaderTopBar(
     onToggleTts: () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+    val legacy = LocalGlassLegacy.current
+    Box(Modifier.fillMaxWidth()
+        .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+        .padding(horizontal = if (legacy) 0.dp else 12.dp, vertical = if (legacy) 0.dp else 8.dp)) {
+    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
+        Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -115,10 +122,11 @@ fun ReaderTopBar(
                         else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                Box {
                 IconButton(onClick = { menu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                GlassDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("目录") }, onClick = { menu = false; onToc() })
                     DropdownMenuItem(text = { Text("笔记与书签") }, onClick = { menu = false; onNotes() })
                     DropdownMenuItem(
@@ -129,9 +137,11 @@ fun ReaderTopBar(
                     DropdownMenuItem(text = { Text("自动阅读") }, onClick = { menu = false; onAutoRead() })
                     DropdownMenuItem(text = { Text("阅读设置") }, onClick = { menu = false; onSettings() })
                 }
+                }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+            if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
         }
+    }
     }
 }
 
@@ -154,12 +164,13 @@ fun ReaderBottomBar(
     speaking: Boolean,
     onSliderChange: (Float) -> Unit
 ) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+    val legacy = LocalGlassLegacy.current
+    Box(Modifier.fillMaxWidth()
+        .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+        .padding(horizontal = if (legacy) 0.dp else 12.dp, vertical = if (legacy) 0.dp else 8.dp)) {
+    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
+        Column {
+            if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             val draftState = androidx.compose.runtime.remember {
                 androidx.compose.runtime.mutableStateOf<Float?>(null)
             }
@@ -170,10 +181,11 @@ fun ReaderBottomBar(
                 onValueChangeFinished = {
                     val target = draftState.value
                     draftState.value = null
-                    if (target != null) onSliderChange(target)
+                    onSliderChange(target ?: percent)
                 },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .padding(horizontal = 12.dp)
             )
             Row(
@@ -197,6 +209,7 @@ fun ReaderBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 48.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onProgress)
                     .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -224,6 +237,7 @@ fun ReaderBottomBar(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -236,6 +250,7 @@ private fun BarAction(
     val tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     Column(
         modifier = Modifier
+            .sizeIn(minWidth = 48.dp, minHeight = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 10.dp, vertical = 4.dp),

@@ -1,6 +1,7 @@
 package com.mirad.reader.reader
 
 import android.content.Context
+import android.graphics.Canvas
 import android.view.ActionMode
 import android.view.GestureDetector
 import android.view.Menu
@@ -22,6 +23,43 @@ class ReaderWebView(context: Context) : WebView(context) {
 
     /** 手指按下：阅读会话据此立即暂停自动阅读（在 WebView 开始拖动之前）。 */
     var onTouchDown: (() -> Unit)? = null
+
+    /** Paint changes are independent of persisted chapter/page/character positions. */
+    internal var onVisualInvalidated: (() -> Unit)? = null
+    private var backdropCaptureDepth = 0
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        notifyVisualInvalidated()
+    }
+
+    override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        if (l != oldl || t != oldt) notifyVisualInvalidated()
+    }
+
+    override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+        super.onSizeChanged(w, h, oldw, oldh)
+        if (w != oldw || h != oldh) notifyVisualInvalidated()
+    }
+
+    private fun notifyVisualInvalidated() {
+        if (backdropCaptureDepth == 0) onVisualInvalidated?.invoke()
+    }
+
+    internal fun <T> withoutBackdropInvalidation(block: () -> T): T {
+        backdropCaptureDepth++
+        return try { block() } finally { backdropCaptureDepth-- }
+    }
+
+    /** Match the scroll transform normally supplied by View's parent before drawing. */
+    internal fun drawVisibleBackdrop(canvas: Canvas) = withoutBackdropInvalidation {
+        val save = canvas.save()
+        try {
+            canvas.translate(-scrollX.toFloat(), -scrollY.toFloat())
+            draw(canvas)
+        } finally { canvas.restoreToCount(save) }
+    }
 
     /** 本次手势是否已经进入长按（长按选词不触发翻页）。 */
     private var longPressed = false

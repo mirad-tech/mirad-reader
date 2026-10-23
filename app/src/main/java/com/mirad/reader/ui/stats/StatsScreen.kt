@@ -34,6 +34,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.ReadingStats
 import com.mirad.reader.core.model.StatsMath
+import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.EmptyState
 import com.mirad.reader.ui.common.ScreenHeader
 import com.mirad.reader.ui.common.SettingCard
@@ -63,30 +64,33 @@ fun StatsScreen(container: AppContainer, onBack: () -> Unit) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .glassBackdropSource()
         ) {
             if (current == null) {
-                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+                Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             } else if (current.sessionCount == 0) {
                 EmptyState(
                     title = "还没有阅读记录",
                     badge = "时",
                     description = "阅读满 5 秒就会开始统计，读一读就有数据了",
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize().padding(padding)
                 )
             } else {
-                StatsContent(current)
+                StatsContent(current, padding)
             }
         }
     }
 }
 
 @Composable
-private fun StatsContent(stats: ReadingStats) {
+private fun StatsContent(stats: ReadingStats, contentPadding: PaddingValues) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            .padding(contentPadding)
             .padding(horizontal = Spacing.lg)
     ) {
         Spacer(modifier = Modifier.height(Spacing.sm))

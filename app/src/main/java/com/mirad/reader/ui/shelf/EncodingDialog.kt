@@ -13,7 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,10 +117,11 @@ fun EncodingDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            MiradTextButton(
                 enabled = !working && previews.isNotEmpty(),
+                loading = working,
                 onClick = {
-                    val charset = selected ?: previews.firstOrNull()?.charset ?: return@TextButton
+                    val charset = selected ?: previews.firstOrNull()?.charset ?: return@MiradTextButton
                     val auto = previews.firstOrNull()?.charset == charset
                     working = true
                     scope.launch {
@@ -135,8 +136,8 @@ fun EncodingDialog(
                             }
                     }
                 }
-            ) { Text(if (working) "处理中…" else "应用") }
+            ) { Text("应用") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        dismissButton = { MiradTextButton(onClick = onDismiss) { Text("取消") } }
     )
 }

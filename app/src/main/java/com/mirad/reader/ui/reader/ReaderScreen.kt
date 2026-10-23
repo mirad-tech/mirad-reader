@@ -51,8 +51,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import com.mirad.reader.ui.common.LocalReaderWindowPolicy
+import com.mirad.reader.ui.common.ReaderWindowPolicy
+import com.mirad.reader.ui.common.ApplyReaderWindowPolicy
+import com.mirad.reader.ui.common.ReaderSystemBarProtection
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -138,7 +143,7 @@ fun ReaderScreen(
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(error!!)
-                TextButton(onClick = onBack) { Text("返回书架") }
+                MiradTextButton(onClick = onBack) { Text("返回书架") }
             }
         }
         return
@@ -187,6 +192,7 @@ private fun ReaderContent(
     }
 
     var chromeVisible by remember { mutableStateOf(false) }
+    var glassWebView by remember { mutableStateOf<ReaderWebView?>(null) }
     var showToc by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showProgress by remember { mutableStateOf(false) }
@@ -316,11 +322,16 @@ private fun ReaderContent(
     }
 
     // 屏幕亮度 / 常亮 / 方向 / 全屏
-    ApplyWindowSettings(config)
+    ApplyWindowSettings(config, palette.isDark)
 
     // 打开目录/设置/搜索/朗读等弹层，或呼出上下工具栏：自动阅读暂停，关闭后也不自动继续。
     val overlayVisible = showToc || showSettings || showProgress || showNotes ||
         showSearch || showTts || showAutoRead || pendingNote != null
+    WebViewGlassBackdrop(
+        view = glassWebView,
+        visible = chromeVisible || overlayVisible,
+        revision = listOf(state.chapterIndex, state.page, state.offset, state.pages, state.ready, config)
+    )
     LaunchedEffect(overlayVisible, chromeVisible) {
         if (overlayVisible || chromeVisible) session.pauseAutoRead()
     }
@@ -505,11 +516,13 @@ private fun ReaderContent(
         }
     }
 
+    CompositionLocalProvider(LocalReaderWindowPolicy provides ReaderWindowPolicy(config.fullScreen, palette.isDark)) {
     Box(modifier = Modifier.fillMaxSize()) {
 
         AndroidView(
             factory = { ctx ->
                 ReaderWebView(ctx).also { view ->
+                    glassWebView = view
                     session.attach(view)
                     view.onSelectionAction = { action ->
                         val selection = session.state.value.selection
@@ -573,6 +586,8 @@ private fun ReaderContent(
             percent = state.percent,
             insetLeftDp = geometry.inset
         )
+
+        ReaderSystemBarProtection(Color(palette.background))
 
         // 顶部/底部工具栏
         AnimatedVisibility(
@@ -794,7 +809,7 @@ private fun ReaderContent(
                 }
             },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(onClick = {
                     session.addHighlight(start, end, text, note = noteDraft.ifBlank { null }) { ok ->
                         toast = if (ok) "已保存笔记" else "保存失败"
                     }
@@ -803,18 +818,20 @@ private fun ReaderContent(
                 }) { Text("保存") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingNote = null }) { Text("取消") }
+                MiradTextButton(onClick = { pendingNote = null }) { Text("取消") }
             }
         )
+    }
     }
 }
 
 /** 亮度 / 常亮 / 方向 / 全屏。 */
 @Composable
-private fun ApplyWindowSettings(config: ReaderConfig) {
+private fun ApplyWindowSettings(config: ReaderConfig, darkTheme: Boolean) {
     val context = LocalContext.current
     val activity = context as? Activity
-    DisposableEffect(activity, config.brightness, config.keepScreenOn, config.fullScreen) {
+    ApplyReaderWindowPolicy(activity?.window, ReaderWindowPolicy(config.fullScreen, darkTheme))
+    DisposableEffect(activity, config.brightness, config.keepScreenOn, config.orientation) {
         val window = activity?.window
         if (window != null) {
             val params = window.attributes
@@ -828,15 +845,10 @@ private fun ApplyWindowSettings(config: ReaderConfig) {
                 OrientationKey.LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
                 else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
-            val controller = WindowInsetsControllerCompat(window, window.decorView)
-            if (config.fullScreen) {
-                controller.hide(WindowInsetsCompat.Type.systemBars())
-                controller.systemBarsBehavior =
-                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            } else {
-                controller.show(WindowInsetsCompat.Type.systemBars())
-            }
         }
+        onDispose { }
+    }
+    DisposableEffect(activity) {
         onDispose {
             val w = activity?.window ?: return@onDispose
             w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

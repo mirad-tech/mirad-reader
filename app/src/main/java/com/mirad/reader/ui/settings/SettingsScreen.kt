@@ -15,11 +15,10 @@ import androidx.compose.foundation.verticalScroll
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -89,8 +88,6 @@ fun SettingsScreen(
     var deleteTarget by remember { mutableStateOf<GroupEntity?>(null) }
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("settings")
 
-    val hiddenCount = shelf.count { it.book.isHidden }
-
     LaunchedEffect(Unit) {
         config = container.settings.currentGlobal()
         fonts = withContext(Dispatchers.IO) { container.fonts.available() }
@@ -143,17 +140,100 @@ fun SettingsScreen(
     }
 
     CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
+    SettingsContent(
+        config = config, fonts = fonts, groups = groups, shelf = shelf,
+        category = category, onBack = onBack, onOpenCategory = onOpenCategory,
+        onOpenHidden = onOpenHidden, onChange = { update(it) },
+        onImportFont = { fontPicker.launch(arrayOf("*/*")) },
+        onDeleteFont = { font -> scope.launch {
+            withContext(Dispatchers.IO) { container.fonts.delete(font) }
+            fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+        } },
+        onPickImage = { imagePicker.launch(arrayOf("image/*")) },
+        onRenameGroup = { group -> renameTarget = group; renameDraft = group.name },
+        onDeleteGroup = { deleteTarget = it },
+        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) }
+    )
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("重命名分组「${target.name}」") },
+            text = {
+                OutlinedTextField(
+                    value = renameDraft,
+                    onValueChange = { renameDraft = it },
+                    label = { Text("分组名称") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                MiradTextButton(enabled = renameDraft.isNotBlank(), onClick = {
+                    val name = renameDraft.trim()
+                    renameTarget = null
+                    if (name.isNotEmpty() && name != target.name) {
+                        scope.launch {
+                            container.groups.rename(target, name)
+                            feedback.show("已重命名为「$name」")
+                        }
+                    }
+                }) { Text("保存") }
+            },
+            dismissButton = { MiradTextButton(onClick = { renameTarget = null }) { Text("取消") } }
+        )
+    }
+    deleteTarget?.let { group ->
+        com.mirad.reader.ui.common.MiradDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("删除分组「${group.name}」") },
+            text = { Text("组内书籍会回到「未分组」，书籍本身不会被删除。") },
+            confirmButton = { MiradTextButton(danger = true, onClick = {
+                scope.launch {
+                    container.groups.delete(group)
+                    deleteTarget = null
+                    feedback.show("已删除分组「${group.name}」")
+                }
+            }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
+            dismissButton = { MiradTextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+        )
+    }
+
+}
+
+/** Pure settings surface shared by the app and the isolated native preview. */
+@Composable
+internal fun SettingsContent(
+    config: ReaderConfig = ReaderConfig.DEFAULT,
+    fonts: List<com.mirad.reader.core.model.ReadingFont> = emptyList(),
+    groups: List<GroupEntity> = emptyList(),
+    shelf: List<com.mirad.reader.data.repo.ShelfBook> = emptyList(),
+    category: SettingsCategory? = null,
+    onBack: () -> Unit = {},
+    onOpenCategory: (SettingsCategory) -> Unit = {},
+    onOpenHidden: () -> Unit = {},
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit = {},
+    onImportFont: () -> Unit = {},
+    onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
+    onPickImage: () -> Unit = {},
+    onRenameGroup: (GroupEntity) -> Unit = {},
+    onDeleteGroup: (GroupEntity) -> Unit = {},
+    snackbarHost: @Composable () -> Unit = {},
+    initialScrollPx: Int = 0
+) {
+    val hiddenCount = shelf.count { it.book.isHidden }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) },
+        snackbarHost = { snackbarHost() },
         topBar = { ScreenHeader(title = category?.title ?: "设置", onBack = onBack,
             subtitle = if (category != null && category != SettingsCategory.SHELF && category != SettingsCategory.ABOUT) "全局默认" else null) }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .glassBackdropSource()
+                .verticalScroll(rememberScrollState(initial = initialScrollPx))
                 .padding(padding)
-                .verticalScroll(rememberScrollState())
                 .padding(horizontal = Spacing.lg)
         ) {
             Spacer(modifier = Modifier.height(Spacing.sm))
@@ -162,13 +242,10 @@ fun SettingsScreen(
                     SettingNavRow(item.title, onClick = { onOpenCategory(item) })
                 } }
             } else if (category != SettingsCategory.SHELF && category != SettingsCategory.ABOUT) {
-                ReaderSettingsContent(category, config, { update(it) }, fonts,
-                    onImportFont = { fontPicker.launch(arrayOf("*/*")) },
-                    onDeleteFont = { font -> scope.launch {
-                        withContext(Dispatchers.IO) { container.fonts.delete(font) }
-                        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    } },
-                    onPickImage = { imagePicker.launch(arrayOf("image/*")) })
+                ReaderSettingsContent(category, config, onChange, fonts,
+                    onImportFont = onImportFont,
+                    onDeleteFont = onDeleteFont,
+                    onPickImage = onPickImage)
             }
             if (category == SettingsCategory.SHELF) {
             SettingCard(title = "书架管理") {
@@ -212,12 +289,11 @@ fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 modifier = Modifier.weight(1f)
                             )
-                            TextButton(onClick = {
-                                renameTarget = group
-                                renameDraft = group.name
+                            MiradTextButton(onClick = {
+                                onRenameGroup(group)
                             }) { Text("重命名") }
-                            TextButton(onClick = {
-                                deleteTarget = group
+                            MiradTextButton(danger = true, onClick = {
+                                onDeleteGroup(group)
                             }) { Text("删除") }
                         }
                     }
@@ -237,49 +313,4 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.height(Spacing.xxxl))
         }
     }
-    }
-
-    renameTarget?.let { target ->
-        AlertDialog(
-            onDismissRequest = { renameTarget = null },
-            title = { Text("重命名分组「${target.name}」") },
-            text = {
-                OutlinedTextField(
-                    value = renameDraft,
-                    onValueChange = { renameDraft = it },
-                    label = { Text("分组名称") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                TextButton(enabled = renameDraft.isNotBlank(), onClick = {
-                    val name = renameDraft.trim()
-                    renameTarget = null
-                    if (name.isNotEmpty() && name != target.name) {
-                        scope.launch {
-                            container.groups.rename(target, name)
-                            feedback.show("已重命名为「$name」")
-                        }
-                    }
-                }) { Text("保存") }
-            },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } }
-        )
-    }
-    deleteTarget?.let { group ->
-        com.mirad.reader.ui.common.MiradDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("删除分组「${group.name}」") },
-            text = { Text("组内书籍会回到「未分组」，书籍本身不会被删除。") },
-            confirmButton = { TextButton(onClick = {
-                scope.launch {
-                    container.groups.delete(group)
-                    deleteTarget = null
-                    feedback.show("已删除分组「${group.name}」")
-                }
-            }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
-        )
-    }
-
 }

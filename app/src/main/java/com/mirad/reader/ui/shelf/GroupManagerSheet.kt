@@ -9,7 +9,7 @@ import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -73,11 +73,11 @@ fun GroupManagerSheet(
                         meta = "$count 本",
                         trailing = {
                             Column {
-                                TextButton(onClick = {
+                                MiradTextButton(onClick = {
                                     renameTarget = group
                                     renameDraft = group.name
                                 }) { Text("重命名") }
-                                TextButton(onClick = { deleteTarget = group }) { Text("删除") }
+                                MiradTextButton(danger = true, onClick = { deleteTarget = group }) { Text("删除") }
                             }
                         }
                     )
@@ -100,7 +100,7 @@ fun GroupManagerSheet(
                 )
             },
             confirmButton = {
-                TextButton(enabled = renameDraft.isNotBlank(), onClick = {
+                MiradTextButton(enabled = renameDraft.isNotBlank(), onClick = {
                     val name = renameDraft.trim()
                     renameTarget = null
                     if (name.isNotEmpty() && name != target.name) {
@@ -108,7 +108,7 @@ fun GroupManagerSheet(
                     }
                 }) { Text("保存") }
             },
-            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { renameTarget = null }) { Text("取消") } }
         )
     }
 
@@ -124,12 +124,12 @@ fun GroupManagerSheet(
                 )
             },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(danger = true, onClick = {
                     deleteTarget = null
                     scope.launch { container.groups.delete(target) }
                 }) { Text("删除") }
             },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { deleteTarget = null }) { Text("取消") } }
         )
     }
 }

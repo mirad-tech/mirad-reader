@@ -2,6 +2,10 @@ package com.mirad.reader.ui.notes
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.calculateStartPadding
+import androidx.compose.foundation.layout.calculateEndPadding
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -13,7 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +32,7 @@ import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.NoteExporter
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
+import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.EmptyState
 import com.mirad.reader.ui.common.ListRow
 import com.mirad.reader.ui.common.RowDivider
@@ -117,7 +122,7 @@ fun NotesScreen(
                 subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}",
                 onBack = onBack,
                 actions = {
-                    TextButton(
+                    MiradTextButton(
                         onClick = {
                             scope.launch {
                                 if (highlights.isEmpty() && bookmarks.isEmpty()) {
@@ -137,28 +142,36 @@ fun NotesScreen(
             )
         }
     ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            SegmentedRow(
-                options = listOf(0 to "划线 ${highlights.size}", 1 to "书签 ${bookmarks.size}"),
-                selected = tab,
-                onSelect = { tab = it },
-                modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)
-            )
-            val list = if (tab == 0) highlights else bookmarks
-            if (list.isEmpty()) {
-                EmptyState(
-                    title = if (tab == 0) "还没有划线或笔记" else "还没有书签",
-                    badge = if (tab == 0) "记" else "签",
-                    description = if (tab == 0) "阅读时长按选中文字，用工具条上的「划线」或「笔记」"
-                    else "阅读时点顶栏的星标即可添加书签",
-                    modifier = Modifier.fillMaxSize()
+        key(tab) {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().glassBackdropSource(),
+                contentPadding = PaddingValues(
+                    start = padding.calculateStartPadding(LocalLayoutDirection.current),
+                    end = padding.calculateEndPadding(LocalLayoutDirection.current),
+                    top = padding.calculateTopPadding() + Spacing.sm,
+                    bottom = padding.calculateBottomPadding() + Spacing.sm
                 )
-            } else if (tab == 0) {
-                LazyColumn(contentPadding = PaddingValues(vertical = Spacing.sm)) {
+            ) {
+                item(key = "notes-tabs") {
+                    SegmentedRow(
+                        options = listOf(0 to "划线 ${highlights.size}", 1 to "书签 ${bookmarks.size}"),
+                        selected = tab,
+                        onSelect = { tab = it },
+                        modifier = Modifier.padding(horizontal = Spacing.lg, vertical = Spacing.sm)
+                    )
+                }
+                val list = if (tab == 0) highlights else bookmarks
+                if (list.isEmpty()) {
+                    item(key = "notes-empty") {
+                        EmptyState(
+                            title = if (tab == 0) "还没有划线或笔记" else "还没有书签",
+                            badge = if (tab == 0) "记" else "签",
+                            description = if (tab == 0) "阅读时长按选中文字，用工具条上的「划线」或「笔记」"
+                            else "阅读时点顶栏的星标即可添加书签",
+                            modifier = Modifier.fillParentMaxHeight(0.75f)
+                        )
+                    }
+                } else if (tab == 0) {
                     items(highlights, key = { it.id }) { item ->
                         ListRow(
                             title = item.text,
@@ -168,7 +181,7 @@ fun NotesScreen(
                                     " · ${com.mirad.reader.core.model.NoteAnchor.STALE_HINT}"
                                 } else "",
                             trailing = {
-                                TextButton(onClick = {
+                                MiradTextButton(danger = true, onClick = {
                                     pendingDelete = "划线" to {
                                         scope.launch {
                                             withContext(Dispatchers.IO) { container.notes.deleteHighlight(item) }
@@ -182,9 +195,7 @@ fun NotesScreen(
                         )
                         RowDivider()
                     }
-                }
-            } else {
-                LazyColumn(contentPadding = PaddingValues(vertical = Spacing.sm)) {
+                } else {
                     items(bookmarks, key = { it.id }) { item ->
                         ListRow(
                             title = item.chapterTitle,
@@ -195,7 +206,7 @@ fun NotesScreen(
                                     " · ${com.mirad.reader.core.model.NoteAnchor.STALE_HINT}"
                                 } else "",
                             trailing = {
-                                TextButton(onClick = {
+                                MiradTextButton(danger = true, onClick = {
                                     pendingDelete = "书签" to {
                                         scope.launch {
                                             withContext(Dispatchers.IO) { container.notes.deleteBookmark(item) }
@@ -220,13 +231,13 @@ fun NotesScreen(
             title = { Text("删除${pending.first}") },
             text = { Text("删除后无法恢复，确定要删除吗？") },
             confirmButton = {
-                TextButton(onClick = {
+                MiradTextButton(danger = true, onClick = {
                     val action = pending.second
                     pendingDelete = null
                     action()
                 }) { Text("删除", color = MaterialTheme.colorScheme.error) }
             },
-            dismissButton = { TextButton(onClick = { pendingDelete = null }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = { pendingDelete = null }) { Text("取消") } }
         )
     }
 }

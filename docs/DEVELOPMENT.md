@@ -37,11 +37,12 @@ npm --prefix tools/browser-checks exec -- playwright install chromium
 npm --prefix tools/browser-checks test
 ```
 
-也可单独运行 `test:auto-read`、`test:font`、`test:modern`。这些脚本从自身位置定位仓库，不依赖个人电脑的缓存目录。截图和结果写入 `build/verification/`。
+也可单独运行 `test:auto-read`、`test:font`、`test:modern`、`test:anchors`。这些脚本从自身位置定位仓库，不依赖个人电脑的缓存目录。截图和结果写入 `build/verification/`。
 
 - 自动阅读脚本覆盖速度、暂停、滚动回报和旧单章换章路径，显式关闭窗口引擎。
-- 字体脚本使用保存的主题 CSS 夹具，检查字号往返、标记和布局；其断言不保证每个场景的字符锚点零漂移。
-- 现代阅读器脚本覆盖部分 CFI、TextQuote 和短章场景；其中的裁剪用例为算法级检查，不能替代生产函数及设备端集成验收。
+- 字体脚本使用保存的主题 CSS 夹具，覆盖分页、单章滚动和连续滚动中的非首章；通过独立的 DOM 字符矩形检查字号往返定位、导航后的锚点更新、标记和布局。分页要求原字符仍可见，滚动允许最多 1 CSS px 的坐标舍入误差。
+- 现代阅读器脚本覆盖部分 CFI、TextQuote 和短章场景；裁剪用例通过真实滚动事件和生产延时裁剪路径检查章节集合、正文位置与下方保留高度。
+- 锚点回归覆盖常用字号往返、12/60 字号及零间距的列边界、延迟图片触发的真实重排，以及字号调整与连续滚动裁剪、前插章节交错。定时用例使用 Playwright 时钟执行生产回调，并检查补偿后正常导航仍会更新锚点。
 - 上述浏览器检查不是 Compose、Android WebView、Room 迁移或真实触摸手势的设备测试。
 
 ## 正式 APK 签名

@@ -106,78 +106,89 @@ async function run() {
     }
 
     // =========================================================================
-    // 测试 2: [P1-4] 窗口裁剪（trimWindow）保持正文视口绝对锚点，零漂移、绝不回顶
+    // 测试 2: 真实滚动事件 -> refreshActive -> scheduleTrim -> trimWindow
     // =========================================================================
     {
       const page = await context.newPage();
+      await page.route('**/*', route => route.abort());
       const longPara = '<p>' + '山间的风吹过竹林，清泉石上流。'.repeat(10) + '</p>';
-      const section0 = `<section class="mirad-chapter" data-chapter="0">${longPara.repeat(10)}</section>`;
-      const section1 = `<section class="mirad-chapter" data-chapter="1">${longPara.repeat(10)}</section>`;
-      const section2 = `<section class="mirad-chapter" data-chapter="2">${longPara.repeat(10)}</section>`;
-      const section3 = `<section class="mirad-chapter" data-chapter="3">${longPara.repeat(10)}</section>`;
-
-      await page.setContent(buildHtml(section0 + section1 + section2 + section3, 0));
+      const sections = Array.from({ length: 6 }, (_, index) =>
+        '<section class="mirad-chapter" data-chapter="' + index + '">' + longPara.repeat(10) + '</section>');
+      await page.setContent(buildHtml(sections.join(''), 0));
       await page.evaluate(() => {
-        window.MiradReader.init({ mode: 'SCROLL', windowedScroll: true });
+        MiradBridge.onChapterChanged = index => { window.__activeChapter = index; };
+        MiradReader.init({ mode: 'SCROLL', windowedScroll: true, chapterCount: 6 });
       });
-
-      // 模拟视口滚动到 Chapter 2 中间
-      const driftResult = await page.evaluate(() => {
-        var sec2 = document.querySelector('section.mirad-chapter[data-chapter="2"]');
-        var sec2Top = sec2.getBoundingClientRect().top + window.scrollY;
-        // 滚入第 2 章 300px
-        window.scrollTo(0, sec2Top + 300);
-
-        // 触发 refreshActive
-        var evt = new Event('scroll');
-        document.dispatchEvent(evt);
-
-        // 记录此时第 2 章顶部相对于视口的像素位置
-        var topBefore = sec2.getBoundingClientRect().top;
-        var scrollYBefore = window.scrollY;
-
-        // 显式触发 trimWindow
-        var winActive = sec2;
-        var c = document.getElementById('mirad-content');
-        var list = Array.prototype.slice.call(c.querySelectorAll('section.mirad-chapter'));
-
-        // 模拟 trimWindow 执行
-        var activeIdx = 2;
-        var anchorTopBefore = winActive.getBoundingClientRect().top;
-        var removedAny = false;
-        for (var i = 0; i < list.length; i++) {
-          var el = list[i];
-          var idx = parseInt(el.getAttribute('data-chapter'), 10);
-          if (Math.abs(idx - activeIdx) > 1) {
-            el.parentNode.removeChild(el);
-            removedAny = true;
-          }
-        }
-        if (removedAny) {
-          var anchorTopAfter = winActive.getBoundingClientRect().top;
-          var drift = anchorTopAfter - anchorTopBefore;
-          if (Math.abs(drift) > 0.5) {
-            window.scrollBy(0, drift);
-          }
-        }
-
-        var topAfter = sec2.getBoundingClientRect().top;
-        var scrollYAfter = window.scrollY;
-
-        return {
-          scrollYBefore: scrollYBefore,
-          scrollYAfter: scrollYAfter,
-          topBefore: topBefore,
-          topAfter: topAfter,
-          drift: Math.abs(topAfter - topBefore)
-        };
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const anchor = document.querySelector('section[data-chapter="2"] p:nth-child(3)');
+        window.scrollTo(0, anchor.getBoundingClientRect().top + scrollY - 180);
       });
+      await page.waitForFunction(() => window.__activeChapter === 2);
+      const before = await page.evaluate(() => ({
+        top: document.querySelector('section[data-chapter="2"] p:nth-child(3)').getBoundingClientRect().top,
+        text: document.querySelector('section[data-chapter="2"] p:nth-child(3)').textContent,
+        scrollY,
+        chapters: [...document.querySelectorAll('section.mirad-chapter')].map(s => Number(s.dataset.chapter))
+      }));
+      assert.deepStrictEqual(before.chapters, [0, 1, 2, 3, 4, 5], 'all fixture chapters must exist before production trim');
+      assert(before.top >= 0 && before.top < 760, 'the tracked text must be visible before trimming');
 
-      console.log('  [P1-4] 窗口裁剪测量结果:', driftResult);
-      assert(driftResult.scrollYAfter > 0, `scrollY 不应归零回顶, 实际 scrollY: ${driftResult.scrollYAfter}`);
-      assert(driftResult.drift <= 0.5, `活动章在视口内的相对位置漂移必须 <= 0.5px，实际漂移: ${driftResult.drift}px`);
+      // Observe the real 800ms timer. The test never removes nodes or compensates scrolling.
+      await page.waitForFunction(() => !document.querySelector('section[data-chapter="0"]') &&
+        !document.querySelector('section[data-chapter="4"]') &&
+        !document.querySelector('section[data-chapter="5"]'), null, { timeout: 3000 });
+      const after = await page.evaluate(() => ({
+        top: document.querySelector('section[data-chapter="2"] p:nth-child(3)').getBoundingClientRect().top,
+        text: document.querySelector('section[data-chapter="2"] p:nth-child(3)').textContent,
+        active: window.__activeChapter,
+        scrollY,
+        chapters: [...document.querySelectorAll('section.mirad-chapter')].map(s => Number(s.dataset.chapter))
+      }));
+      assert.deepStrictEqual(after.chapters, [1, 2, 3], 'production must trim both distant ends');
+      assert.strictEqual(after.active, 2, 'trimming must keep the active chapter');
+      assert.strictEqual(after.text, before.text, 'the same text must remain mounted');
+      assert(after.scrollY > 0 && after.scrollY < before.scrollY, 'removing an earlier chapter must compensate scrollY');
+      assert(Math.abs(after.top - before.top) <= 1, 'visible text drift after production trim: ' + (after.top - before.top));
+      console.log('PASS production-window-trim-anchor', JSON.stringify({ before, after }));
+      passed++;
+      await page.close();
+    }
 
-      console.log('PASS [P1-4] 窗口裁剪保持正文视口绝对锚点，零漂移、绝不回顶');
+    // 下方裁剪必须保留 2.5 屏总高度；固定 fixture 高度只控制输入，不复制裁剪算法。
+    {
+      const page = await context.newPage();
+      await page.route('**/*', route => route.abort());
+      const sections = Array.from({ length: 5 }, (_, index) =>
+        '<section class="mirad-chapter" data-chapter="' + index +
+        '" style="height:450px"><p>第' + index + '章：用于验证下方保留高度。</p></section>');
+      await page.setContent(buildHtml(sections.join(''), 0));
+      await page.evaluate(() => {
+        MiradBridge.onChapterChanged = index => { window.__activeChapter = index; };
+        MiradReader.init({ mode: 'SCROLL', windowedScroll: true, chapterCount: 5 });
+      });
+      await page.evaluate(async () => {
+        await document.fonts.ready;
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const active = document.querySelector('section[data-chapter="1"]');
+        window.scrollTo(0, active.getBoundingClientRect().top + scrollY + 1);
+      });
+      await page.waitForFunction(() => window.__activeChapter === 1);
+      await page.waitForFunction(() => !document.querySelector('section[data-chapter="4"]'),
+        null, { timeout: 3000 });
+      const result = await page.evaluate(() => ({
+        chapters: [...document.querySelectorAll('section.mirad-chapter')].map(s => Number(s.dataset.chapter)),
+        height: document.documentElement.scrollHeight,
+        lastHeight: document.querySelector('section[data-chapter="3"]')?.getBoundingClientRect().height || 0,
+        viewport: innerHeight,
+        active: window.__activeChapter
+      }));
+      assert.deepStrictEqual(result.chapters, [0, 1, 2, 3], 'keep the extra lower chapter when three chapters are too short');
+      assert.strictEqual(result.active, 1);
+      assert(result.height >= result.viewport * 2.5, 'retained document must cover 2.5 screens');
+      assert(result.height - result.lastHeight < result.viewport * 2.5, 'fixture must exercise the height guard');
+      console.log('PASS production-window-trim-height-guard', JSON.stringify(result));
       passed++;
       await page.close();
     }
@@ -387,7 +398,7 @@ async function run() {
   }
 
   console.log(`\n========================================`);
-  console.log(`全部 ${passed}/7 项专项 Review 定向验证测试全部通过！`);
+  console.log(`全部 ${passed}/8 项专项 Review 定向验证测试全部通过！`);
   console.log(`========================================\n`);
 }
 

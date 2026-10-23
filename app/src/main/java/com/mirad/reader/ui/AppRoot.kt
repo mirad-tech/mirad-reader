@@ -2,16 +2,25 @@ package com.mirad.reader.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import com.mirad.reader.AppContainer
+import com.mirad.reader.ui.common.GlassAppearance
+import com.mirad.reader.ui.common.GlassAppearanceController
+import com.mirad.reader.ui.common.LocalGlassAppearance
+import com.mirad.reader.ui.common.LocalGlassAppearanceController
+import com.mirad.reader.ui.common.LocalGlassSaveFailed
 import com.mirad.reader.ui.notes.NotesScreen
 import com.mirad.reader.ui.reader.ReaderScreen
 import com.mirad.reader.ui.settings.SettingsScreen
 import com.mirad.reader.ui.shelf.HiddenBooksScreen
 import com.mirad.reader.ui.shelf.ShelfScreen
 import com.mirad.reader.ui.stats.StatsScreen
+import kotlinx.coroutines.launch
 
 /** 屏幕（自建返回栈，不引 navigation-compose）。 */
 sealed interface Screen {
@@ -33,6 +42,27 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     val backStack = remember { mutableStateListOf<Screen>(Screen.Shelf) }
     val current = backStack.last()
 
+    val glassAppearance by container.settings.glassAppearance.collectAsState(initial = GlassAppearance.DEFAULT)
+    val glassSaveFailed by container.settings.glassSaveFailed.collectAsState(initial = false)
+    val glassController = remember(container) {
+        object : GlassAppearanceController {
+            override val saveFailed: Boolean
+                get() = glassSaveFailed
+            override fun update(appearance: GlassAppearance) {
+                container.settings.queueGlassAppearance(appearance, container.appScope)
+            }
+            override fun commit() {
+                container.settings.flushGlassAppearance(container.appScope)
+            }
+            override fun reset() {
+                container.settings.resetGlassAppearance(container.appScope)
+            }
+            override fun retrySave() {
+                container.settings.retryGlassAppearance(container.appScope)
+            }
+        }
+    }
+
     fun navigate(screen: Screen) {
         if (backStack.last() != screen) backStack.add(screen)
     }
@@ -44,45 +74,51 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     BackHandler(enabled = backStack.size > 1) { goBack() }
 
     val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
-    stateHolder.SaveableStateProvider(current.toString()) {
-    com.mirad.reader.ui.common.PageSurface(
-        pageKey = current.toString(), bounded = current != Screen.Shelf && current !is Screen.Reader,
-        animate = current !is Screen.Reader
+    CompositionLocalProvider(
+        LocalGlassAppearance provides glassAppearance,
+        LocalGlassAppearanceController provides glassController,
+        LocalGlassSaveFailed provides glassSaveFailed
     ) {
-    when (current) {
-        Screen.Shelf -> ShelfScreen(
-            container = container,
-            onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) },
-            onOpenStats = { navigate(Screen.Stats) },
-            onOpenSettings = { navigate(Screen.Settings) },
-            onOpenNotes = { navigate(Screen.Notes) },
-            onOpenHidden = { navigate(Screen.HiddenBooks) }
-        )
-        is Screen.Reader -> ReaderScreen(
-            container = container,
-            bookId = current.bookId,
-            systemDark = systemDark,
-            onBack = { goBack() }
-        )
-        Screen.Stats -> StatsScreen(container = container, onBack = { goBack() })
-        is Screen.SettingsDetail -> SettingsScreen(
-            container = container, category = current.category, onBack = { goBack() },
-            onOpenHidden = { navigate(Screen.HiddenBooks) }
-        )
-        Screen.Settings -> SettingsScreen(
-            container = container,
-            onOpenCategory = { navigate(Screen.SettingsDetail(it)) },
-            onBack = { goBack() },
-            onOpenHidden = { navigate(Screen.HiddenBooks) }
-        )
-        Screen.Notes -> NotesScreen(
-            container = container,
-            onBack = { goBack() },
-            onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) }
-        )
-        Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
+        stateHolder.SaveableStateProvider(current.toString()) {
+            com.mirad.reader.ui.common.PageSurface(
+                pageKey = current.toString(),
+                bounded = current != Screen.Shelf && current !is Screen.Reader,
+                animate = current !is Screen.Reader
+            ) {
+                when (current) {
+                    Screen.Shelf -> ShelfScreen(
+                        container = container,
+                        onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) },
+                        onOpenStats = { navigate(Screen.Stats) },
+                        onOpenSettings = { navigate(Screen.Settings) },
+                        onOpenNotes = { navigate(Screen.Notes) },
+                        onOpenHidden = { navigate(Screen.HiddenBooks) }
+                    )
+                    is Screen.Reader -> ReaderScreen(
+                        container = container,
+                        bookId = current.bookId,
+                        systemDark = systemDark,
+                        onBack = { goBack() }
+                    )
+                    Screen.Stats -> StatsScreen(container = container, onBack = { goBack() })
+                    is Screen.SettingsDetail -> SettingsScreen(
+                        container = container, category = current.category, onBack = { goBack() },
+                        onOpenHidden = { navigate(Screen.HiddenBooks) }
+                    )
+                    Screen.Settings -> SettingsScreen(
+                        container = container,
+                        onOpenCategory = { navigate(Screen.SettingsDetail(it)) },
+                        onBack = { goBack() },
+                        onOpenHidden = { navigate(Screen.HiddenBooks) }
+                    )
+                    Screen.Notes -> NotesScreen(
+                        container = container,
+                        onBack = { goBack() },
+                        onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) }
+                    )
+                    Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
+                }
+            }
+        }
     }
-}
-}
-
 }

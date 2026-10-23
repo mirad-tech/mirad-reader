@@ -21,13 +21,18 @@ android {
         applicationId = "com.mirad.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.0.12"
+        versionCode = 17
+        versionName = "1.0.16"
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
+        }
+        create("preview") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".preview"
+            matchingFallbacks += "debug"
         }
         release {
             // 之前 release 与 debug 一样不混淆不压缩：正式包体积偏大、符号全暴露。

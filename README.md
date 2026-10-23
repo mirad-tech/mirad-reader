@@ -2,13 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前版本：1.0.12（versionCode 13）**
+**当前版本：1.0.16（versionCode 17）**
 
-[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.0.12.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载正式安装包](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.0.16.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-从 Releases 下载 `mirad-reader-1.0.12-release.apk`。支持 Android 8.0 及以上。正式版本沿用同一发行证书，可覆盖同签名的旧正式版；无需先卸载旧版。
+从 Releases 下载 `mirad-reader-1.0.16-release.apk`。支持 Android 8.0 及以上。正式版本沿用同一发行证书，可覆盖同签名的旧正式版；无需先卸载旧版。
 
 如需核验文件完整性，请对照同一 Release 附带的 `SHA256SUMS.txt`。Debug 包与正式包可能使用不同签名，不能据此假定它们可以互相覆盖安装。
 
@@ -19,6 +19,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
 - **统一界面**：暖纸色与墨绿主题，统一提示、弹窗和设置布局；阅读弹层随当前阅读主题切换明暗，普通操作采用短时过渡。
+- **玻璃外观**：全局设置与阅读设置共享 0–100% 玻璃透明度，默认 60%；高透明度复杂背景下仍有文字对比度限制，详见[本次更新](docs/releases/1.0.16.md)。
 
 ### 阅读设置的作用范围
 

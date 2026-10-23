@@ -16,16 +16,26 @@ import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.BottomSheetDefaults
+import androidx.compose.material3.SheetValue
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.expand
+import androidx.compose.ui.semantics.collapse
+import androidx.compose.ui.semantics.dismiss
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -55,13 +65,40 @@ fun SheetScaffold(
     // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction
+    val sheetState = rememberModalBottomSheetState()
+    val scope = rememberCoroutineScope()
+    val close: () -> Unit = { scope.launch { sheetState.hide(); onDismiss() }; Unit }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        dragHandle = null,
         sheetMaxWidth = 720.dp,
         shape = MaterialTheme.shapes.extraLarge,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 0.dp,
         contentWindowInsets = { WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout) }
     ) {
+        ApplyReaderDialogWindowPolicy()
+        // The public ModalBottomSheet modifier precedes its internal offset. Paint
+        // inside its content so the background and clip move with the sheet.
+        Column(Modifier.fillMaxWidth().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)) {
+            BottomSheetDefaults.DragHandle(
+                modifier = Modifier.align(Alignment.CenterHorizontally)
+                    .clickable {
+                        if (sheetState.currentValue == SheetValue.PartiallyExpanded) {
+                            scope.launch { sheetState.expand() }
+                        } else close()
+                    }
+                    .semantics(mergeDescendants = true) {
+                        dismiss { close(); true }
+                        if (sheetState.currentValue == SheetValue.PartiallyExpanded) {
+                            expand { scope.launch { sheetState.expand() }; true }
+                        } else if (sheetState.hasPartiallyExpandedState) {
+                            collapse { scope.launch { sheetState.partialExpand() }; true }
+                        }
+                    }
+            )
         Column(
             modifier = modifier
                 .fillMaxWidth()
@@ -111,13 +148,14 @@ fun SheetScaffold(
             }
             Spacer(modifier = Modifier.height(Spacing.md))
         }
+        }
     }
 }
 
 /** 弹层右上角的文字操作。 */
 @Composable
 fun SheetActionButton(text: String, onClick: () -> Unit, enabled: Boolean = true) {
-    TextButton(onClick = onClick, enabled = enabled) { Text(text) }
+    MiradTextButton(onClick = onClick, enabled = enabled) { Text(text) }
 }
 
 /** 弹层里的空状态占位（统一样式，避免每个弹层自己写一段灰字）。 */

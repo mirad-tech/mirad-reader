@@ -16,6 +16,8 @@ fun PageSurface(pageKey: String, bounded: Boolean, animate: Boolean, content: @C
     LaunchedEffect(pageKey) { if (animate) alpha.animateTo(1f, tween(160)) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Box(Modifier.then(if (bounded) Modifier.widthIn(max = 720.dp) else Modifier)
-            .fillMaxSize().graphicsLayer { this.alpha = alpha.value }) { content() }
+            .fillMaxSize().graphicsLayer { this.alpha = alpha.value }) {
+            GlassBackdropHost { content() }
+        }
     }
 }

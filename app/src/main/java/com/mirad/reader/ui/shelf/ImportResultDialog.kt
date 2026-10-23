@@ -9,6 +9,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.data.imports.ImportSummary
 import com.mirad.reader.ui.common.MiradDialog
+import com.mirad.reader.ui.common.MiradTextButton
 import com.mirad.reader.ui.common.publicError
 
 @Composable
@@ -28,7 +29,7 @@ internal fun ImportResultDialog(result: ImportSummary, onDismiss: () -> Unit) {
                 Text("成功 ${result.success} 本 · 跳过 ${result.skipped} 本 · 失败 ${result.failed} 本")
                 if (result.skipped > 0 && result.failed == 0) Text("跳过的书籍已在书架中。", style = MaterialTheme.typography.bodySmall)
                 if (result.messages.isNotEmpty()) {
-                    TextButton(onClick = { expanded = !expanded }) {
+                    MiradTextButton(onClick = { expanded = !expanded }) {
                         Text(if (expanded) "收起详情" else "查看详情")
                     }
                     if (expanded) result.messages.forEach {
@@ -38,6 +39,6 @@ internal fun ImportResultDialog(result: ImportSummary, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+        confirmButton = { MiradTextButton(onClick = onDismiss) { Text("关闭") } }
     )
 }

@@ -9,6 +9,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,8 +27,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -32,6 +38,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.ImageBitmap
@@ -77,6 +85,7 @@ private object BackgroundThumbs {
 }
 
 /** 字体选择：系统预设 + 内置/已导入字体。 */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FontSection(
     config: ReaderConfig,
@@ -88,19 +97,18 @@ fun FontSection(
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
         SettingCard(title = "字体") {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                ReadingFonts.PRESETS.chunked(4).forEach { row ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.forEach { font ->
-                            ChoiceChip(
-                                text = font.label,
-                                selected = config.fontFamily == font.systemKey,
-                                onClick = {
-                                    onChange { it.copy(fontFamily = font.systemKey ?: FontFamilyKey.SYSTEM) }
-                                }
-                            )
-                        }
-                    }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+                maxItemsInEachRow = 4
+            ) {
+                ReadingFonts.PRESETS.forEach { font ->
+                    FontChoiceChip(
+                        font = font,
+                        selected = config.fontFamily == font.systemKey,
+                        onSelect = { onChange { it.copy(fontFamily = font.systemKey ?: FontFamilyKey.SYSTEM) } },
+                        onDelete = null
+                    )
                 }
             }
 
@@ -130,7 +138,7 @@ fun FontSection(
                         val selected = config.fontFamily == FontFamilyKey.CUSTOM &&
                             ((font.assetName != null && config.customFontAsset == font.assetName) ||
                                 (font.filePath != null && config.customFontPath == font.filePath))
-                        CustomFontChip(
+                        FontChoiceChip(
                             font = font,
                             selected = selected,
                             onSelect = {
@@ -147,13 +155,16 @@ fun FontSection(
                     }
                 }
             }
-            OutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
+            MiradOutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
                 Text("导入字体文件（.ttf / .otf / .ttc）")
             }
             if (config.fontFamily == FontFamilyKey.CUSTOM) {
+                val currentFont = customFonts.firstOrNull { font ->
+                    (font.assetName != null && font.assetName == config.customFontAsset) ||
+                        (font.filePath != null && font.filePath == config.customFontPath)
+                }
                 Text(
-                    text = "当前使用：" + (config.customFontAsset?.substringAfterLast('/')
-                        ?: config.customFontPath?.substringAfterLast('/') ?: "未选择，已回退系统字体"),
+                    text = "当前使用：" + (currentFont?.label ?: "自定义"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -163,37 +174,41 @@ fun FontSection(
 }
 
 @Composable
-private fun CustomFontChip(
+private fun FontChoiceChip(
     font: ReadingFont,
     selected: Boolean,
     onSelect: () -> Unit,
     onDelete: (() -> Unit)?
 ) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(14.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant
-            )
-            .clickable(onClick = onSelect)
-            .padding(start = 12.dp, end = if (onDelete == null) 12.dp else 4.dp, top = 7.dp, bottom = 7.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = font.label,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
-        )
+    Row(Modifier.widthIn(max = 240.dp), verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            Modifier.weight(1f, fill = false)
+                .selectable(selected = selected, role = Role.RadioButton, onClick = onSelect)
+                .minimumInteractiveComponentSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                Modifier.heightIn(min = 40.dp)
+                    .clip(MiradButtonShape)
+                    .background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .border(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, MiradButtonShape)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = font.label,
+                    style = MiradButtonTextStyle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
         if (onDelete != null) {
-            Icon(
-                imageVector = Icons.Default.Close,
-                contentDescription = "删除字体",
-                tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier
-                    .padding(start = 2.dp)
-                    .size(18.dp)
-                    .clickable(onClick = onDelete)
-            )
+            IconButton(onClick = onDelete, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "删除字体：${font.label}",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+            }
         }
     }
 }
@@ -256,7 +271,7 @@ fun BackgroundSection(
                         )
                     }
                 }
-                OutlinedButton(onClick = onPickImage, modifier = Modifier.fillMaxWidth()) {
+                MiradOutlinedButton(onClick = onPickImage, modifier = Modifier.fillMaxWidth()) {
                     Text("选择本机图片作为背景")
                 }
                 val current = config.backgroundImageUri

@@ -1,16 +1,21 @@
 package com.mirad.reader.ui.common
 
+import android.content.Context
+import android.os.Build
+import android.os.PowerManager
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.core.model.*
 import com.mirad.reader.ui.reader.openTtsSettings
 
 enum class SettingsCategory(val title: String) {
+    APPEARANCE("界面外观"),
     TYPOGRAPHY("字体与排版"), THEME("主题与背景"), INTERACTION("翻页与交互"),
     SCREEN("屏幕与页眉页脚"), EPUB("EPUB"), TTS("朗读"), SHELF("书架管理"), ABOUT("关于")
 }
@@ -18,12 +23,12 @@ enum class SettingsCategory(val title: String) {
 @Composable
 fun FontSizeControl(config: ReaderConfig, onChange: ((ReaderConfig) -> ReaderConfig) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp - 1f).coerceAtLeast(12f)) } }, enabled = config.fontSizeSp > 12f) { Text("减小") }
+        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp - 1f).coerceAtLeast(12f)) } }, enabled = config.fontSizeSp > 12f) { Text("减小") }
         Column(Modifier.weight(1f)) {
             LabeledSlider("字号", config.fontSizeSp, "${config.fontSizeSp.toInt()} px", 12f..60f,
                 onChange = { value -> onChange { it.copy(fontSizeSp = value) } }, steps = 47)
         }
-        TextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp + 1f).coerceAtMost(60f)) } }, enabled = config.fontSizeSp < 60f) { Text("增大") }
+        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp + 1f).coerceAtMost(60f)) } }, enabled = config.fontSizeSp < 60f) { Text("增大") }
     }
 }
 
@@ -50,6 +55,116 @@ fun BrightnessSettings(config: ReaderConfig, onChange: ((ReaderConfig) -> Reader
 }
 
 @Composable
+fun AppearanceSettings() {
+    val context = LocalContext.current
+    val view = LocalView.current
+    val powerManager = remember(context) { context.getSystemService(Context.POWER_SERVICE) as? PowerManager }
+    val isPowerSave = powerManager?.isPowerSaveMode == true
+    val apiLevel = Build.VERSION.SDK_INT
+    val isHardwareAccelerated = view.isHardwareAccelerated
+    val isSimplified = apiLevel < 31 || isPowerSave || !isHardwareAccelerated
+    val simplifiedReason = when {
+        apiLevel < 31 -> "系统版本低于 Android 12"
+        isPowerSave -> "系统开启了省电模式"
+        !isHardwareAccelerated -> "硬件加速未启用"
+        else -> ""
+    }
+
+    val appearance = LocalGlassAppearance.current
+    val controller = LocalGlassAppearanceController.current
+    val saveFailed = LocalGlassSaveFailed.current || controller.saveFailed
+    var previewPercent by remember(appearance.transparencyPercent) {
+        mutableFloatStateOf(appearance.transparencyPercent.toFloat())
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            controller.commit()
+        }
+    }
+
+    SettingCard(title = "玻璃质感") {
+        if (isSimplified) {
+            Text(
+                text = "当前处于简化质感模式（$simplifiedReason），采用安全底色保护阅读体验。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+            )
+        }
+
+        if (saveFailed) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 6.dp)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "外观设置保存失败，当前修改尚未写入本地存储。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MiradTextButton(
+                        onClick = { controller.retrySave() }
+                    ) {
+                        Text("重试")
+                    }
+                }
+            }
+        }
+
+        LabeledSlider(
+            label = "玻璃透明度",
+            value = previewPercent,
+            valueText = "${previewPercent.toInt()}%",
+            range = 0f..100f,
+            steps = 99,
+            onChange = { value ->
+                previewPercent = value
+                controller.update(GlassAppearance(value.toInt()))
+            },
+            onCommit = {
+                controller.commit()
+            }
+        )
+
+        Text(
+            text = "0% 为纯不透明底色；100% 具备最大通透质感。墨读将根据局部底色复杂度自动保护文字对比度（不低于 4.5:1）。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            MiradTextButton(
+                onClick = {
+                    controller.reset()
+                    previewPercent = GlassAppearance.DEFAULT_PERCENT.toFloat()
+                }
+            ) {
+                Text("恢复默认")
+            }
+        }
+    }
+}
+
+@Composable
 fun ReaderSettingsContent(
     category: SettingsCategory,
     config: ReaderConfig,
@@ -61,6 +176,9 @@ fun ReaderSettingsContent(
 ) {
     val context = LocalContext.current
     when (category) {
+        SettingsCategory.APPEARANCE -> {
+            AppearanceSettings()
+        }
         SettingsCategory.TYPOGRAPHY -> {
 FontSection(config, fonts, onChange, onImportFont, onDeleteFont)
             SettingCard(title = "排版") {

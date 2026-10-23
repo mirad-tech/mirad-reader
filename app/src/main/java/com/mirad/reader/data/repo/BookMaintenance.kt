@@ -30,6 +30,7 @@ class BookMaintenance(
     private val database: AppDatabase
 ) {
 
+    @ConsistentCopyVisibility
     data class ChapterPreview internal constructor(
         val slices: List<ChapterSlice>,
         val automatic: Boolean,

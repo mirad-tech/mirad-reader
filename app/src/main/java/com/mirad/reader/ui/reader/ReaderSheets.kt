@@ -16,7 +16,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.mirad.reader.ui.common.MiradOutlinedButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.OutlinedTextField
 import com.mirad.reader.ui.common.MiradSlider
 import androidx.compose.material3.Text
@@ -192,24 +193,24 @@ fun ProgressSheet(
                     onValueChangeFinished = { onJump(draft) }
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    OutlinedButton(onClick = { draft = 0f; onJump(0f) }, modifier = Modifier.weight(1f)) {
+                    MiradOutlinedButton(onClick = { draft = 0f; onJump(0f) }, modifier = Modifier.weight(1f)) {
                         Text("开头")
                     }
-                    OutlinedButton(onClick = { draft = 0.5f; onJump(0.5f) }, modifier = Modifier.weight(1f)) {
+                    MiradOutlinedButton(onClick = { draft = 0.5f; onJump(0.5f) }, modifier = Modifier.weight(1f)) {
                         Text("中间")
                     }
-                    OutlinedButton(onClick = { draft = 1f; onJump(1f) }, modifier = Modifier.weight(1f)) {
+                    MiradOutlinedButton(onClick = { draft = 1f; onJump(1f) }, modifier = Modifier.weight(1f)) {
                         Text("结尾")
                     }
                 }
                 CardDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                    OutlinedButton(
+                    MiradOutlinedButton(
                         onClick = { onJumpChapter(chapterIndex - 1) },
                         enabled = chapterIndex > 0,
                         modifier = Modifier.weight(1f)
                     ) { Text("上一章") }
-                    OutlinedButton(
+                    MiradOutlinedButton(
                         onClick = { onJumpChapter(chapterIndex + 1) },
                         enabled = chapterIndex < chapterCount - 1,
                         modifier = Modifier.weight(1f)
@@ -279,14 +280,43 @@ fun ReaderSettingsSheet(
         }
     }
 
-    var category by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<SettingsCategory?>(null) }
-    val scrollStates = SettingsCategory.entries.associateWith { rememberScrollState() }
-    val homeScroll = rememberScrollState()
-    androidx.activity.compose.BackHandler(category != null) { category = null }
-    DisposableEffect(Unit) {
+    DisposableEffect(container) {
         onDispose { container.settings.flushGlobalConfig(container.appScope) }
     }
     CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
+        ReaderSettingsPanel(
+            config = config, fonts = fonts, isEpub = isEpub,
+            onChange = onChange, onOpenAutoRead = onOpenAutoRead,
+            onResetGlobal = onResetGlobal, onDismiss = onDismiss,
+            onImportFont = { fontPicker.launch(arrayOf("*/*")) },
+            onDeleteFont = { font -> scope.launch {
+                withContext(Dispatchers.IO) { container.fonts.delete(font) }
+                fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+            } },
+            onPickImage = { imagePicker.launch(arrayOf("image/*")) }
+        )
+    }
+}
+
+/** The same settings panel can be rendered with memory-only state in the native preview. */
+@Composable
+internal fun ReaderSettingsPanel(
+    config: ReaderConfig,
+    fonts: List<com.mirad.reader.core.model.ReadingFont> = emptyList(),
+    isEpub: Boolean = false,
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    onOpenAutoRead: () -> Unit,
+    onResetGlobal: () -> Unit,
+    onDismiss: () -> Unit,
+    onImportFont: () -> Unit = {},
+    onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
+    onPickImage: () -> Unit = {},
+    initialCategory: SettingsCategory? = null
+) {
+    var category by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialCategory) }
+    val scrollStates = SettingsCategory.entries.associateWith { rememberScrollState() }
+    val homeScroll = rememberScrollState()
+    androidx.activity.compose.BackHandler(category != null) { category = null }
     SheetScaffold(
         title = category?.title ?: "阅读设置",
         subtitle = "全书通用",
@@ -308,23 +338,24 @@ fun ReaderSettingsSheet(
                         onClick = onOpenAutoRead
                     )
                     CardDivider()
-                    listOf(SettingsCategory.TYPOGRAPHY, SettingsCategory.THEME, SettingsCategory.INTERACTION, SettingsCategory.SCREEN)
-                        .plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
+                    listOf(
+                        SettingsCategory.APPEARANCE,
+                        SettingsCategory.TYPOGRAPHY,
+                        SettingsCategory.THEME,
+                        SettingsCategory.INTERACTION,
+                        SettingsCategory.SCREEN
+                    ).plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
                         .forEach { item -> SettingNavRow(item.title, onClick = { category = item }) }
                 }
-                OutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复默认设置") }
+                MiradOutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复默认设置") }
             } else {
                 ReaderSettingsContent(selected, config, onChange, fonts,
-                    onImportFont = { fontPicker.launch(arrayOf("*/*")) },
-                    onDeleteFont = { font -> scope.launch {
-                        withContext(Dispatchers.IO) { container.fonts.delete(font) }
-                        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    } },
-                    onPickImage = { imagePicker.launch(arrayOf("image/*")) })
+                    onImportFont = onImportFont,
+                    onDeleteFont = onDeleteFont,
+                    onPickImage = onPickImage)
             }
             Spacer(Modifier.height(Spacing.lg))
         }
-    }
     }
 }
 
@@ -403,14 +434,14 @@ fun NotesSheet(
             title = { Text("删除${pending.first}") },
             text = { Text("删除后无法恢复，确定要删除吗？") },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                MiradTextButton(danger = true, onClick = {
                     val action = pending.second
                     pendingDelete = null
                     action()
                 }) { Text("删除") }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+                MiradTextButton(onClick = { pendingDelete = null }) { Text("取消") }
             }
         )
     }
@@ -623,16 +654,16 @@ fun TtsSheet(
             verticalArrangement = Arrangement.spacedBy(Spacing.sm)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                OutlinedButton(onClick = { tts.previous() }, modifier = Modifier.weight(1f)) { Text("上一句") }
-                OutlinedButton(
+                MiradOutlinedButton(onClick = { tts.previous() }, modifier = Modifier.weight(1f)) { Text("上一句") }
+                MiradOutlinedButton(
                     onClick = { if (state.active && state.playing) tts.pause() else onStart(state.active) },
                     modifier = Modifier.weight(1f)
                 ) { Text(if (state.playing) "暂停" else "播放") }
-                OutlinedButton(onClick = { tts.next() }, modifier = Modifier.weight(1f)) { Text("下一句") }
+                MiradOutlinedButton(onClick = { tts.next() }, modifier = Modifier.weight(1f)) { Text("下一句") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                OutlinedButton(onClick = { onStart(false) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
-                OutlinedButton(
+                MiradOutlinedButton(onClick = { onStart(false) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
+                MiradOutlinedButton(
                     onClick = { tts.stop(); onClose() },
                     modifier = Modifier.weight(1f)
                 ) { Text("停止朗读") }
@@ -737,7 +768,7 @@ fun AutoReadSheet(
                 )
             }
             if (state == AutoReadState.PAUSED) {
-                OutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
+                MiradOutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
                     Text("继续自动阅读")
                 }
             }

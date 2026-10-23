@@ -8,6 +8,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
 
@@ -24,11 +25,13 @@ fun MiradDialog(
 ) {
     val maxBodyHeight = LocalConfiguration.current.screenHeightDp.dp * .55f
     AlertDialog(
-        onDismissRequest = onDismissRequest, confirmButton = confirmButton,
+        onDismissRequest = onDismissRequest,
+        confirmButton = { ApplyReaderDialogWindowPolicy(); confirmButton() },
         dismissButton = dismissButton, title = title, icon = icon,
-        modifier = modifier.imePadding(),
+        modifier = modifier.imePadding().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge),
         shape = MaterialTheme.shapes.extraLarge,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = Color.Transparent,
+        tonalElevation = 0.dp,
         text = text?.let { body ->
             { Column(Modifier.fillMaxWidth().heightIn(max = maxBodyHeight)
                 .verticalScroll(rememberScrollState()).animateContentSize(tween(180))) { body() } }
@@ -48,7 +51,7 @@ fun ErrorDetails(message: String) {
         Text(if (readable.length <= 90) readable else "操作未完成",
             color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         if (readable.length > 90) {
-            TextButton(onClick = { expanded = !expanded }) {
+            MiradTextButton(onClick = { expanded = !expanded }) {
                 Text(if (expanded) "收起详情" else "查看详情")
             }
             if (expanded) Text(readable, style = MaterialTheme.typography.bodySmall)

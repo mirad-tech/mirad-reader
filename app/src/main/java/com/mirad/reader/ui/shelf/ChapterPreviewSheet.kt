@@ -13,6 +13,7 @@ import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.repo.BookMaintenance
 import com.mirad.reader.ui.common.SheetScaffold
 import com.mirad.reader.ui.common.MiradLinearProgress
+import com.mirad.reader.ui.common.MiradTextButton
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -49,23 +50,27 @@ fun ChapterPreviewSheet(
         onDismiss = { if (!applying) onDismiss() },
         fillHeight = true,
         actions = {
-            TextButton(enabled = preview != null && !loading && !applying, onClick = {
-                val candidate = preview ?: return@TextButton
-                applying = true
-                scope.launch {
-                    try {
-                        val count = container.maintenance.applyChapters(book, candidate)
-                        onApplied(count)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        error = e.message ?: "目录更新失败，原目录已保留"
-                        preview = null
-                    } finally {
-                        applying = false
+            MiradTextButton(
+                enabled = preview != null && !loading && !applying,
+                loading = applying,
+                onClick = {
+                    val candidate = preview ?: return@MiradTextButton
+                    applying = true
+                    scope.launch {
+                        try {
+                            val count = container.maintenance.applyChapters(book, candidate)
+                            onApplied(count)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            error = e.message ?: "目录更新失败，原目录已保留"
+                            preview = null
+                        } finally {
+                            applying = false
+                        }
                     }
                 }
-            }) { Text(if (applying) "正在应用…" else "应用") }
+            ) { Text("应用") }
         }
     ) {
         if (loading) {
@@ -76,7 +81,7 @@ fun ChapterPreviewSheet(
             Box(Modifier.padding(horizontal = 20.dp)) {
                 com.mirad.reader.ui.common.ErrorDetails(it)
             }
-            TextButton(onClick = { attempt++ }, enabled = !applying) { Text("重新预览") }
+            MiradTextButton(onClick = { attempt++ }, enabled = !applying) { Text("重新预览") }
         }
         preview?.let { candidate ->
             Text(

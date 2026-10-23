@@ -1,50 +1,195 @@
 package com.mirad.reader.ui.common
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+/**
+ * 统一按钮规范样式：
+ * 14sp 字号、21sp 行高、常规字重、文字居中、12dp 圆角、至少 40dp 视觉高度和 48dp 实际触摸区域。
+ */
+val MiradButtonTextStyle = TextStyle(
+    fontSize = 14.sp,
+    lineHeight = 21.sp,
+    fontWeight = FontWeight.Normal,
+    textAlign = TextAlign.Center
+)
+
+val MiradButtonShape = RoundedCornerShape(12.dp)
+
+@Composable
+fun MiradButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    danger: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val containerColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    val contentColor = if (danger) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimary
+    Button(
+        onClick = onClick,
+        enabled = enabled && !loading,
+        modifier = modifier
+            .heightIn(min = 40.dp)
+            .minimumInteractiveComponentSize(),
+        shape = MiradButtonShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = containerColor,
+            contentColor = contentColor,
+            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        ),
+        contentPadding = contentPadding
+    ) {
+        ProvideTextStyle(MiradButtonTextStyle) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = contentColor
+                )
+            } else {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun MiradOutlinedButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    danger: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val outlineColor = if (danger) MaterialTheme.colorScheme.error
+    else if (!enabled) MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+    else MaterialTheme.colorScheme.outlineVariant
+    val contentColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled && !loading,
+        modifier = modifier
+            .heightIn(min = 40.dp)
+            .minimumInteractiveComponentSize(),
+        shape = MiradButtonShape,
+        border = androidx.compose.foundation.BorderStroke(1.dp, outlineColor),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = contentColor,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        ),
+        contentPadding = contentPadding
+    ) {
+        ProvideTextStyle(MiradButtonTextStyle) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = contentColor
+                )
+            } else {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
+fun MiradTextButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    loading: Boolean = false,
+    danger: Boolean = false,
+    contentPadding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+    content: @Composable RowScope.() -> Unit
+) {
+    val contentColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+    TextButton(
+        onClick = onClick,
+        enabled = enabled && !loading,
+        modifier = modifier
+            .heightIn(min = 40.dp)
+            .minimumInteractiveComponentSize(),
+        shape = MiradButtonShape,
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = contentColor,
+            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        ),
+        contentPadding = contentPadding
+    ) {
+        ProvideTextStyle(MiradButtonTextStyle) {
+            if (loading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = contentColor
+                )
+            } else {
+                content()
+            }
+        }
+    }
+}
 
 /**
  * 设置项分组卡片：统一的圆角、描边与内边距。
- *
- * 之前所有设置项直接堆在滚动列里，靠小标题分隔，视觉上很散；
- * 改成卡片分组后层级清楚很多。
  */
 @Composable
 fun SettingCard(
@@ -139,7 +284,7 @@ fun LabeledSlider(
     }
 }
 
-/** 胶囊选项，自动按列数换行。选中用主色实心，未选中为描边——比填充灰块更轻。 */
+/** 胶囊选项，自动按列数换行。选中用主色实心，未选中为描边。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun <T> ChoiceRow(
@@ -159,8 +304,11 @@ fun <T> ChoiceRow(
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp), maxItemsInEachRow = columns) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            maxItemsInEachRow = columns
+        ) {
             options.forEach { (value, text) ->
                 ChoiceChip(text = text, selected = value == selected, onClick = { onSelect(value) })
             }
@@ -174,34 +322,57 @@ fun ChoiceChip(
     text: String,
     selected: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
     onLongClick: (() -> Unit)? = null
 ) {
-    val shape = RoundedCornerShape(50)
-    val selectedColor by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else Color.Transparent, tween(120), label = "choice")
+    val selectedColor by animateColorAsState(
+        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        tween(120),
+        label = "choice"
+    )
+    val borderColor = when {
+        !enabled -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
+        selected -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val textColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        selected -> MaterialTheme.colorScheme.onPrimary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Box(
-        modifier = Modifier
-            .clip(shape)
-            .background(selectedColor)
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .clip(MiradButtonShape)
+            .background(if (selected && enabled) selectedColor else Color.Transparent)
             .border(
                 width = 1.dp,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.outlineVariant,
-                shape = shape
+                color = borderColor,
+                shape = MiradButtonShape
             )
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
-            .heightIn(min = 48.dp)
-            .padding(horizontal = 14.dp, vertical = 10.dp)
+            .combinedClickable(
+                enabled = enabled,
+                onClick = onClick,
+                onLongClick = onLongClick,
+                role = Role.RadioButton
+            )
+            .heightIn(min = 40.dp)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+            .semantics { contentDescription = text },
+        contentAlignment = Alignment.Center
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant
+            style = MiradButtonTextStyle,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = textColor
         )
     }
 }
 
-/** 两段式切换（比块状 chip 更紧凑，适合"纯色/图片"这类二元选择）。 */
+/** 分段切换：统一 14sp、21sp、常规字重、文字居中、12dp 圆角、至少 40dp 视觉高度和 48dp 实际触摸区域。 */
 @Composable
 fun <T> SegmentedRow(
     options: List<Pair<T, String>>,
@@ -212,37 +383,48 @@ fun <T> SegmentedRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(MiradButtonShape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         options.forEach { (value, text) ->
             val isSelected = value == selected
-            val segmentColor by animateColorAsState(if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent, tween(120), label = "segment")
+            val segmentColor by animateColorAsState(
+                if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                tween(120),
+                label = "segment"
+            )
             Box(
                 modifier = Modifier
                     .weight(1f)
+                    .minimumInteractiveComponentSize()
                     .clip(RoundedCornerShape(10.dp))
                     .background(segmentColor)
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 40.dp)
                     .clickable { onSelect(value) }
-                    .padding(vertical = 8.dp),
+                    .padding(horizontal = 6.dp, vertical = 8.dp)
+                    .semantics { contentDescription = text },
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = text,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MiradButtonTextStyle,
                     color = if (isSelected) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }
     }
 }
 
-/** 颜色圆点，选中打勾。 */
+/**
+ * 颜色圆点，选中打勾：
+ * 使用 FlowRow 换行布局，保证每个色点拥有独立 48dp 触摸区域而不发生重叠。
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ColorDotRow(
     colors: List<Int>,
@@ -250,36 +432,43 @@ fun ColorDotRow(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically
+    FlowRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         colors.forEach { argb ->
             val isSelected = argb == selected
             Box(
                 modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color(argb))
-                    .border(
-                        width = if (isSelected) 2.dp else 1.dp,
-                        color = if (isSelected) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.outlineVariant,
-                        shape = CircleShape
-                    )
-                    .clickable { onSelect(argb) },
+                    .minimumInteractiveComponentSize()
+                    .size(48.dp)
+                    .clickable(role = Role.RadioButton) { onSelect(argb) },
                 contentAlignment = Alignment.Center
             ) {
-                if (isSelected) {
-                    val dark = com.mirad.reader.core.model.ThemePaletteResolver.isDarkColor(argb)
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = null,
-                        tint = if (dark) com.mirad.reader.ui.design.LocalMiradColors.current.checkOnDarkSwatch
-                        else com.mirad.reader.ui.design.LocalMiradColors.current.selectionCheck,
-                        modifier = Modifier.size(18.dp)
-                    )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(Color(argb))
+                        .border(
+                            width = if (isSelected) 2.dp else 1.dp,
+                            color = if (isSelected) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.outlineVariant,
+                            shape = CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isSelected) {
+                        val dark = com.mirad.reader.core.model.ThemePaletteResolver.isDarkColor(argb)
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "已选择颜色",
+                            tint = if (dark) com.mirad.reader.ui.design.LocalMiradColors.current.checkOnDarkSwatch
+                            else com.mirad.reader.ui.design.LocalMiradColors.current.selectionCheck,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
             }
         }

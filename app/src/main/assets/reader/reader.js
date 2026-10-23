@@ -43,6 +43,7 @@
     // 任何新手势、新定位或模式变化都要先取消旧动画，避免两个循环同时写 scrollTop。
     var pageMotion = {active: false, token: 0, raf: 0, target: 0};
     var scrollMotion = {token: 0, raf: 0};
+    var themeAnchor = null;
 
     function content() {
         return document.getElementById('mirad-content') || document.body;
@@ -295,6 +296,7 @@
         if (list.length <= 3) return;
         var activeIdx = sectionIndex(win.active);
         var vh = viewportHeight();
+        var retainedThemeAnchor = reusableThemeAnchor();
 
         // 记录活动章在删除前相对于视口顶部的精确坐标
         var anchorTopBefore = win.active.getBoundingClientRect().top;
@@ -335,6 +337,9 @@
                 window.scrollBy(0, drift);
             }
         }
+        // Removing earlier chapters changes document scrollY, not the reader's
+        // logical position. Only retain an anchor that was current before trim.
+        if (removedAny) rememberThemePosition(retainedThemeAnchor);
     }
 
     /** 距顶/距底 2 屏时补一章；追加在视口外，视觉零跳动。 */
@@ -377,11 +382,13 @@
                 var sec = doc.querySelector('section.mirad-chapter');
                 if (!sec) return;
                 var before = documentHeight();
+                var retainedThemeAnchor = dir < 0 ? reusableThemeAnchor() : null;
                 insertSection(sec, idx, dir < 0);
                 if (dir < 0) {
                     // 前插把内容整体下移，等量补偿 scrollY 才能保持在原处
                     var after = documentHeight();
                     window.scrollTo(0, Math.max(0, (window.scrollY || 0) + (after - before)));
+                    rememberThemePosition(retainedThemeAnchor);
                 }
                 scheduleTrim();
                 // 连续短章保护：若插入后总高度仍不足两屏且尚未到达书末，持续向前推进加载下一章
@@ -522,7 +529,7 @@
     }
 
     function step() {
-        return (state.colW || viewportWidth()) + (state.gap || CFG.gap);
+        return (state.colW || viewportWidth()) + state.gap;
     }
 
     /** 二分找出包含该字符偏移的文本节点。 */
@@ -550,7 +557,7 @@
      * nearestPoint 归到段落起点 → 进度跳转、TTS 定位、搜索落点、划线跳转全落到段落开头。
      * 测量只发生在跳转时（滚动回报不走这里），代价可以接受。
      */
-    function precisePos(offset) {
+    function precisePos(offset, characterCenter) {
         var entry = nodeAt(offset);
         if (!entry || !entry.node) return null;
         var len = entry.len || 0;
@@ -568,7 +575,7 @@
             // 与 buildPoints 同理：加回滚动量，否则测量值随当前页漂移，
             // 会形成"算页 → 改滚动 → 再测量 → 又算出另一页"的反馈震荡。
             return CFG.mode === 'PAGED'
-                ? (rect.left - rootRect.left + (c.scrollLeft || 0))
+                ? (rect.left - rootRect.left + (c.scrollLeft || 0) + (characterCenter ? rect.width / 2 : 0))
                 : (rect.top - rootRect.top);
         } catch (e) {
             return null;
@@ -579,13 +586,13 @@
         var point = nearestPoint(offset);
         if (!point) return 0;
         // 段落级 points 只给到段落起点，用精确测量覆盖它（测不出来时退回段落起点）
-        var precise = precisePos(offset);
+        var precise = precisePos(offset, true);
         var pos = (precise === null || precise === undefined) ? point.pos : precise;
         if (CFG.mode !== 'PAGED') return pos;
-        // 与 offsetAtPage 的 `pos >= page*step - PAGE_EPS` 对称：用 round 时
-        // 落在 [k*step - step/2, k*step + step/2) 都归 k，往返（锚点→页→锚点）不再漂移。
-        // 旧实现是 floor((pos+1)/step)，与反向的 -2 容差不对称，每次重排都会退 1 页。
-        return Math.max(0, Math.round(pos / step()));
+        // A character in the right half still belongs to its current column.
+        // Use its center for fractional glyph overhang at a zero-gap boundary;
+        // offsetAtPage uses the same coordinate when finding the first character.
+        return Math.max(0, Math.floor(pos / step()));
     }
 
     function nearestPoint(offset) {
@@ -615,9 +622,9 @@
         var best = -1;
         while (low <= high) {
             var mid = (low + high) >> 1;
-            var pos = precisePos(mid);
+            var pos = precisePos(mid, CFG.mode === 'PAGED');
             if (pos === null) return null;
-            if (pos >= targetPos - 2) {
+            if (pos >= targetPos - (CFG.mode === 'PAGED' ? 0 : 2)) {
                 best = mid;
                 high = mid - 1;
             } else {
@@ -635,12 +642,16 @@
      * 现在段落表只用于把查找区间收窄到 [上一段起点, 下一段起点)，真正的答案由 Range 测量二分给出。
      */
     function offsetAtPage(page) {
-        var target = CFG.mode === 'PAGED' ? page * step() : (window.scrollY || 0);
+        // precisePos/points are relative to the active chapter, not the document.
+        // Earlier mounted chapters and the content's top margin are not text offsets.
+        var root = activeRoot();
+        var target = CFG.mode === 'PAGED' ? page * step()
+            : Math.max(0, root ? -root.getBoundingClientRect().top : 0);
         var points = state.points;
         var before = null;
         var after = null;
         for (var i = 0; i < points.length; i++) {
-            if (points[i].pos >= target - 2) {
+            if (points[i].pos >= target - (CFG.mode === 'PAGED' ? 0 : 2)) {
                 after = points[i];
                 break;
             }
@@ -1962,9 +1973,55 @@
 
     var pendingRestore = -1;
 
+    function reusableThemeAnchor() {
+        var x = content().scrollLeft || 0;
+        var y = window.scrollY || 0;
+        return themeAnchor && themeAnchor.root === activeRoot() && themeAnchor.chapter === chapterKey() &&
+            themeAnchor.mode === CFG.mode && themeAnchor.x === x && themeAnchor.y === y &&
+            (CFG.mode !== 'PAGED' || themeAnchor.page === state.page) ? themeAnchor : null;
+    }
+
+    function rememberThemePosition(anchor) {
+        if (!anchor || anchor !== themeAnchor) return;
+        anchor.x = content().scrollLeft || 0;
+        anchor.y = window.scrollY || 0;
+        anchor.page = state.page;
+    }
+
+    function captureThemeAnchor() {
+        // Consecutive slider/resource updates keep the original character, not
+        // the new page/line start produced by each intermediate layout.
+        var retained = reusableThemeAnchor();
+        if (retained) return retained;
+        var root = activeRoot();
+        var offset = offsetAtPage(state.page);
+        var pos = precisePos(offset);
+        return {
+            root: root, chapter: chapterKey(), mode: CFG.mode, offset: offset,
+            top: CFG.mode === 'SCROLL' && pos !== null ? root.getBoundingClientRect().top + pos : 0
+        };
+    }
+
+    function restoreThemeAnchor(anchor) {
+        var sameRootAndMode = anchor.root === activeRoot() && anchor.mode === CFG.mode;
+        var pos = sameRootAndMode && CFG.mode === 'SCROLL' ? precisePos(anchor.offset) : null;
+        if (pos !== null) {
+            cancelScrollMotion();
+            window.scrollTo(0, Math.max(0, sectionTop(activeRoot()) + pos - anchor.top));
+            var relativeTop = (window.scrollY || 0) - (windowed() ? sectionTop(activeRoot()) : 0);
+            state.page = Math.floor(Math.max(0, relativeTop) / viewportHeight());
+            reportState();
+        } else {
+            window.MiradReader.gotoOffset(anchor.offset, false);
+        }
+        themeAnchor = sameRootAndMode ? anchor : null;
+        rememberThemePosition(themeAnchor);
+    }
+
     window.MiradReader = {
         /** 首次初始化（页面加载完成后调用）。 */
         init: function (config) {
+            themeAnchor = null;
             Object.assign(CFG, config || {});
             // 记录应用自己写在 html/body 上的类，换章同步书籍属性时不能把它们覆盖掉
             appBodyBase = (document.body && document.body.className) || '';
@@ -2017,7 +2074,7 @@
          * 拖动字号、行距滑杆时走这条快路径，否则每帧重建整章 DOM 文本模型会明显卡顿。
          */
         setThemeCssOnly: function (css, config) {
-            var anchor = offsetAtPage(state.page);
+            var anchor = captureThemeAnchor();
             var prevMode = CFG.mode;
             var prevWindowed = CFG.windowedScroll;
             Object.assign(CFG, config || {});
@@ -2036,7 +2093,7 @@
                 document.head.appendChild(element);
             }
             applyLayout();
-            window.MiradReader.gotoOffset(anchor, false);
+            restoreThemeAnchor(anchor);
             return state.pages;
         },
 
@@ -2059,11 +2116,10 @@
 
         /** 重新测量（图片/字体加载完成后调用）。 */
         relayout: function (keepOffset) {
-            var anchor = offsetAtPage(state.page);
+            var anchor = keepOffset !== false ? captureThemeAnchor() : null;
+            if (!anchor) themeAnchor = null;
             buildInitialModelAndLayout();
-            if (keepOffset !== false) {
-                window.MiradReader.gotoOffset(anchor, false);
-            }
+            if (anchor) restoreThemeAnchor(anchor);
             return state.pages;
         },
 
@@ -2144,6 +2200,7 @@
         },
 
         gotoPage: function (page, animate) {
+            themeAnchor = null;
             var target = Math.min(Math.max(page | 0, 0), state.pages - 1);
             var changed = target !== state.page;
             state.page = target;
@@ -2152,6 +2209,7 @@
         },
 
         gotoOffset: function (offset, animate) {
+            themeAnchor = null;
             if (!state.ready) {
                 pendingRestore = offset;
                 return false;
@@ -2162,9 +2220,11 @@
                 // 旧实现退回 nearestPoint(offset).pos（段落起点），于是长段落里的跳转又落回段首——
                 // 与 PAGED 分支修掉的是同一个病。
                 cancelScrollMotion();
-                if (animate) animateScrollTop(Math.max(0, page - 8));
-                else window.scrollTo(0, Math.max(0, page - 8));
-                state.page = Math.floor((window.scrollY || 0) / viewportHeight());
+                var documentY = sectionTop(activeRoot()) + page;
+                if (animate) animateScrollTop(Math.max(0, documentY - 8));
+                else window.scrollTo(0, Math.max(0, documentY - 8));
+                var relativeTop = (window.scrollY || 0) - (windowed() ? sectionTop(activeRoot()) : 0);
+                state.page = Math.floor(Math.max(0, relativeTop) / viewportHeight());
                 reportState();
                 return true;
             }

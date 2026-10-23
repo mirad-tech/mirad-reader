@@ -11,13 +11,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
-import androidx.compose.material3.Button
+import com.mirad.reader.ui.common.MiradButton
+import com.mirad.reader.ui.common.MiradOutlinedButton
+import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -98,7 +98,7 @@ fun UrlImportDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    OutlinedButton(
+                    MiradOutlinedButton(
                         onClick = {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                             val clip = clipboard?.primaryClip?.getItemAt(0)?.text?.toString()?.trim().orEmpty()
@@ -110,7 +110,7 @@ fun UrlImportDialog(
                     }
                     if (urlText.isNotEmpty() && !isBusy) {
                         Spacer(modifier = Modifier.width(Spacing.sm))
-                        TextButton(onClick = { urlText = "" }) {
+                        MiradTextButton(onClick = { urlText = "" }) {
                             Text("清空")
                         }
                     }
@@ -161,7 +161,7 @@ fun UrlImportDialog(
             }
         },
         confirmButton = {
-            Button(
+            MiradButton(
                 onClick = {
                     if (urlText.isNotBlank()) {
                         scope.launch {
@@ -176,6 +176,7 @@ fun UrlImportDialog(
                         }
                     }
                 },
+                loading = isBusy,
                 enabled = !isBusy && urlText.isNotBlank()
             ) {
                 Text(if (isBusy) "下载中…" else "开始导入")
@@ -183,7 +184,7 @@ fun UrlImportDialog(
         },
         dismissButton = {
             if (!isBusy) {
-                TextButton(
+                MiradTextButton(
                     onClick = {
                         container.networkDownloader.resetState()
                         onDismiss()
