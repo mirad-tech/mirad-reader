@@ -38,6 +38,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
@@ -126,6 +128,7 @@ class ReaderSession(
     private var saveJob: Job? = null
     private var restoreOffset: Int = 0
     private var systemDark: Boolean = false
+    private val backgroundRevision = ReaderBackgroundRevision()
 
     private var sessionStartedAt: Long = 0L
     private var sessionStartAbsolute: Long = 0L
@@ -133,21 +136,54 @@ class ReaderSession(
     /** 状态栏 / 手势条预留高度（dp），由界面按 WindowInsets 写入。 */
     private var insetTopDp = 0
     private var insetBottomDp = 0
+    private var insetHorizontalDp = 0
+    private var insetClipTopDp = 0
+    private var insetClipBottomDp = 0
 
     /** 上次因"滚到底"信号而跨章的时间，用于抑制原地换章与信号同时到达造成的跳两章。 */
     private var lastBottomAdvanceAt = 0L
 
+    // 路径有效性/版本只在路径变化时重新 stat：applyConfigToWebView 在拖滑杆时高频触发，
+    // 不能每次都在主线程做磁盘 IO。导入器生成的文件名唯一（createTempFile），
+    // 同路径被覆盖替换的场景不存在，按路径缓存是安全的。
+    private var bgPathStat: Pair<String, Triple<Boolean, Long, Long>>? = null
+    private var fontPathStat: Pair<String, Boolean>? = null
+
+    private fun statBackgroundFile(path: String): Triple<Boolean, Long, Long> {
+        bgPathStat?.let { (cached, stat) -> if (cached == path) return stat }
+        val file = File(path)
+        val stat = Triple(
+            file.exists(),
+            runCatching { file.lastModified() }.getOrDefault(0L),
+            runCatching { file.length() }.getOrDefault(0L)
+        )
+        bgPathStat = path to stat
+        return stat
+    }
+
+    private fun statFontFile(path: String): Boolean {
+        fontPathStat?.let { (cached, exists) -> if (cached == path) return exists }
+        val exists = File(path).exists()
+        fontPathStat = path to exists
+        return exists
+    }
+
+    // 进度快照的写库串行化：连续跨章时两次快照并发写库，旧快照后完成会覆盖新位置。
+    private val progressWrites = Mutex()
+
+    private val volumeKeyHandler: (Int) -> Boolean = { delta -> handleVolumeKey(delta) }
+
     init {
         // 音量键翻页：阅读会话在（且仅在前台时）注册；release() 时清理。
-        ReaderKeys.pager = { delta -> handleVolumeKey(delta) }
+        ReaderKeys.pager = volumeKeyHandler
     }
 
     /**
      * 音量键：+1 下一页、-1 上一页。滚动模式下按屏滚动（滚到章末继续滚会接下一章）。
-     * 页面还没就绪时返回 false，把按键交还系统（仍可调音量）。
+     * 页面还没就绪或设置里关闭音量键翻页时返回 false，把按键交还系统（仍可调音量）。
      */
     private fun handleVolumeKey(delta: Int): Boolean {
-        if (!_state.value.ready) return false
+        if (!shouldHandleVolumeKey(_state.value.ready, _state.value.config)) return false
         if (_state.value.config.pageMode == PageMode.SCROLL) scrollStep(delta) else turnPage(delta)
         return true
     }
@@ -161,11 +197,13 @@ class ReaderSession(
             // 跨章只有两个显式入口：侧滑/点按的 turnPage(+1)，以及 JS 的原地换章
             // （成功后回调 onChapterChanged，失败后回调 onRequestNextChapter）。
             // 这里不再从 onState 的页码推断"到底"——那条隐式路径曾与原地换章重复触发跳两章。
-            val pageChanged = current.page != page
+            val safePages = pages.coerceAtLeast(1)
+            val safePage = page.coerceIn(0, safePages - 1)
+            val pageChanged = current.page != safePage
             _state.update {
                 it.copy(
-                    page = page,
-                    pages = pages.coerceAtLeast(1),
+                    page = safePage,
+                    pages = safePages,
                     offset = offset,
                     textLength = textLength,
                     ready = true
@@ -188,7 +226,8 @@ class ReaderSession(
         onAutoScrollEnd = { index ->
             // 旧章/旧页面的迟到回调不能启动已经暂停或关闭的自动阅读：章号与运行状态都要匹配。
             if (index == _state.value.chapterIndex) autoRead.onScrollChapterEnd()
-        }
+        },
+        onVisualChanged = { webView?.notifyBackdropContentChanged() }
     )
 
     // ------------------------------------------------------------------ 生命周期
@@ -310,7 +349,7 @@ class ReaderSession(
      * 界面侧自动翻页入口。由阅读界面注入 `performTurn(1, auto=true)`，
      * 这样覆盖翻页等 Compose 动画与手动翻页走同一条路径；为空时退回会话内翻页。
      */
-    var autoPageTurn: (() -> Boolean)? = null
+    var autoPageTurn: (suspend () -> Boolean)? = null
 
     private var chapterRendered = false
     private var renderAttempts = 0
@@ -472,17 +511,19 @@ class ReaderSession(
         // 背景：内置素材优先，其次用户选的图片
         val bgImageUrl = if (config.backgroundType == BackgroundType.IMAGE) {
             val builtin = BuiltinBackgrounds.fromUri(config.backgroundImageUri)
-            val filePath = config.backgroundImageUri?.takeIf { it.isNotBlank() && File(it).exists() }
+            val filePath = config.backgroundImageUri?.takeIf { it.isNotBlank() && statBackgroundFile(it).first }
             when {
                 builtin != null -> {
                     resources.backgroundAssetName = builtin.assetName
                     resources.backgroundImagePath = null
-                    ReaderResourceProvider.backgroundUrl(book.id)
+                    backgroundRevision.url(ReaderResourceProvider.backgroundUrl(book.id), "asset:${builtin.assetName}")
                 }
                 filePath != null -> {
+                    val stat = statBackgroundFile(filePath)
                     resources.backgroundImagePath = filePath
                     resources.backgroundAssetName = null
-                    ReaderResourceProvider.backgroundUrl(book.id)
+                    backgroundRevision.url(ReaderResourceProvider.backgroundUrl(book.id),
+                        "file:$filePath:${stat.second}:${stat.third}")
                 }
                 else -> {
                     resources.backgroundAssetName = null
@@ -499,7 +540,7 @@ class ReaderSession(
         // 字体：内置字体优先，其次用户导入的字体文件
         val fontUrl = if (config.fontFamily == FontFamilyKey.CUSTOM) {
             val asset = config.customFontAsset?.takeIf { it.isNotBlank() }
-            val path = config.customFontPath?.takeIf { it.isNotBlank() && File(it).exists() }
+            val path = config.customFontPath?.takeIf { it.isNotBlank() && statFontFile(it) }
             when {
                 asset != null -> {
                     resources.fontAssetName = asset
@@ -553,7 +594,7 @@ class ReaderSession(
         val config = _state.value.config
         // WebView 里 1 CSS px == 1 dp，所以留白直接就是 paddingDp（不要再乘 density，
         // 否则列间距会跑到屏幕外，页边距看起来"没生效"）。
-        val pad = config.horizontalPaddingDp.coerceAtLeast(0)
+        val pad = maxOf(0, config.horizontalPaddingDp, insetHorizontalDp)
         val colMax = if (config.maxColumnWidthEm > 0f) {
             (config.fontSizeSp * config.maxColumnWidthEm).roundToInt()
         } else {
@@ -563,12 +604,13 @@ class ReaderSession(
         val anim = when (config.pageAnim) {
             PageAnim.NONE -> "NONE"
             PageAnim.COVER -> "COVER"
-            PageAnim.CURL -> "CURL"
             else -> "SLIDE"
         }
-        val isWindowed = config.windowedScroll && !(book.format == BookFormat.EPUB && config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
+        // 窗口滚动引擎已长期稳定，不再作为可配置项：滚动模式一律启用 3 章滑动窗口。
+        val isWindowed = WINDOWED_SCROLL && !(book.format == BookFormat.EPUB && config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
         return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
             """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim",""" +
+            """clipTop:$insetClipTopDp,clipBottom:$insetClipBottomDp,""" +
             """chapterCount:${chapters.size},windowedScroll:$isWindowed}"""
     }
 
@@ -576,10 +618,16 @@ class ReaderSession(
      * 系统栏预留：正文避开状态栏与手势条，但背景层仍然满屏（沉浸式不破坏）。
      * 由界面按 WindowInsets 计算后传入。
      */
-    fun updateInsets(topDp: Int, bottomDp: Int) {
-        if (insetTopDp == topDp && insetBottomDp == bottomDp) return
+    fun updateInsets(topDp: Int, bottomDp: Int, leftDp: Int = 0, rightDp: Int = 0,
+                     cutoutTopDp: Int = 0, cutoutBottomDp: Int = 0) {
+        val horizontalDp = maxOf(0, leftDp, rightDp)
+        if (insetTopDp == topDp && insetBottomDp == bottomDp && insetHorizontalDp == horizontalDp &&
+            insetClipTopDp == cutoutTopDp && insetClipBottomDp == cutoutBottomDp) return
         insetTopDp = topDp
         insetBottomDp = bottomDp
+        insetHorizontalDp = horizontalDp
+        insetClipTopDp = cutoutTopDp
+        insetClipBottomDp = cutoutBottomDp
         // 屏幕旋转/系统栏安全区域变化：正文需重排，自动阅读暂停等待用户继续。
         pauseAutoRead()
         if (_state.value.ready) applyConfigToWebView(_state.value.config, systemDark)
@@ -808,21 +856,24 @@ class ReaderSession(
     fun saveProgressNow() {
         val current = _state.value
         if (chapters.isEmpty()) return
-        // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢
+        // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢；
+        // 互斥串行化保证快速连续跨章时旧快照不会后写覆盖新位置。
         container.appScope.launch {
-            withContext(Dispatchers.IO) {
-                books.saveProgress(
-                    ProgressEntity(
-                        bookId = book.id,
-                        chapterIndex = current.chapterIndex,
-                        charOffset = current.offset,
-                        pageIndex = current.page,
-                        pageCount = current.pages,
-                        percent = current.percent,
-                        updatedAt = System.currentTimeMillis()
+            progressWrites.withLock {
+                withContext(Dispatchers.IO) {
+                    books.saveProgress(
+                        ProgressEntity(
+                            bookId = book.id,
+                            chapterIndex = current.chapterIndex,
+                            charOffset = current.offset,
+                            pageIndex = current.page,
+                            pageCount = current.pages,
+                            percent = current.percent,
+                            updatedAt = System.currentTimeMillis()
+                        )
                     )
-                )
-                books.touchLastRead(book.id)
+                    books.touchLastRead(book.id)
+                }
             }
         }
     }
@@ -859,6 +910,8 @@ class ReaderSession(
         saveJob?.cancel()
         saveProgressNow()
         endSession()
+        // 只清理本会话注册的 handler，避免音量键继续驱动已销毁的会话。
+        if (ReaderKeys.pager === volumeKeyHandler) ReaderKeys.pager = null
         webView?.let { view ->
             view.removeJavascriptInterface("MiradBridge")
             view.stopLoading()
@@ -871,7 +924,10 @@ class ReaderSession(
     // ------------------------------------------------------------------ 工具
 
     private fun evaluate(script: String) {
-        webView?.evaluateJavascript(script, null)
+        // 章节加载窗口期（MiradReader 尚未注入）调用它的脚本会抛 ReferenceError：
+        // 对 MiradReader 前缀的脚本统一加存在性防护；window.* 脚本照常执行。
+        val guarded = if (script.startsWith("MiradReader.")) "if (window.MiradReader) { $script }" else script
+        webView?.evaluateJavascript(guarded, null)
     }
 
     fun evaluatePublic(script: String) = evaluate(script)
@@ -922,5 +978,26 @@ class ReaderSession(
         const val DEFAULT_HIGHLIGHT_COLOR = 0x8C_FFD666.toInt()
         /** 自动阅读等待换章就绪的上限；超时按加载失败处理并关闭自动阅读。 */
         private const val AUTO_CHAPTER_TIMEOUT_MS = 12_000L
+
+        /** 音量键翻页的接管条件：页面就绪且设置里没有关闭。 */
+        internal fun shouldHandleVolumeKey(ready: Boolean, config: ReaderConfig): Boolean =
+            ready && config.volumeKeyPage
+
+        /** 滚动模式固定启用 3 章滑动窗口引擎（连续接章）；原配置开关已从模型中移除。 */
+        const val WINDOWED_SCROLL = true
+    }
+}
+
+/** A source switch needs a new URL even when Chromium retains the old decoded background in memory. */
+internal class ReaderBackgroundRevision {
+    private var source: String? = null
+    private var revision = 0L
+
+    fun url(baseUrl: String, sourceKey: String): String {
+        if (source != sourceKey) {
+            source = sourceKey
+            revision++
+        }
+        return "$baseUrl?v=$revision"
     }
 }

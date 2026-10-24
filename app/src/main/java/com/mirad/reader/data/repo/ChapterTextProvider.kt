@@ -55,14 +55,14 @@ open class ChapterTextProvider(private val paths: AppPaths? = null) {
         if (!file.exists()) return null
         return runCatching {
             ZipEntryReader.open(file).use { reader ->
-                val html = reader.readText(href, maxBytes = 4 * 1024 * 1024) ?: return null
+                val html = reader.readText(href, maxBytes = ZipEntryReader.MAX_CHAPTER_BYTES) ?: return null
                 Html.toPlainText(html)
             }
         }.getOrNull()
     }
 
     /** EPUB：读取原始 XHTML（渲染用）。 */
-    fun readEpubHtml(book: BookEntity, href: String, maxBytes: Int = 8 * 1024 * 1024): String? {
+    fun readEpubHtml(book: BookEntity, href: String, maxBytes: Int = ZipEntryReader.MAX_CHAPTER_BYTES): String? {
         val file = File(book.filePath)
         if (!file.exists()) return null
         return runCatching {

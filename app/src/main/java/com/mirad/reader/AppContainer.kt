@@ -17,6 +17,7 @@ import com.mirad.reader.data.repo.StatsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 手动依赖注入容器：数据库、仓库、导入管线与全局协程作用域。
@@ -36,14 +37,30 @@ class AppContainer(app: Application) {
         "mirad-reader.db"
     ).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
 
-    val settings: SettingsRepository = SettingsRepository(database.preferenceDao())
+    val settings: SettingsRepository = SettingsRepository(
+        dao = database.preferenceDao(),
+        onBackgroundImageDropped = { uris ->
+            // 由仓库在持久化成功后回调：只删应用背景目录内的文件，且删除动作不阻塞保存路径
+            val dir = paths.backgroundsDir
+            appScope.launch {
+                uris.forEach { uri ->
+                    runCatching {
+                        val file = java.io.File(uri)
+                        if (file.parentFile == dir) file.delete()
+                    }
+                }
+            }
+        }
+    )
 
     val books: BookRepository = BookRepository(
         bookDao = database.bookDao(),
         chapterDao = database.chapterDao(),
         progressDao = database.progressDao(),
         paths = paths,
-        searchFtsDao = database.searchFtsDao()
+        searchFtsDao = database.searchFtsDao(),
+        appDatabase = database,
+        sessionDao = database.sessionDao()
     )
 
     val notes: NoteRepository = NoteRepository(
@@ -53,7 +70,7 @@ class AppContainer(app: Application) {
 
     val stats: StatsRepository = StatsRepository(database.sessionDao())
 
-    val groups: GroupRepository = GroupRepository(database.groupDao())
+    val groups: GroupRepository = GroupRepository(database.groupDao(), database)
 
     val textProvider: ChapterTextProvider = ChapterTextProvider(paths)
 
@@ -68,7 +85,8 @@ class AppContainer(app: Application) {
         context = app,
         paths = paths,
         books = books,
-        scope = appScope
+        scope = appScope,
+        appDatabase = database
     )
 
     val networkDownloader: com.mirad.reader.data.imports.NetworkBookDownloader =

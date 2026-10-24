@@ -6,16 +6,12 @@ import android.os.Bundle
 import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
 import com.mirad.reader.data.imports.ExternalImportUris
 import com.mirad.reader.data.imports.ImportSource
 import com.mirad.reader.ui.AppRoot
-import com.mirad.reader.ui.theme.MiradTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,28 +35,21 @@ class MainActivity : ComponentActivity() {
             else -> 0
         }
         if (delta != 0) {
-            val handler = com.mirad.reader.reader.ReaderKeys.pager
-            if (handler != null && handler(delta)) return true
+            if (com.mirad.reader.reader.ReaderKeys.dispatch(delta)) return true
         }
         return super.onKeyDown(keyCode, event)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         val container = (application as MiradApp).container
         // 只在冷启动消费外部 Intent。配置变更/进程重建时 savedInstanceState != null，
         // 跳过以免同一次分享被重复入队；用户再次分享是新 Intent，走 onNewIntent，不受影响。
         if (savedInstanceState == null) importFromExternalIntent(intent, container)
         setContent {
             val systemDark = isSystemInDarkTheme()
-            MiradTheme(darkTheme = systemDark) {
-                Surface(
-                    modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background
-                ) {
-                    AppRoot(container = container, systemDark = systemDark)
-                }
-            }
+            AppRoot(container = container, systemDark = systemDark)
         }
     }
 

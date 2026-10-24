@@ -96,6 +96,12 @@ class ZipEntryReader(private val zip: ZipFile) : java.io.Closeable {
         const val MAX_COVER_BYTES = 12 * 1024 * 1024
 
         /**
+         * 单个章节 XHTML 的读取上限：导入、正文（TTS/搜索）与渲染三条路径共用，
+         * 避免各写各的字面量后口径漂移（曾出现"能渲染但搜索永远 0 命中"的 4/8MB 不一致）。
+         */
+        const val MAX_CHAPTER_BYTES: Int = 8 * 1024 * 1024
+
+        /**
          * 按上限读取流；超过上限返回 null。
          * 纯逻辑（不依赖 Android），因此可以直接单测——封面解码本身依赖 BitmapFactory，测不了。
          */

@@ -1,14 +1,19 @@
 package com.mirad.reader.data.repo
 
+import androidx.room.withTransaction
 import com.mirad.reader.data.AppPaths
+import com.mirad.reader.data.db.AppDatabase
 import com.mirad.reader.data.db.dao.BookDao
 import com.mirad.reader.data.db.dao.ChapterDao
 import com.mirad.reader.data.db.dao.ProgressDao
+import com.mirad.reader.data.db.dao.SessionDao
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.withContext
 import java.io.File
 
 /** 书架条目：书籍 + 进度。 */
@@ -25,7 +30,9 @@ class BookRepository(
     private val chapterDao: ChapterDao,
     private val progressDao: ProgressDao,
     private val paths: AppPaths,
-    private val searchFtsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null
+    private val searchFtsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null,
+    private val appDatabase: AppDatabase? = null,
+    private val sessionDao: SessionDao? = null
 ) {
 
     fun observeShelf(): Flow<List<ShelfBook>> = combine(
@@ -73,10 +80,15 @@ class BookRepository(
     suspend fun findDuplicate(title: String, fileSize: Long): BookEntity? = bookDao.findDuplicate(title, fileSize)
 
     suspend fun saveChapters(bookId: Long, chapters: List<ChapterEntity>) {
-        chapterDao.deleteForBook(bookId)
-        searchFtsDao?.deleteForBook(bookId)
-        if (chapters.isNotEmpty()) chapterDao.insertAll(chapters)
-        bookDao.updateCounts(bookId, chapters.size, chapters.sumOf { it.charCount })
+        // 删-插-更新必须同事务：中途崩溃会把一本正常书的章节全部删光。
+        val block: suspend () -> Unit = {
+            chapterDao.deleteForBook(bookId)
+            searchFtsDao?.deleteForBook(bookId)
+            if (chapters.isNotEmpty()) chapterDao.insertAll(chapters)
+            bookDao.updateCounts(bookId, chapters.size, chapters.sumOf { it.charCount })
+        }
+        val db = appDatabase
+        if (db != null) db.withTransaction { block() } else block()
     }
 
     /** 重新分章后同步书籍索引信息。 */
@@ -95,11 +107,18 @@ class BookRepository(
 
     suspend fun saveProgress(progress: ProgressEntity) = progressDao.upsert(progress)
 
-    /** 删除书籍及其全部文件。 */
-    suspend fun deleteBook(book: BookEntity) {
+    /** 删除书籍及其全部数据与文件（阅读记录一并删除，与删除确认文案一致）。 */
+    suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
+        // 先删数据库行（外键 CASCADE 清理章节/进度/划线/书签；另清 FTS 与阅读会话），
+        // 文件删除放最后：行已删而文件残留可以重试删除；反过来会留下"有行无文件"的死链书。
+        val block: suspend () -> Unit = {
+            searchFtsDao?.deleteForBook(book.id)
+            sessionDao?.deleteForBook(book.id)
+            bookDao.delete(book)
+        }
+        val db = appDatabase
+        if (db != null) db.withTransaction { block() } else block()
         paths.deleteBookFiles(tokenOf(book), book.coverPath)
-        searchFtsDao?.deleteForBook(book.id)
-        bookDao.delete(book)
     }
 
     fun tokenOf(book: BookEntity): String =

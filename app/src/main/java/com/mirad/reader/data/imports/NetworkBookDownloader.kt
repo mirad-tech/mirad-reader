@@ -56,9 +56,10 @@ class NetworkBookDownloader(
             var redirects = 0
             val maxRedirects = 5
 
-            while (redirects < maxRedirects) {
-                val url = URL(currentUrl)
-                connection = (url.openConnection() as HttpURLConnection).apply {
+            // 只在确定要跳转时才断开旧连接；最终连接保持打开，供后续读取，
+            // 否则重定向耗尽后会在已 disconnect 的连接上取 responseCode。
+            while (true) {
+                val candidate = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000
                     readTimeout = 20000
                     instanceFollowRedirects = false
@@ -68,18 +69,20 @@ class NetworkBookDownloader(
                     )
                 }
 
-                val status = connection.responseCode
-                if (status in 301..308) {
-                    val location = connection.getHeaderField("Location") ?: break
-                    currentUrl = if (location.startsWith("http")) location else URL(url, location).toString()
-                    connection.disconnect()
+                val status = candidate.responseCode
+                if (status in 301..308 && redirects < maxRedirects) {
+                    val location = candidate.getHeaderField("Location")
+                    candidate.disconnect()
+                    if (location.isNullOrBlank()) break
+                    currentUrl = if (location.startsWith("http")) location else URL(URL(currentUrl), location).toString()
                     redirects++
                 } else {
+                    connection = candidate
                     break
                 }
             }
 
-            val conn = connection ?: throw IllegalStateException("无法建立网络连接")
+            val conn = connection ?: throw IllegalStateException("重定向过多或缺少跳转目标，无法建立网络连接")
             if (conn.responseCode !in 200..299) {
                 throw IllegalStateException("服务器响应错误: HTTP ${conn.responseCode}")
             }
@@ -91,21 +94,26 @@ class NetworkBookDownloader(
             val downloadDir = File(context.cacheDir, "network_imports").apply { if (!exists()) mkdirs() }
 
             if (isHtmlPage(currentUrl, contentType)) {
-                // 网页长文/小说页智能正文抽取（默认 UTF-8，兼顾 meta charset 声明）
-                val rawBytes = conn.inputStream.use { it.readBytes() }
+                // 网页长文/小说页智能正文抽取（默认 UTF-8，兼顾 meta charset 声明）；
+                // 页面来源不可信，读取必须有上限，防止超大页面直接 OOM。
+                val rawBytes = conn.inputStream.use {
+                    com.mirad.reader.core.epub.ZipEntryReader.readAtMost(it, MAX_HTML_BYTES)
+                } ?: throw IllegalStateException("网页过大（上限 ${MAX_HTML_BYTES / 1024 / 1024}MB），已取消解析")
                 val declaredCharset = com.mirad.reader.core.text.TextCodec.declaredCharset(rawBytes)
                 val htmlText = com.mirad.reader.core.text.TextCodec.decode(rawBytes, declared = declaredCharset).text
                 val parsed = parseWebArticle(htmlText, guessedName)
                 val targetFile = File(downloadDir, "${parsed.title.sanitizeFileName()}.txt")
                 targetFile.writeText(parsed.content, Charsets.UTF_8)
+                importer.importAndWait(listOf(ImportSource.FromFile(targetFile)))
+                targetFile.delete()
                 _progress.value = DownloadProgress.Success(targetFile, parsed.title)
-                importer.import(listOf(ImportSource.FromFile(targetFile)))
                 return@withContext true
             } else {
                 // 直接下载电子书文件
                 val targetFile = File(downloadDir, guessedName.sanitizeFileName())
                 val totalBytes = conn.contentLength.toLong()
                 var downloaded = 0L
+                var lastReportedBytes = -1L
 
                 conn.inputStream.use { input ->
                     FileOutputStream(targetFile).use { output ->
@@ -114,8 +122,12 @@ class NetworkBookDownloader(
                         while (input.read(buffer).also { read = it } != -1) {
                             output.write(buffer, 0, read)
                             downloaded += read
-                            val pct = if (totalBytes > 0) (downloaded.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
-                            _progress.value = DownloadProgress.Downloading(downloaded, totalBytes, pct)
+                            // 每 256KB 上报一次：每 8KB 一次会让大文件触发海量无意义重组。
+                            if (downloaded - lastReportedBytes >= 256 * 1024L) {
+                                lastReportedBytes = downloaded
+                                val pct = if (totalBytes > 0) (downloaded.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+                                _progress.value = DownloadProgress.Downloading(downloaded, totalBytes, pct)
+                            }
                         }
                         output.flush()
                     }
@@ -143,8 +155,10 @@ class NetworkBookDownloader(
                 }
 
                 val title = finalFile.nameWithoutExtension
+                // 等导入把文件复制进书籍目录后再删除缓存源文件，避免 cacheDir 只增不减。
+                importer.importAndWait(listOf(ImportSource.FromFile(finalFile)))
+                finalFile.delete()
                 _progress.value = DownloadProgress.Success(finalFile, title)
-                importer.import(listOf(ImportSource.FromFile(finalFile)))
                 return@withContext true
             }
         } catch (e: Throwable) {
@@ -163,6 +177,9 @@ class NetworkBookDownloader(
     }
 
     companion object {
+        /** HTML 页面读取上限：页面来源不可信，防超大页面 OOM。 */
+        internal const val MAX_HTML_BYTES: Int = 8 * 1024 * 1024
+
         internal fun guessFileName(url: String, contentDisposition: String?, contentType: String = ""): String {
             val isEpubType = contentType.contains("epub")
             if (!contentDisposition.isNullOrBlank()) {

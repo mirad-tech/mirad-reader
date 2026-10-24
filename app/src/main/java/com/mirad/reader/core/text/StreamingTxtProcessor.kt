@@ -43,10 +43,17 @@ object StreamingTxtProcessor {
             throw IllegalArgumentException("TXT 源文件为空或不存在: ${sourceFile.absolutePath}")
         }
 
-        // 1. 采样探测编码（严格只读前 64KB 字节）
+        // 1. 采样探测编码（严格只读前 64KB 字节；循环读满，单次 read 可能短读）
         val sampleSize = minOf(sourceFile.length(), SAMPLE_BYTES.toLong()).toInt()
         val sampleBytes = ByteArray(sampleSize)
-        FileInputStream(sourceFile).use { it.read(sampleBytes) }
+        FileInputStream(sourceFile).use { input ->
+            var offset = 0
+            while (offset < sampleSize) {
+                val read = input.read(sampleBytes, offset, sampleSize - offset)
+                if (read <= 0) break
+                offset += read
+            }
+        }
         val decodedSample = TextCodec.decode(sampleBytes, manual = manualEncoding)
         val charset = runCatching { Charset.forName(decodedSample.charsetName) }.getOrDefault(Charsets.UTF_8)
 
@@ -54,7 +61,11 @@ object StreamingTxtProcessor {
         val sampleCharBuffer = CharArray(SAMPLE_CHARS)
         var sampleLen = 0
         InputStreamReader(FileInputStream(sourceFile), charset).use { reader ->
-            sampleLen = reader.read(sampleCharBuffer, 0, sampleCharBuffer.size).coerceAtLeast(0)
+            while (sampleLen < sampleCharBuffer.size) {
+                val read = reader.read(sampleCharBuffer, sampleLen, sampleCharBuffer.size - sampleLen)
+                if (read <= 0) break
+                sampleLen += read
+            }
         }
         val sampleText = String(sampleCharBuffer, 0, sampleLen)
         val detection = ChapterDetector.detect(sampleText)
@@ -256,7 +267,11 @@ object StreamingTxtProcessor {
         val totalBytes = countingOut.count
 
         // 4. 构建真实无误差切片
-        val slices = if (titleMarks.isNotEmpty()) {
+        // 与「重新分章」同口径的整体可信度校验：全文件匹配出的标题序号若不满足
+        // 单调性（常见于网络文拼凑稿），弃用标题分章、退回篇幅兜底分节，
+        // 否则同一本书导入与重新分章会给出两套不同的章节划分。
+        val marksTrusted = titleMarks.isNotEmpty() && marksAreTrustworthy(titleMarks)
+        val slices = if (marksTrusted) {
             buildSlicesFromMarks(titleMarks, totalChars.toInt(), totalBytes)
         } else {
             buildFallbackSlicesFromPoints(fallbackPoints, totalChars.toInt(), totalBytes)
@@ -266,10 +281,20 @@ object StreamingTxtProcessor {
             charset = charset.name(),
             totalChars = totalChars,
             totalBytes = totalBytes,
-            ruleId = effectiveRule?.id,
+            ruleId = if (marksTrusted) effectiveRule?.id else null,
             regex = null,
             slices = slices
         )
+    }
+
+    /** 与 ChapterDetector.detect 相同的分组单调性判据，共享实现保证口径一致。 */
+    private fun marksAreTrustworthy(marks: List<ChapterMark>): Boolean {
+        val groups = mutableListOf<MutableList<Int>>(mutableListOf())
+        marks.forEach { mark ->
+            if (mark.isVolume) groups.add(mutableListOf())
+            else ChapterDetector.chapterNumber(mark.title)?.let { groups.last().add(it) }
+        }
+        return groups.none { !ChapterDetector.isMonotonic(it) }
     }
 
     private fun buildSlicesFromMarks(

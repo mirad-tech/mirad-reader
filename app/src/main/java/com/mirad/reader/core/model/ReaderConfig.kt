@@ -14,7 +14,6 @@ object PageAnim {
     const val NONE = "NONE"
     const val SLIDE = "SLIDE"
     const val COVER = "COVER"
-    const val CURL = "CURL"
 }
 
 object ThemeKey {
@@ -92,11 +91,6 @@ data class ReaderConfig(
 
     // ---- 阅读方式 ----
     val pageMode: String = PageMode.PAGED,
-    /**
-     * 滚动模式「连续接章」开关（见 docs/continuous-scroll-plan.md）。
-     * 启用 3 章动态滑动窗口引擎，实现平滑无感接章与回滚。
-     */
-    val windowedScroll: Boolean = true,
     val pageAnim: String = PageAnim.SLIDE,
 
     // ---- 背景与主题 ----
@@ -105,9 +99,6 @@ data class ReaderConfig(
     val backgroundColor: Int = 0xFFF5F1E6.toInt(),
     val backgroundImageUri: String? = null,
     val backgroundImageAlpha: Float = 1f,
-    val autoNightEnabled: Boolean = false,
-    val autoNightStartMinute: Int = 22 * 60,
-    val autoNightEndMinute: Int = 7 * 60,
 
     // ---- 屏幕 ----
     val brightness: Float = -1f,
@@ -130,10 +121,8 @@ data class ReaderConfig(
      * 手机上通常不触发，横屏/折叠屏展开/平板上用来限制行长并把正文居中。
      */
     val maxColumnWidthEm: Float = 34f,
-    val verticalPaddingDp: Int = 16,
     val tapZone: String = TapZoneKey.THREE,
     val volumeKeyPage: Boolean = true,
-    val longPressSelect: Boolean = true,
 
     // ---- EPUB ----
     val epubLayoutMode: String = EpubLayoutMode.UNIFIED,
@@ -170,7 +159,11 @@ object ReaderConfigJson {
 
     fun decode(text: String?): ReaderConfig {
         if (text.isNullOrBlank()) return ReaderConfig.DEFAULT
-        return runCatching { json.decodeFromString(ReaderConfig.serializer(), text) }
-            .getOrElse { ReaderConfig.DEFAULT }
+        val config = runCatching { json.decodeFromString(ReaderConfig.serializer(), text) }
+            .getOrElse { return ReaderConfig.DEFAULT }
+        // 历史版本存在已删除的翻页动画（如 CURL）：解码时收敛到合法值，避免旧数据卡住阅读。
+        return if (config.pageAnim in ANIMS) config else config.copy(pageAnim = PageAnim.SLIDE)
     }
+
+    private val ANIMS = listOf(PageAnim.NONE, PageAnim.SLIDE, PageAnim.COVER)
 }

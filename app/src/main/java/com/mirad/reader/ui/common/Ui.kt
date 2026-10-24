@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.common
 
+import android.os.Build
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -198,6 +200,15 @@ fun SettingCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
+    val hardwareEnabled = Build.VERSION.SDK_INT >= 31 && LocalHardwareGlassBackdrop.current?.enabled == true
+    val glassActive = LocalGlassAppearance.current.transparencyPercent > 0 &&
+        (hardwareEnabled || LocalGlassBackdrop.current?.enabled == true) &&
+        !LocalGlassLegacy.current
+    // An inset tint inherits the parent's material. It must not sample the list containing itself.
+    val container = if (glassActive) {
+        MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) .12f else .08f)
+    } else MaterialTheme.colorScheme.surface
     Column(modifier = modifier.fillMaxWidth()) {
         if (title != null) {
             Text(
@@ -209,7 +220,7 @@ fun SettingCard(
         }
         Surface(
             shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surface,
+            color = container,
             border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth()
         ) {

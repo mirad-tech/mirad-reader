@@ -22,6 +22,10 @@ interface PreferenceDao {
     @Query("DELETE FROM preferences WHERE key = :key")
     suspend fun remove(key: String)
 
+    /** 按前缀批量删除：一次性迁移清理历史遗留键。 */
+    @Query("DELETE FROM preferences WHERE `key` LIKE :prefix || '%'")
+    suspend fun removeByPrefix(prefix: String)
+
     @Query("SELECT * FROM preferences")
     suspend fun getAll(): List<PreferenceEntity>
 }

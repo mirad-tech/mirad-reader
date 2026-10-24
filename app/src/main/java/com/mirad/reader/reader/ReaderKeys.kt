@@ -8,4 +8,7 @@ package com.mirad.reader.reader
  */
 object ReaderKeys {
     var pager: ((Int) -> Boolean)? = null
+    var blockedByOverlay = false
+
+    fun dispatch(delta: Int): Boolean = if (blockedByOverlay) false else pager?.invoke(delta) ?: false
 }

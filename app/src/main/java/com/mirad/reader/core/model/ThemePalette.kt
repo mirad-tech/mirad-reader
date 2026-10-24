@@ -47,16 +47,4 @@ object ThemePaletteResolver {
         val luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
         return luminance < 0.5
     }
-
-    /** 已配置自动夜间且当前处于夜间时段。 */
-    fun isAutoNight(config: Cfg, minuteOfDay: Int): Boolean {
-        if (!config.autoNightEnabled) return false
-        val start = config.autoNightStartMinute
-        val end = config.autoNightEndMinute
-        return if (start <= end) {
-            minuteOfDay in start until end
-        } else {
-            minuteOfDay >= start || minuteOfDay < end
-        }
-    }
 }

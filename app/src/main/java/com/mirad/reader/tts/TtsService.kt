@@ -30,6 +30,8 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     private var ends: IntArray = IntArray(0)
     private var index = 0
     private var playing = false
+    /** 本章最后一句已读完：此时"继续"应从头播本章，而不是把最后一句再读一遍。 */
+    private var chapterDone = false
     private var title: String = "墨读"
     /** 引擎尚未就绪时的待播放请求：就绪后自动续播，用户不必再点一次。 */
     private var pendingPlay = false
@@ -60,7 +62,11 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
             override fun onDone(utteranceId: String?) {
                 if (!playing) return
                 if (index >= texts.size - 1) {
+                    // 本章读完：服务侧同步退出播放态，否则通知栏的"继续"会把最后一句再读一遍
+                    playing = false
+                    chapterDone = true
                     TtsBus.markChapterFinished()
+                    notifyUpdate()
                 } else {
                     index++
                     speakCurrent()
@@ -77,7 +83,10 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
             }
 
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                TtsBus.update { it.copy(playing = false) }
+                // QUEUE_FLUSH 换句（上一句/下一句/换章）同样会触发 onStop：
+                // 只有用户主动暂停/停止（playing 已为 false）才同步到 bus，
+                // 否则会把刚开始的下一句误标为已暂停。
+                if (!playing) TtsBus.update { it.copy(playing = false) }
             }
         })
         // 只续播"初始化期间用户确实请求过"的播放；服务因别的原因启动时不应自动开口
@@ -115,17 +124,25 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                 notifyUpdate()
             }
             TtsBus.ACTION_RESUME -> {
-                if (texts.isNotEmpty()) playOrDefer()
+                if (texts.isNotEmpty()) {
+                    if (chapterDone) {
+                        index = 0
+                        chapterDone = false
+                    }
+                    playOrDefer()
+                }
             }
             TtsBus.ACTION_NEXT -> {
                 if (index < texts.size - 1) {
                     index++
+                    chapterDone = false
                     playOrDefer()
                 }
             }
             TtsBus.ACTION_PREV -> {
                 if (index > 0) {
                     index--
+                    chapterDone = false
                     playOrDefer()
                 }
             }
@@ -141,6 +158,8 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
         starts = intent.getIntegerArrayListExtra(TtsBus.EXTRA_STARTS)?.toIntArray() ?: IntArray(0)
         ends = intent.getIntegerArrayListExtra(TtsBus.EXTRA_ENDS)?.toIntArray() ?: IntArray(0)
         index = intent.getIntExtra(TtsBus.EXTRA_INDEX, 0).coerceIn(0, (texts.size - 1).coerceAtLeast(0))
+        // 新的播放列表：上一章的"已读完"标记不能带过来，否则暂停后继续会误从头播。
+        chapterDone = false
         title = intent.getStringExtra(TtsBus.EXTRA_TITLE) ?: "墨读"
         val rate = intent.getFloatExtra(TtsBus.EXTRA_RATE, 1f)
         val pitch = intent.getFloatExtra(TtsBus.EXTRA_PITCH, 1f)

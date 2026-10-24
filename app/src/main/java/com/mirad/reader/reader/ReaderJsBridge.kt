@@ -22,9 +22,17 @@ class ReaderJsBridge(
     /** JS 原地换章失败时，显式请求原生重载目标章（唯一的失败兜底入口）。 */
     private val onRequestNextChapter: (index: Int) -> Unit = {},
     /** 自动下滑到达本章末尾（章节代次随章号校验）。 */
-    private val onAutoScrollEnd: (chapterIndex: Int) -> Unit = {}
+    private val onAutoScrollEnd: (chapterIndex: Int) -> Unit = {},
+    /** 合并后的真实正文变化；不把 Android onDraw 当成内容变化。 */
+    private val onVisualChanged: () -> Unit = {}
 ) {
     private val main = Handler(Looper.getMainLooper())
+
+    @JavascriptInterface
+    fun onVisualChanged() {
+        val callback = this.onVisualChanged
+        main.post { callback() }
+    }
 
     @JavascriptInterface
     fun onAutoScrollEnd(chapterIndex: Int) {

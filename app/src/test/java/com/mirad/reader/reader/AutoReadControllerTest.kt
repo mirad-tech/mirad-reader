@@ -29,6 +29,9 @@ class AutoReadControllerTest {
         var turnResult = AutoTurnResult.TURNED
         var advanceResult = AutoAdvanceResult.ADVANCED
         var advanceDelayMs = 0L
+        var turnCaptureDelayMs = 0L
+        var chapterReadyDelayMs = 0L
+        var completedTurns = 0
         val notices = mutableListOf<String>()
 
         override fun isPaged(): Boolean = paged
@@ -36,7 +39,10 @@ class AutoReadControllerTest {
         override fun scrollSecondsPerScreen(): Int = scrollSeconds
 
         override suspend fun turnPageForAuto(): AutoTurnResult {
+            if (turnCaptureDelayMs > 0) delay(turnCaptureDelayMs)
             turns++
+            if (chapterReadyDelayMs > 0) delay(chapterReadyDelayMs)
+            completedTurns++
             return turnResult
         }
 
@@ -58,6 +64,39 @@ class AutoReadControllerTest {
         override fun notify(message: String) {
             notices += message
         }
+    }
+
+    @Test
+    fun gpuCaptureAndChapterReadinessFinishBeforeTheNextFullReadingInterval() = runTest {
+        val host = FakeHost(pageSeconds = 20).apply { turnCaptureDelayMs = 500; chapterReadyDelayMs = 2_000 }
+        val controller = AutoReadController(backgroundScope, host)
+        controller.start()
+        advanceTimeBy(20_000); runCurrent()
+        assertEquals(0, host.turns)
+        advanceTimeBy(500); runCurrent()
+        assertEquals(1, host.turns)
+        assertEquals(0, host.completedTurns)
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(1, host.completedTurns)
+        advanceTimeBy(19_999); runCurrent()
+        assertEquals(1, host.turns)
+        advanceTimeBy(1); runCurrent()
+        assertEquals(1, host.turns)
+        advanceTimeBy(500); runCurrent()
+        assertEquals(2, host.turns)
+    }
+
+    @Test
+    fun pauseCancelsAnAwaitedGpuCaptureBeforeItCanTurnThePage() = runTest {
+        val host = FakeHost(pageSeconds = 20).apply { turnCaptureDelayMs = 2_000 }
+        val controller = AutoReadController(backgroundScope, host)
+        controller.start()
+        advanceTimeBy(20_500); runCurrent()
+        controller.pause()
+        advanceTimeBy(10_000); runCurrent()
+        assertEquals(0, host.turns)
+        assertEquals(0, host.completedTurns)
+        assertEquals(AutoReadState.PAUSED, controller.state.value)
     }
 
     @Test

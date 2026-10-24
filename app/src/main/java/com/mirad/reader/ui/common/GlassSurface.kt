@@ -54,9 +54,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlin.math.ceil
 import kotlin.math.max
 
@@ -90,7 +92,9 @@ class GlassBackdropState @JvmOverloads internal constructor(
     internal var size by mutableStateOf(IntSize.Zero)
     internal var recorded by mutableStateOf(false)
     internal var image by mutableStateOf<ImageBitmap?>(null)
-    internal var enabled by mutableStateOf(true)
+    // 初始保守为 false：能力判定（API/省电/降级）由宿主 SideEffect 在首帧后写入，
+    // 避免首帧就绕过闸门录制采样层并发起一次无谓采样。
+    internal var enabled by mutableStateOf(false)
     internal var activeTransparencyPercent: Int = GlassAppearance.DEFAULT_PERCENT
 
     // 事件版本驱动：仅在实际采样或发布新内容时递增，不在 drawWithContent 阶段自增（R1、F2）
@@ -377,8 +381,13 @@ class GlassBackdropState @JvmOverloads internal constructor(
                 scaled
             }
 
+            // GraphicsLayer 读回路径（provider == null）的位图归本函数所有：
+            // 回收判定按所有权而非对象恒等，cpuSafe === rawBmp 时同样需要回收，
+            // 否则静态内容反复重绘会按节流间隔持续泄漏采样位图。
+            val ownsReadback = provider == null
+
             if (generation != token || !enabled || activeTransparencyPercent <= 0) {
-                if (cpuSafe !== rawBmp && !cpuSafe.isRecycled) {
+                if ((ownsReadback || cpuSafe !== rawBmp) && cpuSafe !== analysisBitmap && !cpuSafe.isRecycled) {
                     runCatching { cpuSafe.recycle() }
                 }
                 return
@@ -389,16 +398,24 @@ class GlassBackdropState @JvmOverloads internal constructor(
             lastSampleDurationNanos = finishNanos - startNanos
             snapshotCount++
 
-            val fingerprint = computeBitmapFingerprint(cpuSafe)
+            // 指纹与全像素比较是纯 CPU 计算（cpuSafe 已保证为软件 ARGB_8888 位图，
+            // 可安全跨线程 getPixel），放到 Default 线程避免拖慢主线程帧。
+            val fingerprint = withContext(Dispatchers.Default) { computeBitmapFingerprint(cpuSafe) }
+            if (generation != token || !enabled || activeTransparencyPercent <= 0) {
+                if ((ownsReadback || cpuSafe !== rawBmp) && cpuSafe !== analysisBitmap && !cpuSafe.isRecycled) {
+                    runCatching { cpuSafe.recycle() }
+                }
+                return
+            }
             if (
                 !force &&
                 fingerprint == lastSampleFingerprint &&
                 analysisBitmap != null &&
                 sharedSnapshot != null &&
-                areBoundedBitmapsIdentical(cpuSafe, analysisBitmap)
+                withContext(Dispatchers.Default) { areBoundedBitmapsIdentical(cpuSafe, analysisBitmap) }
             ) {
                 // R1 & S2：全量像素完全一致时跳过状态更新，阻断静态重绘环且绝不漏检局部变化
-                if (cpuSafe !== analysisBitmap && cpuSafe !== rawBmp && !cpuSafe.isRecycled) {
+                if ((ownsReadback || cpuSafe !== rawBmp) && cpuSafe !== analysisBitmap && !cpuSafe.isRecycled) {
                     runCatching { cpuSafe.recycle() }
                 }
                 return
@@ -634,6 +651,10 @@ fun Modifier.glassBackground(
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = RoundedCornerShape(22.dp)
 ): Modifier = composed {
+    val hardware = LocalHardwareGlassBackdrop.current
+    if (hardware != null && Build.VERSION.SDK_INT >= 31) {
+        return@composed this.hardwareGlassBackground(hardware, style, shape)
+    }
     val source = LocalGlassBackdrop.current
     val view = LocalView.current
     val legacy = LocalGlassLegacy.current
@@ -767,7 +788,7 @@ fun Modifier.glassBackground(
         }
     }
 
-    val protectionMaskImage = remember(continuousField, effectiveAmbientOpacity, effectivePeakOpacity, color, hasLocalVariation) {
+    val protectionMaskImage = remember(continuousField, stableTargetAmbientOpacity, stableTargetOpacity, color, hasLocalVariation) {
         if (!hasLocalVariation || continuousField == null) {
             null
         } else {
@@ -775,12 +796,17 @@ fun Modifier.glassBackground(
             val gInt = (color.green * 255f + 0.5f).toInt().coerceIn(0, 255)
             val bInt = (color.blue * 255f + 0.5f).toInt().coerceIn(0, 255)
             val rawMin = rawParams.ambientOpacity
-            val rawSpan = (rawParams.opacity - rawMin).coerceAtLeast(0.001f)
+            // 归一化上限取保护场实际峰值与目标 peak 的较大者：cell 级精确求解所需的
+            // 保护强度可能超过 peak 启发值，钳回 peak 会把该处对比度压到承诺以下。
+            val rawTop = maxOf(rawParams.opacity, continuousField.maxOrNull() ?: rawParams.opacity)
+            val rawSpan = (rawTop - rawMin).coerceAtLeast(0.001f)
             val pixels = IntArray(continuousField.size)
             for (i in continuousField.indices) {
                 val norm = ((continuousField[i] - rawMin) / rawSpan).coerceIn(0f, 1f)
-                val alphaF = (effectiveAmbientOpacity + norm * (effectivePeakOpacity - effectiveAmbientOpacity))
-                    .coerceIn(effectiveAmbientOpacity, 1f)
+                // 端点用稳定目标值：mask 是静态位图，用动画值做 key/内容会在
+                // 保护释放的 180ms 内每帧重建一张 64×64 Bitmap。
+                val alphaF = (stableTargetAmbientOpacity + norm * (stableTargetOpacity - stableTargetAmbientOpacity))
+                    .coerceIn(stableTargetAmbientOpacity, 1f)
                 val aInt = ceil(alphaF * 255f).toInt().coerceIn(0, 255)
                 pixels[i] = (aInt shl 24) or (rInt shl 16) or (gInt shl 8) or bInt
             }
@@ -797,30 +823,32 @@ fun Modifier.glassBackground(
         percent,
         style,
         dark,
-        effectiveAmbientOpacity,
-        effectivePeakOpacity,
+        stableTargetAmbientOpacity,
+        stableTargetOpacity,
         rawParams.blurRadius,
         rawParams.highlightAlpha,
         rawParams.cellProtectedOpacities
     ) {
         if (source != null) {
             val protectedCells = (rawParams.rawCellOpacities ?: rawParams.cellProtectedOpacities)
-                ?.count { it > effectiveAmbientOpacity + 0.015f } ?: 0
-            source.lastComputedAmbientOpacity = effectiveAmbientOpacity
-            source.lastComputedPeakOpacity = effectivePeakOpacity
+                ?.count { it > stableTargetAmbientOpacity + 0.015f } ?: 0
+            source.lastComputedAmbientOpacity = stableTargetAmbientOpacity
+            source.lastComputedPeakOpacity = stableTargetOpacity
             source.lastComputedBlurDp = rawParams.blurRadius.value
             source.lastComputedHighlightAlpha = rawParams.highlightAlpha
             source.lastProtectedCellCount = protectedCells
-            runCatching {
-                android.util.Log.i(
-                    "GlassPreview",
-                    "glassParams style=$style percent=$percent dark=$dark " +
-                        "ambientOpacity=${"%.3f".format(java.util.Locale.US, effectiveAmbientOpacity)} " +
-                        "peakOpacity=${"%.3f".format(java.util.Locale.US, effectivePeakOpacity)} " +
-                        "protectedCells=$protectedCells " +
-                        "blurDp=${"%.1f".format(java.util.Locale.US, rawParams.blurRadius.value)} " +
-                        "highlightAlpha=${"%.3f".format(java.util.Locale.US, rawParams.highlightAlpha)}"
-                )
+            if (com.mirad.reader.BuildConfig.DEBUG) {
+                runCatching {
+                    android.util.Log.i(
+                        "GlassPreview",
+                        "glassParams style=$style percent=$percent dark=$dark " +
+                            "ambientOpacity=${"%.3f".format(java.util.Locale.US, stableTargetAmbientOpacity)} " +
+                            "peakOpacity=${"%.3f".format(java.util.Locale.US, stableTargetOpacity)} " +
+                            "protectedCells=$protectedCells " +
+                            "blurDp=${"%.1f".format(java.util.Locale.US, rawParams.blurRadius.value)} " +
+                            "highlightAlpha=${"%.3f".format(java.util.Locale.US, rawParams.highlightAlpha)}"
+                    )
+                }
             }
         }
     }

@@ -85,7 +85,6 @@ object ReaderCss {
             .append("letter-spacing:").append(config.letterSpacingEm).append("em").append(important).append(";")
             .append("line-break:strict;-webkit-line-break:strict;")
             .append("word-break:break-all;overflow-wrap:break-word;")
-            .append("font-feature-settings:\"chws\" 1,\"halt\" 1;")
             .append("}\n")
 
         sb.append("p{margin:0 0 ").append(config.paragraphSpacingEm).append("em 0").append(important).append(";")

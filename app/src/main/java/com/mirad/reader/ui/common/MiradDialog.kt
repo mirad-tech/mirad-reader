@@ -23,6 +23,13 @@ fun MiradDialog(
     text: (@Composable () -> Unit)? = null,
     icon: (@Composable () -> Unit)? = null
 ) {
+    val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
+    if (readerHost != null) {
+        com.mirad.reader.ui.reader.ReaderInWindowDialog(
+            readerHost, onDismissRequest, confirmButton, modifier, dismissButton, title, text, icon
+        )
+        return
+    }
     val maxBodyHeight = LocalConfiguration.current.screenHeightDp.dp * .55f
     AlertDialog(
         onDismissRequest = onDismissRequest,

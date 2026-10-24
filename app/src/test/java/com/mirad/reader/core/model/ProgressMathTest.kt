@@ -67,17 +67,4 @@ class ThemePaletteResolverTest {
         assertEquals(true, darkCustom.isDark)
         assertTrue(darkCustom.text != lightCustom.text)
     }
-
-    @Test
-    fun autoNightWindowHandlesCrossMidnight() {
-        val config = ReaderConfig.DEFAULT.copy(
-            autoNightEnabled = true,
-            autoNightStartMinute = 22 * 60,
-            autoNightEndMinute = 7 * 60
-        )
-        assertEquals(true, ThemePaletteResolver.isAutoNight(config, 23 * 60))
-        assertEquals(true, ThemePaletteResolver.isAutoNight(config, 6 * 60))
-        assertEquals(false, ThemePaletteResolver.isAutoNight(config, 12 * 60))
-        assertEquals(true, ThemePaletteResolver.isAutoNight(config.copy(autoNightEnabled = false), 23 * 60).not())
-    }
 }

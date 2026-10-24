@@ -53,16 +53,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import com.mirad.reader.ui.common.GlassSurface
-import com.mirad.reader.ui.common.GlassDropdownMenu
 import com.mirad.reader.ui.common.LocalGlassLegacy
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import kotlin.math.ceil
 
 /** Same safe area for controls and text, including transient bars in immersive mode. */
 @Composable
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 internal fun readerSafeInsets(): WindowInsets =
     WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
+
+// WebView rounds its viewport before centering columns; keep fractional edges outside cutouts.
+internal fun readerHorizontalInsetDp(inset: Dp): Int =
+    if (inset.value > 0f) ceil(inset.value).toInt() + 1 else 0
 
 /**
  * 阅读顶栏：只保留「返回 / 章节信息 / 书签 / 更多」。
@@ -87,13 +92,13 @@ fun ReaderTopBar(
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-        .padding(horizontal = if (legacy) 0.dp else 12.dp, vertical = if (legacy) 0.dp else 8.dp)) {
+        .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = onBack) {
@@ -126,7 +131,7 @@ fun ReaderTopBar(
                 IconButton(onClick = { menu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
-                GlassDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                ReaderDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("目录") }, onClick = { menu = false; onToc() })
                     DropdownMenuItem(text = { Text("笔记与书签") }, onClick = { menu = false; onNotes() })
                     DropdownMenuItem(
@@ -167,7 +172,7 @@ fun ReaderBottomBar(
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-        .padding(horizontal = if (legacy) 0.dp else 12.dp, vertical = if (legacy) 0.dp else 8.dp)) {
+        .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
         Column {
             if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
@@ -185,7 +190,7 @@ fun ReaderBottomBar(
                 },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 56.dp)
                     .padding(horizontal = 12.dp)
             )
             Row(
@@ -209,7 +214,7 @@ fun ReaderBottomBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 48.dp)
+                    .heightIn(min = 56.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable(onClick = onProgress)
                     .padding(horizontal = 16.dp, vertical = 8.dp),

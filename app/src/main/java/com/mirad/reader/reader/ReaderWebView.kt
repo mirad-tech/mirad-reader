@@ -26,6 +26,8 @@ class ReaderWebView(context: Context) : WebView(context) {
 
     /** Paint changes are independent of persisted chapter/page/character positions. */
     internal var onVisualInvalidated: (() -> Unit)? = null
+    /** Actual document changes for GPU readability analysis; a redraw alone is not a change. */
+    internal var onBackdropContentChanged: (() -> Unit)? = null
     private var backdropCaptureDepth = 0
 
     override fun onDraw(canvas: Canvas) {
@@ -35,13 +37,21 @@ class ReaderWebView(context: Context) : WebView(context) {
 
     override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
         super.onScrollChanged(l, t, oldl, oldt)
-        if (l != oldl || t != oldt) notifyVisualInvalidated()
+        if (l != oldl || t != oldt) {
+            notifyVisualInvalidated()
+            notifyBackdropContentChanged()
+        }
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
-        if (w != oldw || h != oldh) notifyVisualInvalidated()
+        if (w != oldw || h != oldh) {
+            notifyVisualInvalidated()
+            notifyBackdropContentChanged()
+        }
     }
+
+    internal fun notifyBackdropContentChanged() { onBackdropContentChanged?.invoke() }
 
     private fun notifyVisualInvalidated() {
         if (backdropCaptureDepth == 0) onVisualInvalidated?.invoke()

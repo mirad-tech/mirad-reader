@@ -13,9 +13,16 @@ import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 已导入书籍的维护操作。
@@ -148,26 +155,69 @@ class BookMaintenance(
         val text: String
     )
 
-    /** 用原始文件重新解码并重建章节索引。 */
-    suspend fun redetect(book: BookEntity, charsetHint: String? = null): ReindexResult =
-        withContext(Dispatchers.IO) {
-            val bytes = rawBytes(book)
-            val decoded = TextCodec.decode(bytes, manual = charsetHint)
-            val normalized = TextNormalizer.normalize(decoded.text)
-            if (normalized.isBlank()) throw IllegalStateException("重新解码后没有正文内容")
-            database.searchFtsDao().deleteForBook(book.id)
-            writeContent(book, normalized)
-            val chapters = index(book, normalized)
-            books.updateBook(
-                book.copy(
-                    encoding = decoded.charsetName,
-                    chapterRuleId = chapters.ruleId,
-                    totalChapters = chapters.count,
-                    totalChars = normalized.length.toLong()
-                )
-            )
-            ReindexResult(decoded.charsetName, decoded.source, chapters.count, normalized.length.toLong())
+    /** 用原始文件重新解码并重建章节索引。同一本书串行执行：发布、失败恢复与清理同临界区，不影响其他书。 */
+    suspend fun redetect(book: BookEntity, charsetHint: String? = null): ReindexResult {
+        val lock = redetectLocks.computeIfAbsent(book.id) { Mutex() }
+        return lock.withLock {
+            withContext(Dispatchers.IO) {
+                val bytes = rawBytes(book)
+                val decoded = TextCodec.decode(bytes, manual = charsetHint)
+                val normalized = TextNormalizer.normalize(decoded.text)
+                if (normalized.isBlank()) throw IllegalStateException("重新解码后没有正文内容")
+                val target = contentFile(book)
+                // 每次操作独占临时文件：被取消的旧任务（取消只在挂起点生效，秒级的同步分章
+                // 计算会把清理推迟到计算之后）只能删掉自己的输出，动不了并发新任务的文件。
+                val staging = ContentReplacer.stagingFile(target)
+                staging.parentFile?.mkdirs()
+                staging.writeText(normalized, Charsets.UTF_8)
+                // 旧状态快照：正文替换失败时把章节与书籍字段恢复到本次操作之前，
+                // 保证"完整旧状态或完整新状态"，绝不留下新索引配旧正文的混合状态。
+                val oldBook = books.getBook(book.id) ?: book
+                val oldChapters = books.getChapters(book.id)
+                try {
+                    // 耗时计算结束后、发布前检查取消：已取消的任务不得继续提交结果。
+                    currentCoroutineContext().ensureActive()
+                    // 检测与切分是纯 CPU 计算（大书可达秒级），放在事务外执行，避免长时间持有数据库写锁。
+                    val detection = ChapterDetector.detect(normalized)
+                    val slices = ChapterSplitter.split(normalized, detection)
+                    if (slices.isEmpty()) throw IllegalStateException("无法切分正文")
+                    currentCoroutineContext().ensureActive()
+                    var indexed = 0
+                    ReindexCoordinator(
+                        commitNewIndex = {
+                            indexed = database.withTransaction {
+                                database.searchFtsDao().deleteForBook(book.id)
+                                val result = persistChapters(book, slices)
+                                books.updateBook(
+                                    book.copy(
+                                        encoding = decoded.charsetName,
+                                        chapterRuleId = detection.rule?.id,
+                                        totalChapters = slices.size,
+                                        totalChars = normalized.length.toLong()
+                                    )
+                                )
+                                result
+                            }
+                        },
+                        restorePreviousIndex = {
+                            database.withTransaction {
+                                books.saveChapters(book.id, oldChapters)
+                                books.updateBook(oldBook)
+                            }
+                        }
+                    ).commitAndPublish(staging, target)
+                    ReindexResult(decoded.charsetName, decoded.source, indexed, normalized.length.toLong())
+                } catch (t: Throwable) {
+                    // 取消保持取消语义；只清理本次操作独占的临时文件（DB 事务已随异常回滚）。
+                    // 恢复失败的例外：staging 与原正文是诊断与补救现场，不随清理删除。
+                    if (t !is ReindexRecoveryException) staging.delete()
+                    throw t
+                }
+            }
         }
+    }
+
+    private val redetectLocks = ConcurrentHashMap<Long, Mutex>()
 
     /**
      * 各候选编码的前若干字。用于「编码」对话框：选中即预览，用户一眼就能看出哪个是对的。
@@ -209,23 +259,8 @@ class BookMaintenance(
 
     private fun contentFile(book: BookEntity): File = paths.contentFile(books.tokenOf(book))
 
-    private fun writeContent(book: BookEntity, text: String) {
-        val file = contentFile(book)
-        file.parentFile?.mkdirs()
-        file.writeText(text, Charsets.UTF_8)
-    }
-
-    private class Indexed(val count: Int, val ruleId: String?)
-
-    private suspend fun index(
-        book: BookEntity,
-        text: String,
-        rule: com.mirad.reader.core.text.ChapterRule? = null
-    ): Indexed {
-        val detection = if (rule == null) ChapterDetector.detect(text) else ChapterDetector.detect(text, listOf(rule))
-        val effective = detection.rule
-        val slices = ChapterSplitter.split(text, detection)
-        if (slices.isEmpty()) throw IllegalStateException("无法切分正文")
+    /** 把切分结果写入章节表并把越界进度夹回有效范围（须在事务内调用）。 */
+    private suspend fun persistChapters(book: BookEntity, slices: List<ChapterSlice>): Int {
         val chapters = slices.mapIndexed { i, slice ->
             ChapterEntity(
                 bookId = book.id,
@@ -240,7 +275,7 @@ class BookMaintenance(
         }
         books.saveChapters(book.id, chapters)
         clampProgress(book.id, chapters)
-        return Indexed(chapters.size, effective?.id)
+        return chapters.size
     }
 
     /**
@@ -260,5 +295,79 @@ class BookMaintenance(
         books.saveProgress(
             progress.copy(chapterIndex = index, charOffset = offset, pageIndex = 0)
         )
+    }
+}
+
+/**
+ * 正文发布的文件操作：每次操作独占临时文件，发布采用"直改 → 备份-替换-回滚"两级策略。
+ *
+ * 纯 JVM 文件逻辑（不依赖 Android），rename 可注入以便单测模拟失败序列；
+ * 任何失败路径下原正文都保持在 target 或 .bak 中可读，staging 永不被删除。
+ */
+internal object ContentReplacer {
+
+    /** 每次操作独占的临时文件名（随机段）：被取消的旧任务清理时不可能删到并发新任务的输出。 */
+    fun stagingFile(target: File): File =
+        File(target.parentFile, target.name + "." + UUID.randomUUID().toString().substring(0, 8) + ".tmp")
+
+    /**
+     * 把 staging 发布为 target。返回 false 表示发布失败：此时原正文已恢复到 target
+     * （或保留在 .bak，恢复 rename 也失败的最坏情形），staging 完整保留供重试。
+     */
+    fun publish(staging: File, target: File, rename: (File, File) -> Boolean = { from, to -> from.renameTo(to) }): Boolean {
+        if (rename(staging, target)) return true
+        val backup = File(target.parentFile, target.name + ".bak")
+        // 上一次失败留下的旧备份先清掉（同书操作已互斥，不存在并发冲突）
+        if (backup.exists()) backup.delete()
+        if (target.exists() && !rename(target, backup)) return false
+        if (rename(staging, target)) {
+            backup.delete()
+            return true
+        }
+        // 新正文没上位：立即把原正文放回去，保证 target 可读
+        if (backup.exists()) rename(backup, target)
+        return false
+    }
+}
+
+/**
+ * 正文替换失败且恢复旧目录也失败时抛出：staging 与原正文是仅存的补救现场，
+ * 最外层异常清理（redetect 的 catch）不得删除它们。
+ */
+internal class ReindexRecoveryException(message: String, cause: Throwable) : IllegalStateException(message, cause)
+
+/**
+ * 重新识别的发布协调器：提交新索引 → 原子替换正文 → 失败恢复一致旧状态。
+ * 从 redetect 提取的极小协调边界，生产与测试共用同一段编排。
+ *
+ * 不变量：
+ * - 正常返回 = 完整新状态（新索引 + 新正文）；
+ * - [commitNewIndex] 抛出（含取消）= 数据库未提交，完整旧状态；staging 清理由调用方负责；
+ * - 正文替换失败 = 以 NonCancellable 恢复旧索引后抛出，完整旧状态；staging 已清理；
+ * - 恢复也失败 = 抛 [ReindexRecoveryException]，staging 与原正文全部保留待人工/重试补救。
+ */
+internal class ReindexCoordinator(
+    private val commitNewIndex: suspend () -> Unit,
+    private val restorePreviousIndex: suspend () -> Unit
+) {
+    suspend fun commitAndPublish(
+        staging: File,
+        target: File,
+        rename: (File, File) -> Boolean = { from, to -> from.renameTo(to) }
+    ) {
+        commitNewIndex()
+        if (ContentReplacer.publish(staging, target, rename)) return
+        try {
+            // 补偿性 DB 写入按项目纪律包 NonCancellable：发布失败的恢复不能被取消打断，
+            // 否则会留下"新索引配旧正文"的混合状态。
+            withContext(NonCancellable) { restorePreviousIndex() }
+        } catch (restoreError: Throwable) {
+            throw ReindexRecoveryException(
+                "正文替换失败且恢复旧目录失败；新正文保留于 ${staging.name}，原正文保留于 ${target.path}",
+                restoreError
+            )
+        }
+        runCatching { staging.delete() }
+        throw IllegalStateException("正文文件替换失败，已恢复原正文与原目录，请重试重新识别")
     }
 }

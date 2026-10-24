@@ -92,8 +92,8 @@ object ChapterDetector {
         return true
     }
 
-    /** 章序号：阿拉伯数字或中文数字，取不到（序章/楔子等）返回 null。 */
-    private fun chapterNumber(title: String): Int? {
+    /** 章序号：阿拉伯数字或中文数字，取不到（序章/楔子等）返回 null。流式导入路径共用，保证两个口径一致。 */
+    internal fun chapterNumber(title: String): Int? {
         Regex("^[^0-9０-９零〇一二三四五六七八九十百千万两]{0,4}([0-9０-９]{1,4})").find(title)?.let {
             return fullWidthToHalf(it.groupValues[1]).toIntOrNull()
         }
@@ -136,8 +136,8 @@ object ChapterDetector {
         return total + section + current
     }
 
-    /** 序号应大体递增：允许少量缺失/补充，但 80% 以上相邻对应递增。 */
-    private fun isMonotonic(numbers: List<Int>): Boolean {
+    /** 序号应大体递增：允许少量缺失/补充，但 80% 以上相邻对应递增。流式导入路径共用。 */
+    internal fun isMonotonic(numbers: List<Int>): Boolean {
         if (numbers.size < 3) return true
         var increasing = 0
         var pairs = 0

@@ -21,8 +21,8 @@ android {
         applicationId = "com.mirad.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.0.16"
+        versionCode = 19
+        versionName = "1.1.0"
     }
 
     buildTypes {
@@ -42,6 +42,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+        }
+        create("gpuPreview") {
+            initWith(getByName("release"))
+            applicationIdSuffix = ".gpupreview"
+            versionNameSuffix = "-gpu-probe"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
         }
     }
 

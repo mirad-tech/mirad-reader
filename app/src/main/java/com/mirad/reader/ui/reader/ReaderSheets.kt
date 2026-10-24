@@ -29,6 +29,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -57,6 +58,14 @@ import com.mirad.reader.reader.AutoReadState
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
 import com.mirad.reader.ui.common.*
+import com.mirad.reader.ui.settings.ReadingSettingsPage
+import com.mirad.reader.ui.settings.canEditReaderTypography
+import com.mirad.reader.ui.settings.reading.AppModeQuickRow
+import com.mirad.reader.ui.settings.reading.AutoReadSpeedControls
+import com.mirad.reader.ui.settings.reading.FontSizeControl
+import com.mirad.reader.ui.settings.reading.QuickThemeSwatches
+import com.mirad.reader.ui.settings.reading.ReadingSettingsHost
+import com.mirad.reader.ui.settings.readingSettingsPages
 import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.ChoiceRow
@@ -74,7 +83,6 @@ import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import kotlin.math.roundToInt
 
 // ---------------------------------------------------------------- 目录
@@ -235,9 +243,14 @@ fun ReaderSettingsSheet(
     onResetGlobal: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var fonts by remember { mutableStateOf(container.fonts.available()) }
+    // 初始为空、面板打开后到 IO 线程刷新：available() 要列 assets 与字体目录，不能在主线程组合期执行。
+    var fonts by remember { mutableStateOf(listOf<com.mirad.reader.core.model.ReadingFont>()) }
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+    }
+    val latestChange by rememberUpdatedState(onChange)
+    val appearanceController = LocalAppAppearanceController.current
 
     val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -245,7 +258,7 @@ fun ReaderSettingsSheet(
                 val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
                 if (imported != null) {
                     fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    onChange {
+                    latestChange {
                         it.copy(
                             fontFamily = com.mirad.reader.core.model.FontFamilyKey.CUSTOM,
                             customFontAsset = null,
@@ -256,34 +269,12 @@ fun ReaderSettingsSheet(
             }
         }
     }
-    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                val target = File(container.paths.backgroundsDir, "bg_reader.jpg")
-                val ok = withContext(Dispatchers.IO) {
-                    runCatching {
-                        (context.contentResolver.openInputStream(uri) ?: return@runCatching false).use { input ->
-                            target.outputStream().use { output -> input.copyTo(output) }
-                        }
-                        true
-                    }.getOrDefault(false)
-                }
-                if (ok) {
-                    onChange {
-                        it.copy(
-                            backgroundType = com.mirad.reader.core.model.BackgroundType.IMAGE,
-                            backgroundImageUri = target.absolutePath
-                        )
-                    }
-                }
-            }
-        }
-    }
+    val pickImage = rememberReadingBackgroundPicker(container)
 
-    DisposableEffect(container) {
-        onDispose { container.settings.flushGlobalConfig(container.appScope) }
+    DisposableEffect(appearanceController) {
+        onDispose { appearanceController?.commitReadingConfig() }
     }
-    CompositionLocalProvider(LocalSettingsCommit provides { container.settings.flushGlobalConfig(container.appScope) }) {
+    CompositionLocalProvider(LocalSettingsCommit provides { appearanceController?.commitReadingConfig() }) {
         ReaderSettingsPanel(
             config = config, fonts = fonts, isEpub = isEpub,
             onChange = onChange, onOpenAutoRead = onOpenAutoRead,
@@ -293,7 +284,7 @@ fun ReaderSettingsSheet(
                 withContext(Dispatchers.IO) { container.fonts.delete(font) }
                 fonts = withContext(Dispatchers.IO) { container.fonts.available() }
             } },
-            onPickImage = { imagePicker.launch(arrayOf("image/*")) }
+            onPickImage = pickImage
         )
     }
 }
@@ -310,26 +301,38 @@ internal fun ReaderSettingsPanel(
     onDismiss: () -> Unit,
     onImportFont: () -> Unit = {},
     onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
-    onPickImage: () -> Unit = {},
-    initialCategory: SettingsCategory? = null
+    onPickImage: (dark: Boolean) -> Unit = {},
+    initialPage: ReadingSettingsPage? = null
 ) {
-    var category by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialCategory) }
-    val scrollStates = SettingsCategory.entries.associateWith { rememberScrollState() }
+    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialPage) }
+    val scrollStates = ReadingSettingsPage.entries.associateWith { rememberScrollState() }
     val homeScroll = rememberScrollState()
-    androidx.activity.compose.BackHandler(category != null) { category = null }
+    androidx.activity.compose.BackHandler(page != null) { page = null }
     SheetScaffold(
-        title = category?.title ?: "阅读设置",
+        title = page?.title ?: "阅读设置",
         subtitle = "全书通用",
         onDismiss = onDismiss,
         fillHeight = true,
         maxHeightFraction = 0.62f,
-        actions = { if (category != null) SheetActionButton("返回", { category = null }) }
+        actions = { if (page != null) SheetActionButton("返回", { page = null }) }
     ) {
-        Column(Modifier.fillMaxWidth().verticalScroll(category?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
-            val selected = category
+        Column(Modifier.fillMaxWidth().verticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
+            val selected = page
             if (selected == null) {
-                SettingCard { FontSizeControl(config, onChange) }
-                BrightnessSettings(config, onChange)
+                // 快捷调节卡放最前：窄屏大字体下面板高度受限时，日夜模式与主题色块仍要一眼可达。
+                SettingCard {
+                    AppModeQuickRow()
+                    QuickThemeSwatches(config, onChange)
+                    CardDivider()
+                    SegmentedRow(
+                        options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
+                        selected = config.pageMode,
+                        onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
+                    )
+                }
+                if (canEditReaderTypography(config, isEpub)) {
+                    SettingCard { FontSizeControl(config, onChange) }
+                }
                 SettingCard {
                     SettingNavRow(
                         label = "自动阅读",
@@ -338,21 +341,17 @@ internal fun ReaderSettingsPanel(
                         onClick = onOpenAutoRead
                     )
                     CardDivider()
-                    listOf(
-                        SettingsCategory.APPEARANCE,
-                        SettingsCategory.TYPOGRAPHY,
-                        SettingsCategory.THEME,
-                        SettingsCategory.INTERACTION,
-                        SettingsCategory.SCREEN
-                    ).plus(if (isEpub) listOf(SettingsCategory.EPUB) else emptyList())
-                        .forEach { item -> SettingNavRow(item.title, onClick = { category = item }) }
+                    readingSettingsPages(isEpub)
+                        .forEach { item -> SettingNavRow(item.title, onClick = { page = item }) }
                 }
-                MiradOutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复默认设置") }
+                MiradOutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复阅读默认设置") }
             } else {
-                ReaderSettingsContent(selected, config, onChange, fonts,
+                ReadingSettingsHost(page = selected, config = config, onChange = onChange, fonts = fonts,
                     onImportFont = onImportFont,
                     onDeleteFont = onDeleteFont,
-                    onPickImage = onPickImage)
+                    onPickImage = onPickImage,
+                    isEpub = isEpub,
+                    onOpenPage = { page = it })
             }
             Spacer(Modifier.height(Spacing.lg))
         }
@@ -674,7 +673,7 @@ fun TtsSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-            ReaderSettingsContent(SettingsCategory.TTS, config, onChange)
+            ReadingSettingsHost(ReadingSettingsPage.TTS, config, onChange)
             Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }
@@ -698,11 +697,6 @@ fun AutoReadSheet(
 ) {
     val paged = config.pageMode != PageMode.SCROLL
     val active = state != AutoReadState.OFF
-    val speed = if (paged) {
-        AutoReadSpeed.clamp(config.autoPageSeconds)
-    } else {
-        AutoReadSpeed.clamp(config.autoScrollSecondsPerScreen)
-    }
     SheetScaffold(
         title = "自动阅读",
         subtitle = if (paged) "左右翻页 · 定时翻到下一页" else "上下滚动 · 按真实时间匀速下滑",
@@ -728,28 +722,8 @@ fun AutoReadSheet(
                         if (enabled) onStart() else onStop()
                     }
                 )
-                if (paged) {
-                    LabeledSlider(
-                        label = "翻页间隔",
-                        value = speed.toFloat(),
-                        valueText = "$speed 秒/页",
-                        range = AutoReadSpeed.MIN_SECONDS.toFloat()..AutoReadSpeed.MAX_SECONDS.toFloat(),
-                        steps = AutoReadSpeed.MAX_SECONDS - AutoReadSpeed.MIN_SECONDS - 1,
-                        onChange = { value ->
-                            onChange { it.copy(autoPageSeconds = AutoReadSpeed.clamp(value.roundToInt())) }
-                        }
-                    )
-                } else {
-                    LabeledSlider(
-                        label = "下滑速度",
-                        value = speed.toFloat(),
-                        valueText = "$speed 秒/屏",
-                        range = AutoReadSpeed.MIN_SECONDS.toFloat()..AutoReadSpeed.MAX_SECONDS.toFloat(),
-                        steps = AutoReadSpeed.MAX_SECONDS - AutoReadSpeed.MIN_SECONDS - 1,
-                        onChange = { value ->
-                            onChange { it.copy(autoScrollSecondsPerScreen = AutoReadSpeed.clamp(value.roundToInt())) }
-                        }
-                    )
+                AutoReadSpeedControls(config, onChange)
+                if (!paged) {
                     Text(
                         text = "一屏按扣除正文上下安全留白后的可读高度计算。",
                         style = MaterialTheme.typography.bodySmall,
@@ -773,7 +747,7 @@ fun AutoReadSheet(
                 }
             }
             Text(
-                text = "触摸正文、打开菜单或切到后台会暂停；暂停后不会自动继续。速度按本书保存。",
+                text = "触摸正文、打开菜单或切到后台会暂停；暂停后不会自动继续。速度设置全书通用。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

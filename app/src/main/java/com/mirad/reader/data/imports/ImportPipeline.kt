@@ -3,6 +3,7 @@ package com.mirad.reader.data.imports
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import androidx.room.withTransaction
 import com.mirad.reader.core.epub.EpubParser
 import com.mirad.reader.core.epub.ZipEntryReader
 import com.mirad.reader.core.html.Html
@@ -38,7 +39,8 @@ class ImportPipeline(
     private val context: Context,
     private val paths: AppPaths,
     private val books: BookRepository,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val appDatabase: com.mirad.reader.data.db.AppDatabase? = null
 ) {
 
     private val batches = ImportBatchQueue()
@@ -130,17 +132,25 @@ class ImportPipeline(
                 else prepareTxt(source, token, target, displayTitle, size)
             }
 
-            val bookId = books.insertBook(prepared.book)
+            val bookId = run {
+                // 入库三步同事务：中途崩溃不会留下"有书行但章节为空"的半本书。
+                val block: suspend () -> Long = {
+                    val id = books.insertBook(prepared.book)
+                    books.saveChapters(id, prepared.chapters.map { it.copy(bookId = id) })
+                    books.updateIndexInfo(
+                        bookId = id,
+                        chapters = prepared.chapters.size,
+                        chars = prepared.totalChars,
+                        ruleId = prepared.ruleId,
+                        regex = prepared.regex,
+                        encoding = prepared.encoding
+                    )
+                    id
+                }
+                val db = appDatabase
+                if (db != null) db.withTransaction { block() } else block()
+            }
             insertedBookId = bookId
-            books.saveChapters(bookId, prepared.chapters.map { it.copy(bookId = bookId) })
-            books.updateIndexInfo(
-                bookId = bookId,
-                chapters = prepared.chapters.size,
-                chars = prepared.totalChars,
-                ruleId = prepared.ruleId,
-                regex = prepared.regex,
-                encoding = prepared.encoding
-            )
 
             updateItem(itemId) {
                 it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId)
@@ -148,7 +158,10 @@ class ImportPipeline(
         } catch (t: Throwable) {
             withContext(Dispatchers.IO) {
                 insertedBookId?.let { id -> books.getBook(id)?.let { books.deleteBook(it) } }
-                if (insertedBookId == null) paths.deleteBookFiles(token, null)
+                // 封面写在 coversDir（不在书籍目录下），补偿必须显式带上，否则孤儿 jpg 会累积。
+                if (insertedBookId == null) {
+                    paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
+                }
             }
             updateItem(itemId) {
                 it.copy(
@@ -251,9 +264,9 @@ class ImportPipeline(
         var totalChars = 0L
         try {
             for (item in info.spine) {
-                // 与阅读路径同口径（8MB）：1MB 会把偏大的章节 XHTML 判成"读不到"，
-                // 导致该章 charCount=0、目录里显示为空章。
-                val html = reader.readText(item.href, maxBytes = 8 * 1024 * 1024)
+                // 与阅读/渲染路径同口径（ZipEntryReader.MAX_CHAPTER_BYTES）：口径不一致时
+                // 会出现"目录与渲染正常、但该章搜索 0 命中 / TTS 为空"的章节。
+                val html = reader.readText(item.href, maxBytes = ZipEntryReader.MAX_CHAPTER_BYTES)
                 val text = html?.let { Html.toPlainText(it) }.orEmpty()
                 totalChars += text.length
                 chapters.add(

@@ -98,9 +98,10 @@ private fun ReaderWindowPolicyEffect(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun ReaderSystemBarProtection(background: Color) {
-    val insets = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+    // Cutouts reserve space for text and controls, not an opaque strip over the backdrop.
+    // 顶部实色覆盖已移除：允许纯色或图片背景自然延伸至屏幕顶边。
+    val insets = WindowInsets.systemBars
     Box(Modifier.fillMaxSize()) {
-        Box(Modifier.fillMaxWidth().windowInsetsTopHeight(insets).background(background))
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsBottomHeight(insets).background(background))
         Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().windowInsetsStartWidth(insets).background(background))
         Box(Modifier.align(Alignment.CenterEnd).fillMaxHeight().windowInsetsEndWidth(insets).background(background))

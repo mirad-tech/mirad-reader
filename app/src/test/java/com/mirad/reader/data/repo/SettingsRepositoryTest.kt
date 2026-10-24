@@ -1,7 +1,9 @@
 package com.mirad.reader.data.repo
 
+import com.mirad.reader.core.model.AppAppearance
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.ReaderConfigJson
+import com.mirad.reader.core.model.ReadingStyle
 import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.PreferenceEntity
@@ -27,7 +29,28 @@ class SettingsRepositoryTest {
         val flows = mutableMapOf<String, MutableStateFlow<String?>>()
         var writes = 0
         var failNextPut = false
+        /** 按键注入：put 挂起直到解除（模拟写入受阻）。 */
+        var blockGlobalPuts: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        var blockAppearancePuts: kotlinx.coroutines.CompletableDeferred<Unit>? = null
+        /** 按键注入：下一次对旧兼容键的 put 抛异常（模拟写入失败）。 */
+        var failGlobalPuts = false
         override suspend fun put(preference: PreferenceEntity) {
+            // 启动迁移标记与业务写入失败注入无关：直接落库，也不计入业务写入计数。
+            if (preference.key == SettingsRepository.KEY_BOOK_CONFIG_CLEARED) {
+                entries[preference.key] = preference
+                flows.getOrPut(preference.key) { MutableStateFlow(null) }.value = preference.value
+                return
+            }
+            when (preference.key) {
+                SettingsRepository.KEY_GLOBAL -> {
+                    blockGlobalPuts?.await()
+                    if (failGlobalPuts) {
+                        failGlobalPuts = false
+                        throw IllegalStateException("Legacy global write failed")
+                    }
+                }
+                SettingsRepository.KEY_APP_APPEARANCE -> blockAppearancePuts?.await()
+            }
             if (failNextPut) {
                 failNextPut = false
                 throw IllegalStateException("Disk write failure")
@@ -43,14 +66,20 @@ class SettingsRepositoryTest {
             entries.remove(key)
             flows[key]?.value = null
         }
+        override suspend fun removeByPrefix(prefix: String) {
+            entries.keys.filter { it.startsWith(prefix) }.toList().forEach { key ->
+                entries.remove(key)
+                flows[key]?.value = null
+            }
+        }
         override suspend fun getAll() = entries.values.toList()
     }
 
     @Test fun reopeningBeforeDebounceReadsLatestSize() = runTest {
         val dao = MemoryPreferences()
         val settings = SettingsRepository(dao)
-        settings.queueBookConfig(1, ReaderConfig.DEFAULT.copy(fontSizeSp = 32f), this)
-        assertEquals(32f, settings.effective(1).fontSizeSp)
+        settings.queueGlobalConfig(ReaderConfig.DEFAULT.copy(fontSizeSp = 32f), this)
+        assertEquals(32f, settings.currentGlobal().fontSizeSp)
         assertEquals(0, dao.writes)
         advanceUntilIdle()
         assertEquals(32f, ReaderConfigJson.decode(dao.get(SettingsRepository.KEY_GLOBAL)).fontSizeSp)
@@ -59,22 +88,38 @@ class SettingsRepositoryTest {
     @Test fun rapidChangesOnlyPersistLastValueAndExitFlushes() = runTest {
         val dao = MemoryPreferences()
         val settings = SettingsRepository(dao)
-        for (size in 12..40) settings.queueBookConfig(1, ReaderConfig.DEFAULT.copy(fontSizeSp = size.toFloat()), this)
-        settings.flushBookConfig(1, this)
+        for (size in 12..40) settings.queueGlobalConfig(ReaderConfig.DEFAULT.copy(fontSizeSp = size.toFloat()), this)
+        settings.flushGlobalConfig(this)
         advanceUntilIdle()
         assertEquals(1, dao.writes)
         assertEquals(40f, ReaderConfigJson.decode(dao.get(SettingsRepository.KEY_GLOBAL)).fontSizeSp)
+    }
+
+    @Test fun legacyBookConfigKeysAreClearedOnceAtStartup() = runTest {
+        val dao = MemoryPreferences()
+        dao.put(PreferenceEntity("reader_config_book_1", "{}", 0L))
+        dao.put(PreferenceEntity("reader_config_book_2", "{}", 0L))
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLOBAL, ReaderConfigJson.encode(ReaderConfig.DEFAULT), 0L))
+        val settings = SettingsRepository(dao, this)
+        advanceUntilIdle()
+        assertNull(dao.get("reader_config_book_1"))
+        assertNull(dao.get("reader_config_book_2"))
+        assertEquals("1", dao.get(SettingsRepository.KEY_BOOK_CONFIG_CLEARED))
+        // 标记存在后再次构造不重复清理，也不动其它键。
+        SettingsRepository(dao, this)
+        advanceUntilIdle()
+        assertNotNull(dao.get(SettingsRepository.KEY_GLOBAL))
     }
 
     @Test fun resettingCannotBeOverwrittenByPendingSliderSave() = runTest {
         val dao = MemoryPreferences()
         val settings = SettingsRepository(dao)
         settings.saveGlobal(ReaderConfig.DEFAULT.copy(fontSizeSp = 22f))
-        settings.queueBookConfig(1, ReaderConfig.DEFAULT.copy(fontSizeSp = 40f), this)
+        settings.queueGlobalConfig(ReaderConfig.DEFAULT.copy(fontSizeSp = 40f), this)
         settings.saveGlobal(ReaderConfig.DEFAULT.copy(fontSizeSp = 22f))
-        settings.flushBookConfig(1, this)
+        settings.flushGlobalConfig(this)
         advanceUntilIdle()
-        assertEquals(22f, settings.effective(1).fontSizeSp)
+        assertEquals(22f, settings.currentGlobal().fontSizeSp)
     }
 
     @Test fun settingsAreUniversalAcrossBooksAndNewBooksInheritLatestConfig() = runTest {
@@ -82,18 +127,18 @@ class SettingsRepositoryTest {
         val settings = SettingsRepository(dao)
         // 在书 1 中修改字号为 28sp，主题为绿色
         val customConfig = ReaderConfig.DEFAULT.copy(fontSizeSp = 28f, theme = ThemeKey.GREEN)
-        settings.queueBookConfig(1, customConfig, this)
+        settings.queueGlobalConfig(customConfig, this)
         // 书 2 应当立即通用继承此配置，无需重复设置
-        assertEquals(28f, settings.effective(2).fontSizeSp)
-        assertEquals(ThemeKey.GREEN, settings.effective(2).theme)
+        assertEquals(28f, settings.currentGlobal().fontSizeSp)
+        assertEquals(ThemeKey.GREEN, settings.currentGlobal().theme)
         // 任何新打开的书（书 3）也直接生效
-        assertEquals(28f, settings.effective(3).fontSizeSp)
-        assertEquals(ThemeKey.GREEN, settings.effective(3).theme)
-        settings.flushBookConfig(1, this)
+        assertEquals(28f, settings.currentGlobal().fontSizeSp)
+        assertEquals(ThemeKey.GREEN, settings.currentGlobal().theme)
+        settings.flushGlobalConfig(this)
         advanceUntilIdle()
         // 落盘后重新读取，新书依然保持最新通用阅读偏好
-        assertEquals(28f, settings.effective(999).fontSizeSp)
-        assertEquals(ThemeKey.GREEN, settings.effective(999).theme)
+        assertEquals(28f, settings.currentGlobal().fontSizeSp)
+        assertEquals(ThemeKey.GREEN, settings.currentGlobal().theme)
     }
 
     @Test fun globalSettingSurvivesImmediatePageExit() = runTest {
@@ -101,7 +146,7 @@ class SettingsRepositoryTest {
         val settings = SettingsRepository(dao)
         settings.queueGlobalConfig(ReaderConfig.DEFAULT.copy(fontSizeSp = 29f), this)
         assertEquals(29f, settings.currentGlobal().fontSizeSp)
-        assertEquals(29f, settings.effective(2).fontSizeSp)
+        assertEquals(29f, settings.currentGlobal().fontSizeSp)
         settings.flushGlobalConfig(this)
         advanceUntilIdle()
         assertEquals(29f, ReaderConfigJson.decode(dao.get(SettingsRepository.KEY_GLOBAL)).fontSizeSp)
@@ -200,6 +245,12 @@ class SettingsRepositoryTest {
                 entries.remove(key)
                 flows[key]?.value = null
             }
+            override suspend fun removeByPrefix(prefix: String) {
+                entries.keys.filter { it.startsWith(prefix) }.toList().forEach { key ->
+                    entries.remove(key)
+                    flows[key]?.value = null
+                }
+            }
             override suspend fun getAll() = entries.values.toList()
         }
         val repoScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
@@ -223,5 +274,251 @@ class SettingsRepositoryTest {
         assertFalse("Stale write failure must not leave glassSaveFailed=true after newer write succeeds", settings.glassSaveFailed.first())
         assertEquals(85, settings.currentGlassAppearance().transparencyPercent)
         assertEquals("85", dao.get(SettingsRepository.KEY_GLASS_TRANSPARENCY))
+    }
+
+    /**
+     * 模拟真实 Room：put 立即写库，但 observe 的失效通知要等 [invalidate] 手动触发才重新发射。
+     * 在"落库完成、失效通知未到"的窗口里，global / glassAppearance 流必须继续发射最新值，
+     * 否则受控滑块会闪回旧值（SettingsRepository 的 pending 即最新值缓存）。
+     */
+    private class AsyncInvalidationPreferences : PreferenceDao {
+        val entries = mutableMapOf<String, PreferenceEntity>()
+        val flows = mutableMapOf<String, MutableStateFlow<String?>>()
+        override suspend fun put(preference: PreferenceEntity) {
+            entries[preference.key] = preference
+        }
+        override suspend fun get(key: String) = entries[key]?.value
+        override fun observe(key: String): Flow<String?> =
+            flows.getOrPut(key) { MutableStateFlow(entries[key]?.value) }
+        override suspend fun remove(key: String) {
+            entries.remove(key)
+            flows[key]?.value = null
+        }
+        override suspend fun removeByPrefix(prefix: String) {
+            entries.keys.filter { it.startsWith(prefix) }.toList().forEach { key ->
+                entries.remove(key)
+                flows[key]?.value = null
+            }
+        }
+        override suspend fun getAll() = entries.values.toList()
+        fun invalidate(key: String) {
+            flows.getOrPut(key) { MutableStateFlow(null) }.value = entries[key]?.value
+        }
+    }
+
+    @Test fun globalFlowDoesNotFallBackToStaleSavedValueBeforeInvalidation() = runTest {
+        val dao = AsyncInvalidationPreferences()
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLOBAL, ReaderConfigJson.encode(ReaderConfig.DEFAULT), 0L))
+        val settings = SettingsRepository(dao)
+        settings.queueGlobalConfig(ReaderConfig.DEFAULT.copy(fontSizeSp = 30f), this)
+        advanceTimeBy(500) // 越过 400ms 防抖：已落库，失效通知尚未到达
+        assertEquals("落库后、失效通知前不能回退到旧库值", 30f, settings.global.first().fontSizeSp)
+        dao.invalidate(SettingsRepository.KEY_GLOBAL)
+        assertEquals("失效通知到达后仍是最新值", 30f, settings.global.first().fontSizeSp)
+    }
+
+    @Test fun glassAppearanceFlowDoesNotFallBackToStaleSavedValueBeforeInvalidation() = runTest {
+        val dao = AsyncInvalidationPreferences()
+        val settings = SettingsRepository(dao)
+        settings.queueGlassAppearance(GlassAppearance(78), this)
+        advanceTimeBy(500)
+        assertEquals("落库后、失效通知前不能回退到旧库值", 78, settings.glassAppearance.first().transparencyPercent)
+        dao.invalidate(SettingsRepository.KEY_GLASS_TRANSPARENCY)
+        assertEquals("失效通知到达后仍是最新值", 78, settings.glassAppearance.first().transparencyPercent)
+        assertEquals("78", dao.get(SettingsRepository.KEY_GLASS_TRANSPARENCY))
+    }
+
+    // ---------------------------------------------------------------- 背景图清理时序（审查 P2）
+    // 旧图只在**持久化成功**后按已落库记录的引用差集清理；内存更新与保存失败都不触发。
+
+    private fun appearanceWithDayBackground(uri: String?): AppAppearance =
+        AppAppearance.DEFAULT.copy(day = ReadingStyle.DAY_DEFAULT.copy(backgroundImageUri = uri))
+
+    @Test fun droppedBackgroundOnlyAfterSuccessfulPersistNotOnMemoryUpdate() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.saveAppAppearance(appearanceWithDayBackground("/bg/a.jpg"))
+        assertTrue("首次持久化没有可失去引用的旧图", dropped.isEmpty())
+        settings.queueAppAppearance(appearanceWithDayBackground("/bg/b.jpg"), this)
+        advanceTimeBy(100)
+        assertTrue("防抖未到期、尚未落库：不允许清理", dropped.isEmpty())
+        advanceUntilIdle()
+        assertEquals("落库成功后清理失去引用的旧图", listOf(listOf("/bg/a.jpg")), dropped)
+    }
+
+    @Test fun backgroundSharedByBothGroupsIsNeverDropped() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        val shared = AppAppearance.DEFAULT.copy(
+            day = ReadingStyle.DAY_DEFAULT.copy(backgroundImageUri = "/bg/a.jpg"),
+            night = ReadingStyle.NIGHT_DEFAULT.copy(backgroundImageUri = "/bg/a.jpg")
+        )
+        settings.saveAppAppearance(shared)
+        // 只改日间组，夜间组仍引用 /bg/a.jpg
+        settings.saveAppAppearance(shared.copy(day = ReadingStyle.DAY_DEFAULT.copy(backgroundImageUri = "/bg/b.jpg")))
+        assertTrue("另一组仍在使用的图不能清理", dropped.isEmpty())
+    }
+
+    @Test fun failedPersistKeepsOldBackgroundUntilRetrySucceeds() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.saveAppAppearance(appearanceWithDayBackground("/bg/a.jpg"))
+        dao.failNextPut = true
+        settings.queueAppAppearance(appearanceWithDayBackground("/bg/b.jpg"), this)
+        advanceUntilIdle()
+        assertTrue("保存失败：旧图必须保留", dropped.isEmpty())
+        settings.retryAppAppearance(this)
+        advanceUntilIdle()
+        assertEquals("重试成功后才清理", listOf(listOf("/bg/a.jpg")), dropped)
+    }
+
+    @Test fun builtinBackgroundsAreNeverDropped() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.saveAppAppearance(appearanceWithDayBackground("builtin:paper"))
+        settings.saveAppAppearance(appearanceWithDayBackground("/bg/b.jpg"))
+        assertTrue("内置素材不是文件，不进清理列表", dropped.isEmpty())
+    }
+
+    @Test fun rapidReplacementsDropEachUnreferencedUriOnce() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.saveAppAppearance(appearanceWithDayBackground("/bg/a.jpg"))
+        settings.queueAppAppearance(appearanceWithDayBackground("/bg/b.jpg"), this)
+        advanceUntilIdle()
+        settings.queueAppAppearance(appearanceWithDayBackground("/bg/c.jpg"), this)
+        advanceUntilIdle()
+        assertEquals("A→B→C 各自差集：a、b 依次清理", listOf(listOf("/bg/a.jpg"), listOf("/bg/b.jpg")), dropped)
+    }
+
+    @Test fun shelfLayoutRoundTripsAndDefaultsToGrid() = runTest {
+        val dao = MemoryPreferences()
+        val settings = SettingsRepository(dao)
+        assertTrue("无记录时默认网格", settings.shelfLayoutGrid.first())
+        settings.queueShelfLayout(false, this)
+        assertFalse("切换后立即反映（pending 优先）", settings.shelfLayoutGrid.first())
+        advanceUntilIdle()
+        assertEquals("LIST", dao.get(SettingsRepository.KEY_SHELF_LAYOUT))
+        settings.queueShelfLayout(true, this)
+        advanceUntilIdle()
+        assertTrue(settings.shelfLayoutGrid.first())
+        assertEquals("GRID", dao.get(SettingsRepository.KEY_SHELF_LAYOUT))
+    }
+
+    // ------------------------------------------- 双键协调（复核验收 5/6/7）
+    // 旧图清理必须等 app_appearance_v1 与 reader_config_global 都确认成功落库；
+    // 走 queueReadingConfig 的真实仓库双写路径，不模拟单键与删除回调。
+
+    private suspend fun SettingsRepository.seedDayBackground(dao: MemoryPreferences, uri: String) {
+        saveAppAppearance(appearanceWithDayBackground(uri))
+        saveGlobal(ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = uri))
+    }
+
+    /** 复核验收 5：新键先成功、旧兼容键写入受阻 → 不清理；解除后补发。 */
+    @Test fun cleanupWaitsWhileLegacyGlobalPutIsBlocked() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.seedDayBackground(dao, "/bg/a.jpg")
+        val block = kotlinx.coroutines.CompletableDeferred<Unit>()
+        dao.blockGlobalPuts = block
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/b.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        assertTrue("兼容键受阻：旧图必须保留", dropped.isEmpty())
+        assertEquals("新外观键此时已成功", "/bg/b.jpg",
+            com.mirad.reader.core.model.AppAppearanceJson.decode(dao.get(SettingsRepository.KEY_APP_APPEARANCE)).day.backgroundImageUri)
+        block.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("兼容键成功后补发清理", listOf(listOf("/bg/a.jpg")), dropped)
+        // 复核验收 6：删除前依据持久化记录核对——兼容键不再引用旧图
+        val savedGlobal = ReaderConfigJson.decode(dao.get(SettingsRepository.KEY_GLOBAL))
+        assertEquals("/bg/b.jpg", savedGlobal.backgroundImageUri)
+    }
+
+    /** 复核验收 5：新键先成功、旧兼容键写入失败 → 不清理；重试成功后才清理。 */
+    @Test fun cleanupDefersWhileLegacyGlobalPutFailsUntilRetry() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.seedDayBackground(dao, "/bg/a.jpg")
+        dao.failGlobalPuts = true
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/b.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        assertTrue("兼容键失败：旧图必须保留", dropped.isEmpty())
+        settings.flushGlobalConfig(this)
+        advanceUntilIdle()
+        assertEquals("兼容键重试成功后清理", listOf(listOf("/bg/a.jpg")), dropped)
+    }
+
+    /** 复核验收 7：相反写入顺序——兼容键先成功、新键后成功，成功即发不重复。 */
+    @Test fun cleanupFiresWhenAppearancePersistArrivesAfterGlobal() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.seedDayBackground(dao, "/bg/a.jpg")
+        val block = kotlinx.coroutines.CompletableDeferred<Unit>()
+        dao.blockAppearancePuts = block
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/b.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        assertTrue("新键受阻：无差集自然不清理", dropped.isEmpty())
+        block.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("新键成功且兼容键已就绪：立即清理", listOf(listOf("/bg/a.jpg")), dropped)
+    }
+
+    /** 复核验收 6：推迟期间继续替换，候选合并不丢失。 */
+    @Test fun deferredCleanupCandidatesAreMergedAcrossRapidReplacements() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.seedDayBackground(dao, "/bg/a.jpg")
+        val block = kotlinx.coroutines.CompletableDeferred<Unit>()
+        dao.blockGlobalPuts = block
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/b.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/c.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        assertTrue(dropped.isEmpty())
+        block.complete(Unit)
+        advanceUntilIdle()
+        assertEquals("两批候选合并一次发出，不因推迟丢失", listOf(listOf("/bg/a.jpg", "/bg/b.jpg")), dropped)
+    }
+
+    /** 复核验收 7：新键写入失败 → 不清理；重试成功后按最终持久化状态清理。 */
+    @Test fun cleanupSkippedWhenAppearancePersistFails() = runTest {
+        val dao = MemoryPreferences()
+        val dropped = mutableListOf<List<String>>()
+        val settings = SettingsRepository(dao, this) { uris -> dropped += uris }
+        settings.seedDayBackground(dao, "/bg/a.jpg")
+        dao.failNextPut = true // 新键下一次写入失败
+        settings.queueReadingConfig(
+            ReaderConfig.DEFAULT.copy(backgroundType = "IMAGE", backgroundImageUri = "/bg/b.jpg"),
+            isDark = false, scope = this
+        )
+        advanceUntilIdle()
+        assertTrue("新键失败：不产生清理候选", dropped.isEmpty())
+        settings.flushReadingConfig(this)
+        advanceUntilIdle()
+        assertEquals("重试成功后按最终持久化状态清理", listOf(listOf("/bg/a.jpg")), dropped)
     }
 }

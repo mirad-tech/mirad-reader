@@ -51,7 +51,9 @@ import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.reader.ReaderWebView
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.reader.*
+import com.mirad.reader.ui.settings.ReadingSettingsPage
 import com.mirad.reader.ui.settings.SettingsContent
+import com.mirad.reader.ui.settings.SettingsRoute
 import com.mirad.reader.ui.shelf.*
 import com.mirad.reader.ui.theme.MiradTheme
 import kotlinx.coroutines.flow.Flow
@@ -60,7 +62,7 @@ import kotlinx.coroutines.flow.map
 import org.json.JSONObject
 import java.io.IOException
 
-private class PreviewInMemoryPreferenceDao(
+internal class PreviewInMemoryPreferenceDao(
     initialTransparency: Int,
     @Volatile var failWrites: Boolean = false
 ) : PreferenceDao {
@@ -85,6 +87,10 @@ private class PreviewInMemoryPreferenceDao(
             throw IOException("Simulated preview DAO remove failure for key=$key")
         }
         store.value = store.value.toMutableMap().apply { remove(key) }
+    }
+
+    override suspend fun removeByPrefix(prefix: String) {
+        store.value = store.value.toMutableMap().apply { keys.filter { it.startsWith(prefix) }.forEach(::remove) }
     }
 
     override suspend fun getAll(): List<PreferenceEntity> =
@@ -291,11 +297,9 @@ private fun PreviewContent(
     var scene by remember { mutableStateOf(initialScene) }
     var dialog by remember { mutableStateOf(initialScene == "dialog") }
     val resolvedInitialCategory = remember(initialCategoryName) {
-        initialCategoryName?.let { name ->
-            SettingsCategory.entries.firstOrNull { it.name.equals(name, ignoreCase = true) }
-        }
+        SettingsRoute.parse(initialCategoryName)
     }
-    var category by remember { mutableStateOf<SettingsCategory?>(resolvedInitialCategory) }
+    var category by remember { mutableStateOf(resolvedInitialCategory) }
     var query by remember { mutableStateOf("") }
     var search by remember { mutableStateOf(false) }
     var layout by remember { mutableStateOf(ShelfLayout.GRID) }
@@ -320,7 +324,6 @@ private fun PreviewContent(
                 longTitle,
                 fullScreen = fullScreen,
                 typography = scene == "reader-typography",
-                appearanceCategory = scene == "reader-appearance" || resolvedInitialCategory == SettingsCategory.APPEARANCE,
                 initialDialog = scene == "reader-dialog",
                 probe = scene.endsWith("probe"), windowed = scene == "reader-windowed-probe", onBack = {
                     scene = "shelf"
@@ -331,8 +334,8 @@ private fun PreviewContent(
                 }
             )
             "settings" -> SettingsContent(
-                category = category, onBack = { if (category != null) category = null else scene = "shelf" },
-                onOpenCategory = { category = it }, initialScrollPx = if (scrolled) 120 else 0
+                route = category, onBack = { if (category != null) category = null else scene = "shelf" },
+                onOpenRoute = { category = it }, initialScrollPx = if (scrolled) 120 else 0
             )
             else -> ShelfContent(
                 state = ShelfContentState(
@@ -532,7 +535,7 @@ private fun ColorContrastPreview(backdropColorHex: String) {
 @Composable
 private fun ReaderPreview(
     dark: Boolean, initialSettings: Boolean, longTitle: Boolean, fullScreen: Boolean,
-    typography: Boolean, appearanceCategory: Boolean = false, initialDialog: Boolean, probe: Boolean, windowed: Boolean, onBack: () -> Unit
+    typography: Boolean, initialDialog: Boolean, probe: Boolean, windowed: Boolean, onBack: () -> Unit
 ) {
     val activity = LocalContext.current as Activity
     val policy = ReaderWindowPolicy(fullScreen, dark)
@@ -653,11 +656,8 @@ private fun ReaderPreview(
             onChange = { config = it(config); Log.i("GlassPreview", "configChanged") },
             onOpenAutoRead = {}, onResetGlobal = { config = ReaderConfig.DEFAULT },
             onDismiss = { settings = false; Log.i("GlassPreview", "sheetDismiss") },
-            initialCategory = when {
-                typography -> SettingsCategory.TYPOGRAPHY
-                appearanceCategory -> SettingsCategory.APPEARANCE
-                else -> null
-            },
+            // 阅读面板只承载阅读级页面；reader-appearance 场景落在面板首页。
+            initialPage = if (typography) ReadingSettingsPage.TYPOGRAPHY else null,
             onDeleteFont = { font ->
                 fonts.remove(font)
                 if (config.customFontPath == font.filePath && font.filePath != null) {

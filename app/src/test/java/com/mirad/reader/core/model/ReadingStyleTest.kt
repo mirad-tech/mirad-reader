@@ -55,6 +55,31 @@ class ReadingFontsTest {
     }
 }
 
+class ReadingStyleNormalizationTest {
+
+    @Test
+    fun nightGroupDropsBuiltinDaylightTexturesAndDayGroupDropsNightTextures() {
+        val lightPreset = BuiltinBackgrounds.ALL.first { !it.isDark }
+        val darkPreset = BuiltinBackgrounds.ALL.first { it.isDark }
+        val night = ReadingStyle.NIGHT_DEFAULT
+            .copy(backgroundType = BackgroundType.IMAGE, backgroundImageUri = lightPreset.uri)
+            .normalized(true)
+        assertNull("夜间组不允许保留内置浅色纹理", night.backgroundImageUri)
+        val day = ReadingStyle.DAY_DEFAULT
+            .copy(backgroundType = BackgroundType.IMAGE, backgroundImageUri = darkPreset.uri)
+            .normalized(false)
+        assertNull("日间组不允许保留内置深色纹理", day.backgroundImageUri)
+    }
+
+    @Test
+    fun customImagesSurviveNormalizationInBothGroups() {
+        val custom = ReadingStyle.NIGHT_DEFAULT
+            .copy(backgroundType = BackgroundType.IMAGE, backgroundImageUri = "/data/bg/night.jpg")
+            .normalized(true)
+        assertEquals("本机图片不参与内置素材的深浅约束", "/data/bg/night.jpg", custom.backgroundImageUri)
+    }
+}
+
 class BuiltinBackgroundsTest {
 
     @Test

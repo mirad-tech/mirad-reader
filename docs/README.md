@@ -3,6 +3,10 @@
 ## 当前维护文档
 
 - [开发、构建与验证](DEVELOPMENT.md)
+- [1.1.0 更新说明](releases/1.1.0.md)
+- [设置重构计划 v3 完成报告](glm5.3-settings-refactor-plan3-report-2026-10-25.md)
+- [1.0.17 更新说明](releases/1.0.17.md)
+- [阅读玻璃与统一外观](reader-liquid-glass.md)
 - [1.0.15 玻璃局部保护修复计划](glass-1.0.15-local-protection-fix-plan.md)
 - [1.0.16 更新说明](releases/1.0.16.md)
 - [1.0.12 更新说明](releases/1.0.12.md)

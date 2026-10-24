@@ -29,10 +29,14 @@ Thumbs.db
 
 # Developer-only handoff and signing files (never part of a release source tree)
 /agent.md
+/AGENTS.md
 *.jks
 *.p12
 *.pfx
 *.key
+
+# Agent session state (machine-local)
+/.zcode/
 *.pem
 /.env
 /.env.*

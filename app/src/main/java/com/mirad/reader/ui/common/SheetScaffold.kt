@@ -62,6 +62,13 @@ fun SheetScaffold(
     maxHeightFraction: Float = Sizes.sheetMaxHeightFraction,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
+    if (readerHost != null) {
+        com.mirad.reader.ui.reader.ReaderInWindowSheet(
+            readerHost, title, onDismiss, subtitle, actions, modifier, fillHeight, maxHeightFraction, content
+        )
+        return
+    }
     // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
     val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction

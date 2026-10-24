@@ -4,7 +4,7 @@ const assert = require('assert');
 const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
-const outDir = path.join(root, 'build/verification/anchor-regressions');
+const outDir = path.resolve(root, process.env.MIRAD_ANCHOR_EVIDENCE_DIR || 'build/verification/anchor-regressions');
 const readerJs = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8');
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 const theme14 = fs.readFileSync(path.join(__dirname, 'fixtures/theme-14.css'), 'utf8');
@@ -43,6 +43,7 @@ async function openFixture(browser, options) {
   const config = size => ({
     mode, anim: 'NONE', pad: options.pad === undefined ? 20 : options.pad,
     padTop: 28, padBottom: 32,
+    clipTop: options.cutouts ? 28 : 0, clipBottom: options.cutouts ? 32 : 0,
     colMax: options.limited === false || width !== 960 ? 0 : size * 20,
     windowedScroll: indices.length > 0,
     chapterCount: indices.length ? Math.max(...indices) + 1 : 1
@@ -87,8 +88,10 @@ async function openFixture(browser, options) {
     await page.evaluate(({ mode, indices, active }) => {
       window.__anchorRoot = indices.length ? 'section[data-chapter="' + active + '"]' : '#mirad-content';
       window.__layoutReports = 0;
+      window.__visualReports = [];
       window.MiradBridge = {
         onReady() {}, onState() {}, onSelection() {},
+        onVisualChanged() { window.__visualReports.push(performance.now()); },
         onMetrics() { window.__layoutReports++; },
         onChapterChanged(index) { window.__activeChapter = index; }
       };
@@ -209,6 +212,58 @@ async function main() {
     }
   }
   try {
+    for (const chapters of [[], [0, 1, 2]]) {
+      await run('scroll-safe-area-' + (chapters.length ? 'windowed' : 'single'),
+        { mode: 'SCROLL', chapters, cutouts: true }, async (f, r) => {
+          const before = await capture(f);
+          const assertSafePaint = async () => {
+            const paint = await f.page.evaluate(() => {
+              const c = document.getElementById('mirad-content');
+              const painted = (x, y) => c.contains(document.elementFromPoint(x, y));
+              const xs = [innerWidth * .25, innerWidth * .5, innerWidth * .75];
+              return {
+                top: xs.some(x => painted(x, 14)),
+                bottom: xs.some(x => painted(x, innerHeight - 16)),
+                middle: xs.some(x => painted(x, innerHeight / 2)),
+                viewport: [innerWidth, innerHeight],
+                scrollY
+              };
+            });
+            r.states.push(paint);
+            assert(!paint.top && !paint.bottom, 'text paints inside the reserved safe area');
+            assert(paint.middle, 'safe-area protection must keep body text visible');
+            assert.deepStrictEqual(paint.viewport, [390, 700], 'paint protection changed the viewport');
+          };
+          await assertSafePaint();
+          await change(f, 30);
+          await change(f, 14);
+          retained(f, before, await snapshot(f, before.offset));
+          await assertSafePaint();
+          await f.page.evaluate(() => scrollBy(0, 333));
+          await settle(f);
+          await assertSafePaint();
+          await f.page.evaluate(({ css, config }) => MiradReader.setThemeCssOnly(css,
+            { ...config, mode: 'PAGED', windowedScroll: false }),
+            { css: theme(14), config: f.config(14) });
+          await settle(f);
+          assert.strictEqual(await f.page.evaluate(() =>
+            getComputedStyle(document.getElementById('mirad-content')).clipPath), 'none',
+          'scroll clipping must not hide later columns after switching to paged mode');
+        });
+    }
+    await run('scroll-without-cutout-jump', { mode: 'SCROLL' }, async (f, r) => {
+      await f.page.evaluate(() => MiradReader.gotoOffset(1800, false));
+      await settle(f);
+      const target = await f.page.evaluate(() => {
+        const glyph = window.__glyph(1800);
+        const content = document.getElementById('mirad-content');
+        return { top: glyph.top, painted: content.contains(document.elementFromPoint(
+          (glyph.left + glyph.right) / 2, (glyph.top + glyph.bottom) / 2)) };
+      });
+      r.states.push(target);
+      assert(Math.abs(target.top - 8) <= tolerance, 'ordinary jump position changed');
+      assert(target.painted, 'cutout protection hid a jump target on an ordinary screen');
+    });
     for (const width of [390, 960]) {
       for (const size of [16, 18, 20, 22, 24, 26, 28, 30]) {
         await run('font-' + width + '-' + size, { width }, async (f, r) => {
@@ -357,6 +412,92 @@ async function main() {
       const after = await snapshot(f, moved.offset);
       r.states.push(after);
       retained(f, moved, after);
+    });
+
+    for (const mode of ['SCROLL', 'PAGED']) {
+      await run('semantic-visual-' + mode, { mode, image: true }, async (f, r) => {
+        const count = () => f.page.evaluate(() => window.__visualReports.length);
+        const beforeIdle = await capture(f);
+        const domBefore = await f.page.evaluate(() => document.getElementById('mirad-content').innerHTML);
+        await f.page.waitForTimeout(1200);
+        const initialCount = await count();
+        await f.page.waitForTimeout(3000);
+        assert.strictEqual(await count(), initialCount, 'idle reader keeps sending visual notifications');
+        assert.strictEqual(await f.page.evaluate(() => document.getElementById('mirad-content').innerHTML), domBefore,
+          'visual observation modifies the document');
+        retained(f, beforeIdle, await snapshot(f, beforeIdle.offset));
+        await f.page.evaluate(mode => {
+          if (mode === 'PAGED') MiradReader.nextPage(); else scrollBy(0, 160);
+        }, mode);
+        await f.page.waitForFunction(previous => window.__visualReports.length > previous, initialCount, { timeout: 2000 });
+        await f.page.waitForTimeout(650);
+        const afterMove = await count();
+        assert(afterMove > initialCount, 'real scroll/page changes do not notify analysis');
+        await f.page.evaluate(() => { document.querySelector('#mirad-content p').style.color = '#354535'; });
+        await f.page.waitForFunction(previous => window.__visualReports.length > previous, afterMove, { timeout: 2000 });
+        await f.page.waitForTimeout(650);
+        const afterStyle = await count();
+        assert(afterStyle > afterMove, 'real inline style changes do not notify analysis');
+        await f.page.evaluate(() => {
+          const text = document.querySelector('#mirad-content p').firstChild;
+          text.data = '林' + text.data.slice(1);
+        });
+        await f.page.waitForFunction(previous => window.__visualReports.length > previous, afterStyle, { timeout: 2000 });
+        await f.page.waitForTimeout(650);
+        const afterText = await count();
+        assert(afterText > afterStyle, 'real text changes do not notify analysis');
+        await f.loadImage();
+        await f.page.waitForFunction(() => document.querySelector('#late-image').complete);
+        await f.page.waitForFunction(previous => window.__visualReports.length > previous, afterText, { timeout: 2000 });
+        await f.page.waitForTimeout(650);
+        const afterImage = await count();
+        assert(afterImage > afterText, 'delayed image completion does not notify analysis');
+        await f.page.waitForTimeout(2000);
+        assert.strictEqual(await count(), afterImage, 'resource completion leaves a repeating visual timer');
+        const reports = await f.page.evaluate(() => window.__visualReports);
+        for (let i = 1; i < reports.length; i++) {
+          assert(reports[i] - reports[i - 1] >= 500, 'semantic notifications exceed two per second: ' + (reports[i] - reports[i - 1]));
+        }
+        r.states.push({ initialCount, afterMove, afterStyle, afterText, afterImage, reports });
+      });
+    }
+    await run('semantic-visual-animation-visibility', { mode: 'SCROLL' }, async (f, r) => {
+      const count = () => f.page.evaluate(() => window.__visualReports.length);
+      await f.page.waitForTimeout(1200);
+      await f.page.evaluate(() => {
+        const style = document.createElement('style');
+        style.id = 'visual-animation-fixture';
+        style.textContent = '@keyframes visualPulse { from { opacity: 1; } to { opacity: .6; } }';
+        document.head.appendChild(style);
+        document.querySelector('#mirad-content p').style.animation = 'visualPulse 10s infinite alternate';
+      });
+      await f.page.evaluate(() => document.getAnimations().length);
+      await f.page.waitForTimeout(1500);
+      const active = await count();
+      assert(await f.page.evaluate(() => document.getAnimations().some(a => a.playState === 'running')),
+        'the native browser CSS animation did not start');
+      await f.page.waitForTimeout(1500);
+      const stillActive = await count();
+      assert(stillActive > active && stillActive - active <= 4, 'active CSS animation has no bounded updates');
+      await f.page.evaluate(() => {
+        Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      await f.page.waitForTimeout(2000);
+      assert.strictEqual(await count(), stillActive, 'hidden documents keep requesting analysis');
+      await f.page.evaluate(() => { delete document.hidden; document.dispatchEvent(new Event('visibilitychange')); });
+      await f.page.waitForFunction(previous => window.__visualReports.length > previous, stillActive, { timeout: 2000 });
+      const resumed = await count();
+      assert(resumed > stillActive, 'resuming a visible animated document does not notify');
+      await f.page.evaluate(() => {
+        document.querySelector('#mirad-content p').style.animation = 'none';
+        document.getElementById('visual-animation-fixture').remove();
+      });
+      await f.page.waitForTimeout(1200);
+      const stopped = await count();
+      await f.page.waitForTimeout(2500);
+      assert.strictEqual(await count(), stopped, 'finished animation leaves an always-running visual timer');
+      r.states.push({ active, stillActive, resumed, stopped });
     });
   } finally {
     fs.writeFileSync(path.join(outDir, 'results.json'),

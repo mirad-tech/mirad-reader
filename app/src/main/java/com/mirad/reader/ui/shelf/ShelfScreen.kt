@@ -134,7 +134,9 @@ fun ShelfScreen(
     val summary by container.importer.lastSummary.collectAsState()
 
     var sort by remember { mutableStateOf(ShelfSort.RECENT) }
-    var layout by remember { mutableStateOf(ShelfLayout.GRID) }
+    // 网格/列表选择持久化：离开书架再回来保持用户上次的选择（此前每次都重置为网格）
+    val shelfLayoutGrid by container.settings.shelfLayoutGrid.collectAsState(initial = true)
+    val layout = if (shelfLayoutGrid) ShelfLayout.GRID else ShelfLayout.LIST
     var selectedGroup by remember { mutableStateOf<Long?>(null) }
     var showHidden by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
@@ -201,7 +203,7 @@ fun ShelfScreen(
             onNotes = onOpenNotes, onHidden = onOpenHidden,
             onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
             onQueryChange = { query = it }, onSortChange = { sort = it },
-            onLayoutChange = { layout = it },
+            onLayoutChange = { container.settings.queueShelfLayout(it == ShelfLayout.GRID, container.appScope) },
             onSelectGroup = { id, hidden -> selectedGroup = id; showHidden = hidden },
             onSelectionChange = { selection = it }, onBookAction = { actionBook = it },
             onGroupAction = { groupAction = it }, onManageGroups = { showGroupManager = true },
@@ -799,16 +801,22 @@ private fun Badge(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun EmptyShelf(searching: Boolean, onImport: () -> Unit) {
-    if (searching) {
-        EmptyState(
+private fun EmptyShelf(searching: Boolean, onImport: () -> Unit, hiddenOnly: Boolean = false) {
+    when {
+        hiddenOnly -> EmptyState(
+            // 只看隐藏书籍的筛选为空时，书架本身往往还有书，不能引导"导入"。
+            title = "没有隐藏的书籍",
+            badge = "空",
+            description = "长按书籍后选择「隐藏」，书籍会出现在这里",
+            modifier = Modifier.fillMaxSize()
+        )
+        searching -> EmptyState(
             title = "没有匹配的书籍",
             badge = "空",
             description = "换个关键词，或切回「全部」分组",
             modifier = Modifier.fillMaxSize()
         )
-    } else {
-        EmptyState(
+        else -> EmptyState(
             title = "书架还是空的",
             badge = "书",
             description = "导入本机的 txt / epub 就能开始阅读",
@@ -1184,7 +1192,11 @@ internal fun ShelfContent(
                     if (visible.isEmpty()) {
                         item(key = "shelf-empty", span = { GridItemSpan(maxLineSpan) }) {
                             Box(Modifier.fillMaxWidth().heightIn(min = 320.dp)) {
-                                EmptyShelf(query.isNotBlank() || selectedGroup != null, actions.onImportFile)
+                                EmptyShelf(
+                                    query.isNotBlank() || selectedGroup != null,
+                                    actions.onImportFile,
+                                    hiddenOnly = showHidden && query.isBlank() && selectedGroup == null
+                                )
                             }
                         }
                     }
@@ -1213,7 +1225,11 @@ internal fun ShelfContent(
                     if (visible.isEmpty()) {
                         item(key = "shelf-empty") {
                             Box(Modifier.fillMaxWidth().heightIn(min = 320.dp)) {
-                                EmptyShelf(query.isNotBlank() || selectedGroup != null, actions.onImportFile)
+                                EmptyShelf(
+                                    query.isNotBlank() || selectedGroup != null,
+                                    actions.onImportFile,
+                                    hiddenOnly = showHidden && query.isBlank() && selectedGroup == null
+                                )
                             }
                         }
                     }

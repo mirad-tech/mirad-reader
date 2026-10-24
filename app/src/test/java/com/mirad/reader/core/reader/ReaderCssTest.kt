@@ -2,11 +2,13 @@ package com.mirad.reader.core.reader
 
 import com.mirad.reader.core.model.EpubLayoutMode
 import com.mirad.reader.core.model.FontFamilyKey
+import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.core.model.ReaderConfigJson
 import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.core.model.ThemePaletteResolver
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -28,6 +30,37 @@ class ReaderCssTest {
         assertTrue(css.contains("line-height:2.0 !important"))
         assertTrue(css.contains("text-indent:2.0em !important"))
         assertTrue(css.contains("margin:0 0 0.8em 0 !important"))
+    }
+
+    @Test
+    fun letterSpacingIsWiredIntoTheStylesheet() {
+        val css = ReaderCss.themeCss(ReaderConfig.DEFAULT.copy(letterSpacingEm = 0.12f), palette)
+        assertTrue(css.contains("letter-spacing:0.12em"))
+    }
+
+    @Test
+    fun punctuationCompressionFeaturesStayOff() {
+        // chws/halt 会在部分 Android 系统 CJK 字体上把连续全角标点（？！）压缩叠印，
+        // 这里锁定段落规则不再输出任何标点压缩特性。
+        val css = ReaderCss.themeCss(ReaderConfig.DEFAULT, palette)
+        assertFalse(css.contains("chws"))
+        assertFalse(css.contains("halt"))
+        assertFalse(css.contains("font-feature-settings"))
+    }
+
+    @Test
+    fun legacyJsonWithRemovedFieldsAndCurlAnimDecodesSafely() {
+        // 旧版本落库的 JSON 含已删除字段（windowedScroll/verticalPaddingDp/longPressSelect）
+        // 与已删除的翻页动画 CURL：解码不抛、未知字段忽略、pageAnim 收敛到 SLIDE。
+        val legacy = """
+            {"fontSizeSp":30.0,"pageAnim":"CURL","windowedScroll":false,
+             "verticalPaddingDp":24,"longPressSelect":false,"theme":"GREEN"}
+        """.trimIndent()
+        val config = ReaderConfigJson.decode(legacy)
+        assertEquals(30f, config.fontSizeSp)
+        assertEquals(PageAnim.SLIDE, config.pageAnim)
+        assertEquals(ThemeKey.GREEN, config.theme)
+        assertEquals(ReaderConfig.DEFAULT.tapZone, config.tapZone)
     }
 
     @Test

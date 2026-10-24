@@ -33,6 +33,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -67,6 +69,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.onSizeChanged
@@ -79,6 +82,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -89,7 +93,14 @@ import com.mirad.reader.core.model.OrientationKey
 import com.mirad.reader.core.model.PageAnim
 import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.model.AppAppearance
+import com.mirad.reader.ui.common.LocalAppAppearance
+import com.mirad.reader.ui.common.LocalAppAppearanceController
+import com.mirad.reader.ui.common.LocalAppDarkTheme
+import com.mirad.reader.ui.common.LocalSettingsCommit
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.systemBars
 import com.mirad.reader.core.reader.ReaderCss
 import androidx.compose.ui.platform.LocalConfiguration
@@ -119,6 +130,7 @@ fun ReaderScreen(
     onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
+    val latestSystemDark by rememberUpdatedState(systemDark)
     var book by remember { mutableStateOf<BookEntity?>(null) }
     var session by remember { mutableStateOf<ReaderSession?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -129,9 +141,10 @@ fun ReaderScreen(
             error = "书籍不存在"
             return@LaunchedEffect
         }
-        val config = container.settings.effective(bookId)
+        val appearance = container.settings.currentAppAppearance()
+        val config = appearance.resolveReaderConfig(container.settings.currentGlobal(), latestSystemDark)
         val created = ReaderSession(container, loaded, scope)
-        runCatching { created.prepare(config, systemDark) }
+        runCatching { created.prepare(config, appearance.effectiveDark(latestSystemDark)) }
             .onFailure { error = it.message ?: "打开失败" }
         book = loaded
         session = created
@@ -159,10 +172,6 @@ fun ReaderScreen(
         onDispose { current.release(); com.mirad.reader.reader.ReaderKeys.pager = null }
     }
 
-    val readerState by current.state.collectAsState()
-    com.mirad.reader.ui.theme.MiradTheme(
-        darkTheme = ThemePaletteResolver.resolve(readerState.config, systemDark).isDark
-    ) {
     ReaderContent(
         container = container,
         session = current,
@@ -170,7 +179,6 @@ fun ReaderScreen(
         systemDark = systemDark,
         onBack = onBack
     )
-    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -186,13 +194,26 @@ private fun ReaderContent(
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val state by session.state.collectAsState()
-    val config = state.config
-    val palette = remember(config.theme, config.backgroundColor, systemDark) {
-        ThemePaletteResolver.resolve(config, systemDark)
+    val appearance = LocalAppAppearance.current
+    val appearanceController = LocalAppAppearanceController.current
+    val latestSystemDark by rememberUpdatedState(systemDark)
+    val effectiveDark = LocalAppDarkTheme.current ?: systemDark
+    val config = appearance?.resolveReaderConfig(state.config, systemDark) ?: state.config
+    val palette = remember(config.theme, config.backgroundColor, effectiveDark) {
+        ThemePaletteResolver.resolve(config, effectiveDark)
+    }
+    var appliedDark by remember(session) { mutableStateOf(effectiveDark) }
+    var sessionActive by remember(session) { mutableStateOf(true) }
+    ReaderAppearanceEffect(config, effectiveDark, state.ready) { desired, dark, resume ->
+        if (shouldRefreshReaderAppearance(session.state.value.config, desired, appliedDark, dark, resume)) {
+            session.applyConfigToWebView(desired, dark)
+            appliedDark = dark
+        }
     }
 
     var chromeVisible by remember { mutableStateOf(false) }
-    var glassWebView by remember { mutableStateOf<ReaderWebView?>(null) }
+    val hardwareScene = remember(session) { ReaderHardwareSceneController() }
+    var modalVisible by remember(session) { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showProgress by remember { mutableStateOf(false) }
@@ -200,6 +221,7 @@ private fun ReaderContent(
     var showSearch by remember { mutableStateOf(false) }
     var showTts by remember { mutableStateOf(false) }
     var showAutoRead by remember { mutableStateOf(false) }
+    var showResetDialog by remember { mutableStateOf(false) }
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("reader:${book.id}")
     var toast by feedback
     var bottomControlsHeight by remember { mutableStateOf(0) }
@@ -222,13 +244,22 @@ private fun ReaderContent(
     var ttsChapterIndex by remember { mutableStateOf(-1) }
 
     // 落库防抖：阅读设置全书通用，拖滑杆时停顿 400ms 再落库全局配置。
-    val applyConfig: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
-        val updated = transform(session.state.value.config)
-        session.applyConfigToWebView(updated, systemDark)
-        container.settings.queueGlobalConfig(updated, container.appScope)
+    val onConfigApplied: (ReaderConfig, AppAppearance) -> Unit = { updated, currentAppearance ->
+        if (sessionActive) {
+            val dark = currentAppearance.effectiveDark(latestSystemDark)
+            session.applyConfigToWebView(currentAppearance.resolveReaderConfig(updated, latestSystemDark), dark)
+            appliedDark = dark
+        }
     }
-    DisposableEffect(Unit) {
-        onDispose { container.settings.flushGlobalConfig(container.appScope) }
+    val applyConfig: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
+        appearanceController?.updateReadingConfig(effectiveDark, transform, onConfigApplied)
+    }
+    DisposableEffect(session, appearanceController) {
+        sessionActive = true
+        onDispose {
+            sessionActive = false
+            appearanceController?.commitReadingConfig()
+        }
     }
 
     suspend fun ensureTtsSentences(): List<SentenceSplitter.Sentence> {
@@ -322,16 +353,11 @@ private fun ReaderContent(
     }
 
     // 屏幕亮度 / 常亮 / 方向 / 全屏
-    ApplyWindowSettings(config, palette.isDark)
+    ApplyWindowSettings(config, effectiveDark)
 
     // 打开目录/设置/搜索/朗读等弹层，或呼出上下工具栏：自动阅读暂停，关闭后也不自动继续。
     val overlayVisible = showToc || showSettings || showProgress || showNotes ||
         showSearch || showTts || showAutoRead || pendingNote != null
-    WebViewGlassBackdrop(
-        view = glassWebView,
-        visible = chromeVisible || overlayVisible,
-        revision = listOf(state.chapterIndex, state.page, state.offset, state.pages, state.ready, config)
-    )
     LaunchedEffect(overlayVisible, chromeVisible) {
         if (overlayVisible || chromeVisible) session.pauseAutoRead()
     }
@@ -361,10 +387,10 @@ private fun ReaderContent(
         onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
 
-    // 覆盖翻页需要软件层才能可靠地把 WebView 内容画进位图
+    // API 29+ 的覆盖页使用 GPU buffer，不能把正文降成软件层。
     LaunchedEffect(config.pageAnim) {
         session.webView?.setLayerType(
-            if (config.pageAnim == PageAnim.COVER) View.LAYER_TYPE_SOFTWARE
+            if (android.os.Build.VERSION.SDK_INT < 29 && config.pageAnim == PageAnim.COVER) View.LAYER_TYPE_SOFTWARE
             else View.LAYER_TYPE_HARDWARE,
             null
         )
@@ -374,11 +400,38 @@ private fun ReaderContent(
     var overlay by remember { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
     var overlayX by remember { mutableFloatStateOf(0f) }
     var animating by remember { mutableStateOf(false) }
+    var manualTurnJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var captureRunning by remember { mutableStateOf(false) }
+    var coverAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
+    var coverBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     fun clearOverlay() {
+        manualTurnJob?.cancel()
+        manualTurnJob = null
+        coverAnimator?.let { animator ->
+            animator.removeAllListeners()
+            animator.removeAllUpdateListeners()
+            animator.cancel()
+        }
+        coverAnimator = null
+        val released = coverBitmap
+        coverBitmap = null
         overlay = null
         overlayX = 0f
         animating = false
+        // Let Compose remove the old Image node before releasing its GPU buffer.
+        val owner = session.webView
+        if (owner != null && released != null) owner.postOnAnimation {
+            owner.postOnAnimation { if (!released.isRecycled) released.recycle() }
+        } else if (released != null && !released.isRecycled) released.recycle()
+    }
+    DisposableEffect(session) { onDispose { clearOverlay() } }
+    DisposableEffect(lifecycleOwner, session) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) clearOverlay()
+        }
+        lifecycleOwner?.lifecycle?.addObserver(observer)
+        onDispose { lifecycleOwner?.lifecycle?.removeObserver(observer) }
     }
 
     /**
@@ -392,7 +445,8 @@ private fun ReaderContent(
         session.startAutoRead()
     }
 
-    fun performTurn(delta: Int, auto: Boolean = false): Boolean {
+    suspend fun performTurn(delta: Int, auto: Boolean = false): Boolean {
+        if (captureRunning) return false
         // 上下滚动模式：点击左右两侧按屏平滑滚动，不整页跳（翻页动画也不适用）
         if (config.pageMode == PageMode.SCROLL) {
             session.scrollStep(delta)
@@ -412,35 +466,48 @@ private fun ReaderContent(
             }
             return switched
         }
+        val pageView = view ?: return false
         var switched = false
-        captureView(view!!) { bitmap ->
+        fun showCapturedPage(bitmap: Bitmap?) {
             if (bitmap == null) {
                 switched = session.turnPage(delta, pauseAuto = !auto)
-                return@captureView
+                return
             }
+            coverBitmap = bitmap
             overlay = bitmap.asImageBitmap()
             overlayX = 0f
             animating = true
             switched = session.turnPage(delta, pauseAuto = !auto)
-            val distance = if (delta > 0) -view.width.toFloat() else view.width.toFloat()
-            android.animation.ValueAnimator.ofFloat(0f, distance).apply {
+            val distance = if (delta > 0) -pageView.width.toFloat() else pageView.width.toFloat()
+            coverAnimator = android.animation.ValueAnimator.ofFloat(0f, distance).apply {
                 duration = 260
                 addUpdateListener { overlayX = it.animatedValue as Float }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
                         clearOverlay()
-                        bitmap.recycle()
                     }
 
                     override fun onAnimationCancel(animation: android.animation.Animator) {
                         clearOverlay()
-                        runCatching { bitmap.recycle() }
                     }
                 })
                 start()
             }
         }
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            captureRunning = true
+            try {
+                val bitmap = hardwareScene.capturePage()
+                if (!sessionActive) bitmap?.recycle() else showCapturedPage(bitmap)
+            } finally { captureRunning = false }
+        } else {
+            captureView(pageView, ::showCapturedPage)
+        }
         return switched
+    }
+    fun turnFromTap(delta: Int) {
+        if (captureRunning || manualTurnJob?.isActive == true) return
+        manualTurnJob = scope.launch { performTurn(delta) }
     }
 
     // 自动翻页复用界面层的 performTurn（含覆盖翻页动画）；每次重组更新为最新配置。
@@ -451,12 +518,15 @@ private fun ReaderContent(
         onDispose { session.autoPageTurn = null }
     }
 
-    // 系统栏预留：正文避开状态栏与底部手势条（沉浸式仍然保留，只是正文不贴边）
+    // 正文与顶部阅读文字不再为状态栏、挖孔增加留白，也不执行挖孔区域文字裁剪；保留页眉页脚自身占位与导航栏预留。
     val systemBarInsets = readerSafeInsets().asPaddingValues()
-    val reserveTop = systemBarInsets.calculateTopPadding().value.roundToInt() + if (config.showHeader) 24 else 0
+    val layoutDirection = LocalLayoutDirection.current
+    val reserveTop = if (config.showHeader) 24 else 0
     val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
-    androidx.compose.runtime.LaunchedEffect(reserveTop, reserveBottom) {
-        session.updateInsets(reserveTop, reserveBottom)
+    val reserveLeft = readerHorizontalInsetDp(systemBarInsets.calculateLeftPadding(layoutDirection))
+    val reserveRight = readerHorizontalInsetDp(systemBarInsets.calculateRightPadding(layoutDirection))
+    androidx.compose.runtime.LaunchedEffect(reserveTop, reserveBottom, reserveLeft, reserveRight) {
+        session.updateInsets(reserveTop, reserveBottom, reserveLeft, reserveRight, 0, 0)
     }
 
     session.onTap = tap@{ x, y ->
@@ -489,19 +559,19 @@ private fun ReaderContent(
             // 两分模式：左右仍然各翻一页，但中央留一条窄带专门呼出菜单。
             // 否则 chromeVisible 初始为 false、返回键退出阅读、长按用于选词，用户就再也打不开目录/设置了。
             "TWO" -> when {
-                ratio < 0.40f -> performTurn(-1)
-                ratio > 0.60f -> performTurn(1)
+                ratio < 0.40f -> turnFromTap(-1)
+                ratio > 0.60f -> turnFromTap(1)
                 else -> chromeVisible = !chromeVisible
             }
             else -> when {
-                ratio < 0.32f -> performTurn(-1)
-                ratio > 0.68f -> performTurn(1)
+                ratio < 0.32f -> turnFromTap(-1)
+                ratio > 0.68f -> turnFromTap(1)
                 else -> chromeVisible = !chromeVisible
             }
         }
     }
 
-    BackHandler(enabled = true) {
+    BackHandler(enabled = !modalVisible) {
         when {
             showToc || showSettings || showProgress || showNotes || showSearch || showTts || showAutoRead -> {
                 showToc = false; showSettings = false; showProgress = false
@@ -516,13 +586,14 @@ private fun ReaderContent(
         }
     }
 
-    CompositionLocalProvider(LocalReaderWindowPolicy provides ReaderWindowPolicy(config.fullScreen, palette.isDark)) {
-    Box(modifier = Modifier.fillMaxSize()) {
-
-        AndroidView(
-            factory = { ctx ->
+    CompositionLocalProvider(LocalReaderWindowPolicy provides ReaderWindowPolicy(config.fullScreen, effectiveDark)) {
+    ReaderHardwareScene(
+            controller = hardwareScene,
+            backgroundColor = palette.background,
+            revision = listOf(state.chapterIndex, state.ready, config, effectiveDark),
+            modifier = Modifier.fillMaxSize(),
+            webViewFactory = { ctx ->
                 ReaderWebView(ctx).also { view ->
-                    glassWebView = view
                     session.attach(view)
                     view.onSelectionAction = { action ->
                         val selection = session.state.value.selection
@@ -548,12 +619,8 @@ private fun ReaderContent(
                     }
                 }
             },
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(palette.background)),
-            update = { }
-        )
-
+            content = {
+        Box(Modifier.fillMaxSize()) {
         // 旧页位图覆盖层（覆盖翻页）
         val overlayBitmap = overlay
         if (overlayBitmap != null) {
@@ -579,8 +646,8 @@ private fun ReaderContent(
         HeaderFooter(
             config = config,
             palette = palette,
-            // 章节名已经在正文开头以大字标题出现过一次，页眉改显示书名，避免同一行信息重复
-            chapterTitle = if (config.showChapterTitleInHeader) book.title else "",
+            // 开关判断只在传参处保留一处：页眉是否显示章节名由这里决定，HeaderFooter 内部不再重复判断。
+            chapterTitle = if (config.showChapterTitleInHeader) state.chapterTitle else "",
             page = state.page,
             pages = state.pages,
             percent = state.percent,
@@ -588,6 +655,24 @@ private fun ReaderContent(
         )
 
         ReaderSystemBarProtection(Color(palette.background))
+
+        if (!state.ready) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color(palette.background).copy(alpha = 0.6f)),
+                contentAlignment = Alignment.Center
+            ) { CircularProgressIndicator() }
+        }
+        }
+        },
+        overlays = {
+        ReaderOverlayHost(onModalVisibilityChanged = {
+            modalVisible = it
+            hardwareScene.setModalVisible(it)
+        }) {
+        // 阅读器内所有同窗弹层（朗读/自动阅读/设置等）共享的滑块松手提交回调；
+        // 不提供时 LabeledSlider 的 onCommit 落到空实现，只能等 400ms 防抖落库。
+        CompositionLocalProvider(LocalSettingsCommit provides { appearanceController?.commitReadingConfig() }) {
+        Box(Modifier.fillMaxSize()) {
 
         // 顶部/底部工具栏
         AnimatedVisibility(
@@ -652,17 +737,6 @@ private fun ReaderContent(
             )
         }
 
-        if (!state.ready) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(palette.background).copy(alpha = 0.6f)),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
-            }
-        }
-
         if (showTts) {
             TtsSheet(
                 tts = tts,
@@ -712,12 +786,19 @@ private fun ReaderContent(
                 showAutoRead = true
             },
             onResetGlobal = {
-                scope.launch {
-                    container.settings.saveGlobal(ReaderConfig.DEFAULT)
-                    session.applyConfigToWebView(ReaderConfig.DEFAULT, systemDark)
-                }
+                // 恢复默认前列出会重置的项，与设置页共用同一个对话框。
+                showResetDialog = true
             },
             onDismiss = { showSettings = false }
+        )
+    }
+
+    if (showResetDialog) {
+        com.mirad.reader.ui.common.ResetReadingDialog(
+            onDismiss = { showResetDialog = false },
+            onConfirm = { scopes ->
+                appearanceController?.resetReadingConfig(scopes, onConfigApplied)
+            }
         )
     }
 
@@ -823,6 +904,9 @@ private fun ReaderContent(
         )
     }
     }
+    }
+    })
+    }
 }
 
 /** 亮度 / 常亮 / 方向 / 全屏。 */
@@ -864,7 +948,7 @@ private fun ApplyWindowSettings(config: ReaderConfig, darkTheme: Boolean) {
 
 /** 页眉页脚：章节名 / 时间 / 电量 / 页码 / 进度。 */
 @Composable
-private fun HeaderFooter(
+internal fun HeaderFooter(
     config: ReaderConfig,
     palette: ThemePalette,
     chapterTitle: String,
@@ -881,7 +965,7 @@ private fun HeaderFooter(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .windowInsetsPadding(readerSafeInsets())
+            .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
             .padding(horizontal = horizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {
@@ -891,7 +975,7 @@ private fun HeaderFooter(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = if (config.showChapterTitleInHeader) chapterTitle else "",
+                    text = chapterTitle,
                     style = MaterialTheme.typography.labelSmall,
                     color = textColor,
                     maxLines = 1

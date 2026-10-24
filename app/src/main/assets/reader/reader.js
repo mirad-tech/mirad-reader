@@ -14,7 +14,7 @@
     var CFG = {
         mode: 'PAGED',      // PAGED | SCROLL
         gap: 24,
-        anim: 'SLIDE',      // NONE | SLIDE | COVER | CURL
+        anim: 'SLIDE',      // NONE | SLIDE | COVER
         pad: 20,            // 正文左右留白（CSS px，等于 dp）
         colMax: 0           // 单行最大宽度（CSS px），0 = 不限（版心宽度）
     };
@@ -55,6 +55,22 @@
 
     function viewportHeight() {
         return Math.max(1, Math.round(document.documentElement.clientHeight || window.innerHeight));
+    }
+
+    // Paint-only clipping keeps scrolling text out of physical cutouts. The background
+    // layers and viewport/page/anchor geometry stay unchanged; ordinary screens are not clipped.
+    function updateContentClip() {
+        var c = content();
+        var clipTop = Math.max(0, CFG.clipTop || 0);
+        var clipBottom = Math.max(0, CFG.clipBottom || 0);
+        if (CFG.mode !== 'SCROLL' || (!clipTop && !clipBottom)) {
+            c.style.clipPath = 'none';
+            return;
+        }
+        var rect = c.getBoundingClientRect();
+        var top = Math.max(0, clipTop - rect.top);
+        var bottom = Math.max(0, rect.bottom - viewportHeight() + clipBottom);
+        c.style.clipPath = 'inset(' + top + 'px 0px ' + bottom + 'px 0px)';
     }
 
     /**
@@ -209,6 +225,8 @@
     function wrapInitialSection() {
         if (!windowed()) return;
         var c = container();
+        // 已有 section 时不动 win.active：多章窗口的初始 fixture/恢复场景里，
+        // 活动章由 refreshActive 按滚动位置选出，这里指到第一个 section 反而会选错。
         if (!c || c.querySelector('section.mirad-chapter')) return;
         var raw = c.getAttribute('data-chapter');
         var idx = parseInt(raw, 10);
@@ -219,6 +237,29 @@
         while (c.firstChild) sec.appendChild(c.firstChild);
         c.appendChild(sec);
         win.active = sec;
+    }
+
+    /**
+     * 退出窗口模式：只保留活动章并把内容解包回容器（单章形态），
+     * 容器章号对齐活动章。运行中把滚动/排版切回单章路径时必须走这里，
+     * 否则残留的 section 与窗口状态会让单章引擎读到错误的章号。
+     */
+    function collapseWindowToActive() {
+        var c = container();
+        var active = win.active;
+        if (!c || !active || active.parentNode !== c) {
+            win.active = null;
+            return;
+        }
+        var idx = sectionIndex(active);
+        var list = c.querySelectorAll('section.mirad-chapter');
+        for (var i = 0; i < list.length; i++) {
+            if (list[i] !== active && list[i].parentNode) list[i].parentNode.removeChild(list[i]);
+        }
+        while (active.firstChild) c.insertBefore(active.firstChild, active);
+        c.removeChild(active);
+        c.setAttribute('data-chapter', String(idx >= 0 ? idx : 0));
+        win.active = null;
     }
 
     function insertSection(node, index, atTop) {
@@ -377,6 +418,9 @@
             .then(function (r) { return r.ok ? r.text() : null; })
             .then(function (html) {
                 win.loading = false;
+                // fetch 在途时用户可能已切回单章/翻页模式：迟到的补章插进单章容器
+                // 会让正文显示两章、页数翻倍、偏移全部错位，必须丢弃。
+                if (!windowed()) return;
                 if (!html) return;
                 var doc = new DOMParser().parseFromString(html, 'text/html');
                 var sec = doc.querySelector('section.mirad-chapter');
@@ -479,7 +523,11 @@
             c.style.minHeight = '0';
             c.style.overflow = 'visible';
             c.style.transform = 'none';
-            state.pages = scrollPageInfo().pages;
+            // 窗口模式：页数按活动章计算（页号也是章内值，两者同坐标系）；
+            // 用整份窗口文档高度会出现"第 2/9 页"这类分子分母错位的页码。
+            state.pages = (windowed() && win.active)
+                ? Math.max(1, Math.ceil((win.active.getBoundingClientRect().height || h) / h))
+                : scrollPageInfo().pages;
         }
         var anchorOffset = -1;
         var anchorDelta = 0;
@@ -500,6 +548,7 @@
             // 换章过程中不要重定位：refreshActive 会在布局后按新章内的相对位置恢复滚动
             applyPosition(false);
         }
+        updateContentClip();
         reportMetrics();
     }
 
@@ -971,6 +1020,114 @@
         return (typeof MiradBridge !== 'undefined') ? MiradBridge : null;
     }
 
+    // Semantic content changes drive bounded readability analysis. Native draw callbacks can be
+    // caused by rendering the same WebView into another hardware target, so they are not a signal.
+    var visualSignalsInstalled = false;
+    var visualSignalTimer = null;
+    var visualSignalDirty = false;
+    var visualSignalSuspended = false;
+    var visualSignalLastAt = -Infinity;
+    var visualSignalState = '';
+    var visualBackgroundUrl = '';
+    var visualBackgroundImage = null;
+
+    function visualAnimationsRunning() {
+        if (!document.getAnimations) return false;
+        var animations = document.getAnimations();
+        for (var i = 0; i < animations.length; i++) {
+            if (animations[i].playState === 'running' && animations[i].playbackRate !== 0) return true;
+        }
+        return false;
+    }
+
+    function stopVisualSignalTimer() {
+        if (visualSignalTimer !== null) window.clearTimeout(visualSignalTimer);
+        visualSignalTimer = null;
+    }
+
+    function flushVisualSignal() {
+        visualSignalTimer = null;
+        if (document.hidden || visualSignalSuspended || !state.ready) return;
+        var animated = visualAnimationsRunning();
+        if (!visualSignalDirty && !animated) return;
+        watchVisualBackground();
+        visualSignalDirty = false;
+        visualSignalLastAt = nowMs();
+        var b = bridge();
+        if (b && b.onVisualChanged) {
+            try { b.onVisualChanged(); } catch (e) { }
+        }
+        // A timer exists only for a pending event or a currently running CSS animation/transition.
+        if (animated) visualSignalTimer = window.setTimeout(flushVisualSignal, 500);
+    }
+
+    function requestVisualSignal() {
+        visualSignalDirty = true;
+        if (!visualSignalsInstalled || document.hidden || visualSignalSuspended || !state.ready) return;
+        if (visualSignalTimer === null) {
+            visualSignalTimer = window.setTimeout(flushVisualSignal,
+                Math.max(0, 500 - (nowMs() - visualSignalLastAt)));
+        }
+    }
+
+    function watchVisualBackground() {
+        var bg = document.getElementById('mirad-bg');
+        var value = bg ? getComputedStyle(bg).backgroundImage : '';
+        if (value === visualBackgroundUrl) return;
+        visualBackgroundUrl = value;
+        var match = /^url\(["']?(.*?)["']?\)$/.exec(value);
+        if (!match) { visualBackgroundImage = null; return; }
+        // CSS background images do not emit a DOM load event. Observe completion of this same
+        // existing resource without inserting an element or changing the reading document.
+        var image = new Image();
+        visualBackgroundImage = image;
+        image.onload = image.onerror = function () {
+            if (visualBackgroundImage === image) requestVisualSignal();
+        };
+        image.src = match[1];
+    }
+
+    function installVisualSignals() {
+        if (visualSignalsInstalled) { requestVisualSignal(); return; }
+        visualSignalsInstalled = true;
+        if (window.MutationObserver) {
+            new MutationObserver(function (records) {
+                var changed = records.some(function (record) {
+                    if (record.type === 'attributes') {
+                        return record.oldValue !== record.target.getAttribute(record.attributeName);
+                    }
+                    if (record.type === 'characterData') return record.oldValue !== record.target.data;
+                    return record.addedNodes.length > 0 || record.removedNodes.length > 0;
+                });
+                if (changed) requestVisualSignal();
+            }).observe(document.documentElement, {
+                subtree: true, childList: true, attributes: true, attributeOldValue: true,
+                characterData: true, characterDataOldValue: true
+            });
+        }
+        document.addEventListener('scroll', requestVisualSignal, true);
+        document.addEventListener('selectionchange', requestVisualSignal);
+        document.addEventListener('load', requestVisualSignal, true);
+        document.addEventListener('error', requestVisualSignal, true);
+        ['animationstart', 'animationiteration', 'animationend', 'animationcancel',
+            'transitionrun', 'transitionstart', 'transitionend', 'transitioncancel'].forEach(function (name) {
+            document.addEventListener(name, requestVisualSignal, true);
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (document.hidden) stopVisualSignalTimer();
+            else requestVisualSignal();
+        });
+        window.addEventListener('pagehide', function () { visualSignalSuspended = true; stopVisualSignalTimer(); });
+        window.addEventListener('pageshow', function () { visualSignalSuspended = false; requestVisualSignal(); });
+        if (document.fonts) {
+            document.fonts.addEventListener('loadingdone', requestVisualSignal);
+            document.fonts.addEventListener('loadingerror', requestVisualSignal);
+            document.fonts.ready.then(requestVisualSignal);
+        }
+        watchVisualBackground();
+        requestVisualSignal();
+    }
+
     function reportState() {
         var b = bridge();
         if (!b) return;
@@ -985,6 +1142,8 @@
         }
         var page = state.page;
         var offset = offsetAtPage(page);
+        var visualState = [page, state.pages, offset, state.textLength, CFG.mode, window.scrollY || 0].join(':');
+        if (visualState !== visualSignalState) { visualSignalState = visualState; requestVisualSignal(); }
         try {
             b.onState(page, state.pages, offset, state.textLength, CFG.mode === 'PAGED' ? 0 : (window.scrollY || 0));
         } catch (e) {
@@ -1150,7 +1309,8 @@
         var b = bridge();
         if (b) {
             try {
-                b.onState(state.pages, state.pages, state.textLength, state.textLength, window.scrollY || 0);
+                // page 与 pages 同源且 page <= pages-1：这里传 state.pages 会让原生短暂显示"第 N+1/N 页"。
+                b.onState(Math.max(0, state.pages - 1), state.pages, state.textLength, state.textLength, window.scrollY || 0);
             } catch (e) {
             }
         }
@@ -1193,6 +1353,7 @@
 
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
+        updateContentClip();
         // 触摸期间/惯性期间续期，资源重排会推迟到滚动稳定之后。
         if (userScroll.touching || userScroll.driven) markUserScroll();
         var now = nowMs();
@@ -1216,8 +1377,12 @@
     var prefetchedHtml = null;
     var prefetching = false;
 
-    /** 当前章的索引（来自 #mirad-content 的 data-chapter）。 */
+    /** 当前章的索引：窗口模式取活动 section，否则取 #mirad-content 的 data-chapter。 */
     function currentChapterIndex() {
+        if (windowed() && win.active) {
+            var activeIdx = sectionIndex(win.active);
+            if (activeIdx >= 0) return activeIdx;
+        }
         var c = content();
         var raw = c && c.getAttribute ? c.getAttribute('data-chapter') : null;
         var n = parseInt(raw, 10);
@@ -2044,6 +2209,7 @@
             }
             reportState();
             watchResources();
+            installVisualSignals();
             // 短章不足一屏时没有任何滚动事件：初始化后立刻补下一章，否则永远滚不动
             if (windowed()) {
                 ensureWindows();
@@ -2058,12 +2224,19 @@
             var anchor = offsetAtPage(state.page);
             var prevMode = CFG.mode;
             var prevWindowed = CFG.windowedScroll;
+            var windowedBefore = prevMode === 'SCROLL' && prevWindowed === true;
             Object.assign(CFG, config || {});
             if (prevMode !== CFG.mode || prevWindowed !== CFG.windowedScroll) {
                 // 模式变化：旧模式的自动下滑/定位动画不能继续写滚动位置。
                 stopAutoScrollInternal();
                 cancelScrollMotion();
                 cancelPageMotion(false);
+            }
+            // 窗口/单章引擎对 DOM 形态的假设不同（section 包裹 vs 裸文本），
+            // 翻转时必须同步重建结构，否则窗口引擎会在裸文本上补章、单章引擎会读到残留 section。
+            if (windowedBefore !== windowed()) {
+                if (windowed()) wrapInitialSection();
+                else collapseWindowToActive();
             }
             buildInitialModelAndLayout();
             window.MiradReader.gotoOffset(anchor, false);
@@ -2077,7 +2250,9 @@
             var anchor = captureThemeAnchor();
             var prevMode = CFG.mode;
             var prevWindowed = CFG.windowedScroll;
+            var windowedBefore = prevMode === 'SCROLL' && prevWindowed === true;
             Object.assign(CFG, config || {});
+            var windowedFlipped = windowedBefore !== windowed();
             if (prevMode !== CFG.mode || prevWindowed !== CFG.windowedScroll) {
                 stopAutoScrollInternal();
                 cancelScrollMotion();
@@ -2092,8 +2267,19 @@
                 element.textContent = css;
                 document.head.appendChild(element);
             }
+            if (windowedFlipped) {
+                // 运行中在窗口/单章形态之间切换（如翻页方式改为上下滚动）：
+                // 先重建 DOM 形态与文本模型，再按原锚点恢复阅读位置。
+                if (windowed()) wrapInitialSection();
+                else collapseWindowToActive();
+                buildInitialModelAndLayout();
+                restoreThemeAnchor(anchor);
+                updateContentClip();
+                return state.pages;
+            }
             applyLayout();
             restoreThemeAnchor(anchor);
+            updateContentClip();
             return state.pages;
         },
 
@@ -2156,15 +2342,19 @@
             var h = viewportHeight();
             var max = Math.max(0, document.documentElement.scrollHeight - h);
             var target = (window.scrollY || 0) + (direction >= 0 ? 1 : -1) * h * 0.85;
-            // 已经在底部还继续往下翻 → 用户意图是继续读下一章（原地换章，不重载）
-            if (direction >= 0 && atBottom()) {
-                advanceChapter();
-                return true;
-            }
-            // 已经在章首还继续往回翻 → 回到上一章末尾
-            if (direction < 0 && atTop()) {
-                retreatChapter();
-                return true;
+            // 接章分支只属于单章模式：窗口模式下 advanceChapter/retreatChapter 自身直接返回 false，
+            // 这里若提前 return true 会把窗口边界的翻屏动作整个吞掉（点下 1/3 或音量键无响应）。
+            if (!windowed()) {
+                // 已经在底部还继续往下翻 → 用户意图是继续读下一章（原地换章，不重载）
+                if (direction >= 0 && atBottom()) {
+                    advanceChapter();
+                    return true;
+                }
+                // 已经在章首还继续往回翻 → 回到上一章末尾
+                if (direction < 0 && atTop()) {
+                    retreatChapter();
+                    return true;
+                }
             }
             animateScrollTop(Math.max(0, Math.min(target, max)));
             return true;
@@ -2376,5 +2566,6 @@
 
     window.addEventListener('resize', function () {
         window.MiradReader.relayout(true);
+        requestVisualSignal();
     });
 })();
