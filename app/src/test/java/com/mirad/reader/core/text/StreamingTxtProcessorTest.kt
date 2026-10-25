@@ -14,6 +14,24 @@ class StreamingTxtProcessorTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun testChineseRepeated5000Times90000BytesUtf8Integrity() {
+        // F01 P1: "中文内容测试" 重复 5000 次的 90000 字节无 BOM UTF-8，
+        // 采样截断发生在 64 KiB 边界（byte 65535 恰为第 6 个字符的第 1 个字节），
+        // 采样检测不能误判为 GB18030，必须识别为 UTF-8 且全文一致
+        val src = tempFolder.newFile("sample_90000_utf8.txt")
+        val content = "中文内容测试".repeat(5000)
+        src.writeBytes(content.toByteArray(Charsets.UTF_8))
+        assertEquals(90000L, src.length())
+
+        val target = tempFolder.newFile("normalized_90000.txt")
+        val result = StreamingTxtProcessor.process(src, target)
+
+        assertEquals("UTF-8", result.charset)
+        val normalized = target.readText(Charsets.UTF_8)
+        assertEquals(content + "\n", normalized)
+    }
+
+    @Test
     fun testStreamingUtf8WithChapters() {
         val src = tempFolder.newFile("sample_utf8.txt")
         val content = """

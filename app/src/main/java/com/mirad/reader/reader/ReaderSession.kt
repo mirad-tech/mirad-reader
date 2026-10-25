@@ -26,11 +26,13 @@ import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -62,7 +64,12 @@ data class ReaderSessionState(
     val highlightCount: Int = 0
 )
 
-data class TextSelection(val start: Int, val end: Int, val text: String)
+data class TextSelection(
+    val start: Int,
+    val end: Int,
+    val text: String,
+    val chapterIndex: Int = -1
+)
 
 /**
  * 阅读会话：负责 WebView 配置、章节加载、配置注入、进度保存、标注渲染与阅读统计。
@@ -188,6 +195,8 @@ class ReaderSession(
         return true
     }
 
+    private val visualChanges = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+
     private val bridge = ReaderJsBridge(
         onReady = { pages, textLength ->
             _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
@@ -214,8 +223,13 @@ class ReaderSession(
             // 书签标记要查库；滚动时页号会频繁变化，只在页号真的变了时才查，否则滚动会顿。
             if (pageChanged || !current.ready) refreshBookmarkFlag()
         },
-        onSelection = { start, end, text ->
-            _state.update { it.copy(selection = TextSelection(start, end, text)) }
+        onSelection = { start, end, text, chapterIndex ->
+            if (start < 0 || end <= start) {
+                _state.update { it.copy(selection = null) }
+            } else {
+                val targetCh = if (chapterIndex >= 0) chapterIndex else _state.value.chapterIndex
+                _state.update { it.copy(selection = TextSelection(start, end, text, targetCh)) }
+            }
         },
         onChapterChanged = { index -> onJsChapterChanged(index) },
         onRequestNextChapter = { index ->
@@ -227,7 +241,10 @@ class ReaderSession(
             // 旧章/旧页面的迟到回调不能启动已经暂停或关闭的自动阅读：章号与运行状态都要匹配。
             if (index == _state.value.chapterIndex) autoRead.onScrollChapterEnd()
         },
-        onVisualChanged = { webView?.notifyBackdropContentChanged() }
+        onVisualChanged = {
+            webView?.notifyBackdropContentChanged()
+            visualChanges.tryEmit(Unit)
+        }
     )
 
     // ------------------------------------------------------------------ 生命周期
@@ -449,17 +466,41 @@ class ReaderSession(
     private suspend fun autoAdvanceScrollChapter(): AutoAdvanceResult {
         if (!_state.value.ready) return AutoAdvanceResult.LOAD_FAILED
         val before = _state.value.chapterIndex
-        if (before >= chapters.size - 1) return AutoAdvanceResult.BOOK_END
-        val started = evaluateBoolean(
-            "if (window.MiradReader && MiradReader.advanceChapterForAuto) { MiradReader.advanceChapterForAuto(); } else { false; }"
-        )
-        if (started != true) {
-            return if (before >= chapters.size - 1) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.LOAD_FAILED
+        val isBookEndInitial = evaluateBoolean("window.MiradReader && MiradReader.isAtBookEnd ? MiradReader.isAtBookEnd() : false") ?: false
+        if (before >= chapters.size - 1 || isBookEndInitial) return AutoAdvanceResult.BOOK_END
+
+        val resultRaw = evaluateString(
+            "if (window.MiradReader && MiradReader.advanceChapterForAuto) { MiradReader.advanceChapterForAuto(); } else { 'FAILED'; }"
+        )?.trim('"') ?: "FAILED"
+
+        when (resultRaw) {
+            "BOOK_END" -> return AutoAdvanceResult.BOOK_END
+            "READY" -> return AutoAdvanceResult.ADVANCED
+            "ADVANCING" -> {
+                val changed = withTimeoutOrNull(AUTO_CHAPTER_TIMEOUT_MS) {
+                    state.first { it.ready && it.chapterIndex != before }
+                }
+                if (changed != null) return AutoAdvanceResult.ADVANCED
+                val isBookEndFinal = evaluateBoolean("window.MiradReader && MiradReader.isAtBookEnd ? MiradReader.isAtBookEnd() : false") ?: false
+                return if (_state.value.chapterIndex >= chapters.size - 1 || isBookEndFinal) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.LOAD_FAILED
+            }
+            "LOADING" -> {
+                // 窗口模式慢补章：等待章节追加进 DOM 触发 visualChanges
+                val changed = withTimeoutOrNull(AUTO_CHAPTER_TIMEOUT_MS) {
+                    visualChanges.first()
+                }
+                if (changed != null) {
+                    val isEnd = evaluateBoolean("window.MiradReader && MiradReader.isAtBookEnd ? MiradReader.isAtBookEnd() : false") ?: false
+                    return if (isEnd) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.ADVANCED
+                }
+                val isBookEndFinal = evaluateBoolean("window.MiradReader && MiradReader.isAtBookEnd ? MiradReader.isAtBookEnd() : false") ?: false
+                return if (_state.value.chapterIndex >= chapters.size - 1 || isBookEndFinal) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.LOAD_FAILED
+            }
+            else -> {
+                val isBookEndCheck = evaluateBoolean("window.MiradReader && MiradReader.isAtBookEnd ? MiradReader.isAtBookEnd() : false") ?: false
+                return if (before >= chapters.size - 1 || isBookEndCheck) AutoAdvanceResult.BOOK_END else AutoAdvanceResult.LOAD_FAILED
+            }
         }
-        val changed = withTimeoutOrNull(AUTO_CHAPTER_TIMEOUT_MS) {
-            state.first { it.ready && it.chapterIndex != before }
-        }
-        return if (changed != null) AutoAdvanceResult.ADVANCED else AutoAdvanceResult.LOAD_FAILED
     }
 
     /** 翻页动画的保守时长：滑动动画最长 320ms、覆盖动画 260ms；无动画不等待。 */
@@ -496,6 +537,21 @@ class ReaderSession(
         runCatching {
             view.evaluateJavascript(script) { value ->
                 if (continuation.isActive) continuation.resume(value == "true")
+            }
+        }.onFailure {
+            if (continuation.isActive) continuation.resume(null)
+        }
+    }
+
+    private suspend fun evaluateString(script: String): String? = suspendCancellableCoroutine { continuation ->
+        val view = webView
+        if (view == null) {
+            continuation.resume(null)
+            return@suspendCancellableCoroutine
+        }
+        runCatching {
+            view.evaluateJavascript(script) { value ->
+                if (continuation.isActive) continuation.resume(value)
             }
         }.onFailure {
             if (continuation.isActive) continuation.resume(null)
@@ -658,17 +714,50 @@ class ReaderSession(
         return false
     }
 
+    private val searchNavCoordinator = SearchNavigationCoordinator(
+        scope = scope,
+        onRequestGotoChapter = { chapterIndex, offset ->
+            gotoChapterInternal(chapterIndex, offset, pauseAuto = true, fromSearchHit = true)
+        },
+        onExecuteJump = { needle, offset ->
+            findTextAndJump(needle, offset)
+        }
+    )
+
+    private fun cancelSearchNavigation() {
+        searchNavCoordinator.cancel()
+    }
+
+    fun jumpToSearchHit(chapterIndex: Int, needle: String, charOffset: Int) {
+        val isReady = _renderedChapter.value == chapterIndex && _state.value.ready
+        searchNavCoordinator.jumpToSearchHit(
+            targetChapter = chapterIndex,
+            needle = needle,
+            charOffset = charOffset,
+            currentChapter = _state.value.chapterIndex,
+            isRenderedAndReady = isReady,
+            renderedChapterFlow = _renderedChapter,
+            stateFlow = _state
+        )
+    }
+
     fun gotoChapter(index: Int, offset: Int = 0) {
         gotoChapterInternal(index, offset, pauseAuto = true)
     }
 
-    private fun gotoChapterInternal(index: Int, offset: Int = 0, pauseAuto: Boolean): Boolean {
+    private fun gotoChapterInternal(
+        index: Int,
+        offset: Int = 0,
+        pauseAuto: Boolean,
+        fromSearchHit: Boolean = false
+    ): Boolean {
+        if (!fromSearchHit) cancelSearchNavigation()
         val chapter = chapters.getOrNull(index) ?: return false
         if (pauseAuto) pauseAutoRead()
         saveProgressNow()
         restoreOffset = if (offset == Int.MAX_VALUE) Int.MAX_VALUE else offset
         _state.update {
-            it.copy(chapterIndex = index, chapterTitle = chapter.title, page = 0, pages = 1, offset = 0)
+            it.copy(chapterIndex = index, chapterTitle = chapter.title, page = 0, pages = 1, offset = 0, ready = false)
         }
         scope.launch {
             val count = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, index).size }
@@ -679,6 +768,7 @@ class ReaderSession(
     }
 
     fun jumpToOffset(offset: Int, mark: Boolean = false) {
+        cancelSearchNavigation()
         pauseAutoRead()
         restoreOffset = offset
         evaluate("MiradReader.gotoOffset($offset, true);")
@@ -717,15 +807,31 @@ class ReaderSession(
 
     // ------------------------------------------------------------------ 标注
 
-    fun renderHighlights() {
-        val chapterIndex = _state.value.chapterIndex
+    fun renderHighlights(chapterIndex: Int = -1) {
         scope.launch {
-            val list = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, chapterIndex) }
-            val payload = list.joinToString(prefix = "[", postfix = "]") { highlight ->
-                """{"start":${highlight.startOffset},"end":${highlight.endOffset},"note":${highlight.note != null}}"""
+            if (chapterIndex >= 0) {
+                val list = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, chapterIndex) }
+                val payload = list.joinToString(prefix = "[", postfix = "]") { highlight ->
+                    """{"start":${highlight.startOffset},"end":${highlight.endOffset},"note":${highlight.note != null},"chapter":$chapterIndex}"""
+                }
+                evaluate("MiradReader.renderHighlights($payload, $chapterIndex);")
+            } else {
+                val activeCh = _state.value.chapterIndex
+                val isWindowed = _state.value.config.pageMode == PageMode.SCROLL &&
+                    !(book.format == BookFormat.EPUB && _state.value.config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
+                val list = withContext(Dispatchers.IO) {
+                    if (isWindowed) {
+                        notes.allHighlights(book.id)
+                    } else {
+                        notes.highlightsForChapter(book.id, activeCh)
+                    }
+                }
+                val payload = list.joinToString(prefix = "[", postfix = "]") { highlight ->
+                    """{"start":${highlight.startOffset},"end":${highlight.endOffset},"note":${highlight.note != null},"chapter":${highlight.chapterIndex}}"""
+                }
+                evaluate("MiradReader.renderHighlights($payload);")
+                _state.update { it.copy(highlightCount = list.count { h -> h.chapterIndex == activeCh }) }
             }
-            evaluate("MiradReader.renderHighlights($payload);")
-            _state.update { it.copy(highlightCount = list.size) }
         }
     }
 
@@ -735,19 +841,20 @@ class ReaderSession(
         text: String,
         color: Int = DEFAULT_HIGHLIGHT_COLOR,
         note: String? = null,
+        chapterIndex: Int? = null,
         onResult: (Boolean) -> Unit = {}
     ) {
         if (end <= start || text.isBlank()) {
             onResult(false)
             return
         }
-        val chapterIndex = _state.value.chapterIndex
+        val targetChapter = if (chapterIndex != null && chapterIndex >= 0) chapterIndex else _state.value.chapterIndex
         scope.launch {
             withContext(Dispatchers.IO) {
                 notes.addHighlight(
                     HighlightEntity(
                         bookId = book.id,
-                        chapterIndex = chapterIndex,
+                        chapterIndex = targetChapter,
                         startOffset = start,
                         endOffset = end,
                         text = text,
@@ -757,7 +864,7 @@ class ReaderSession(
                     )
                 )
             }
-            renderHighlights()
+            renderHighlights(targetChapter)
             _state.update { it.copy(selection = null) }
             onResult(true)
         }
@@ -765,7 +872,7 @@ class ReaderSession(
 
     suspend fun deleteHighlight(highlight: HighlightEntity) {
         withContext(Dispatchers.IO) { notes.deleteHighlight(highlight) }
-        renderHighlights()
+        renderHighlights(highlight.chapterIndex)
     }
 
     fun clearSearchMark() {
@@ -907,6 +1014,7 @@ class ReaderSession(
         // 退出阅读页：先取消自动阅读的计时任务/JS 滚动，再保存进度、释放 WebView。
         autoRead.release()
         _autoReadNotice.value = null
+        cancelSearchNavigation()
         saveJob?.cancel()
         saveProgressNow()
         endSession()
@@ -999,5 +1107,50 @@ internal class ReaderBackgroundRevision {
             revision++
         }
         return "$baseUrl?v=$revision"
+    }
+}
+
+/** 搜索命中跨章导航协调器：绑定真实文档身份与渲染就绪状态，隔离迟到回调与后续导航取消。 */
+class SearchNavigationCoordinator(
+    private val scope: CoroutineScope,
+    private val onRequestGotoChapter: (chapterIndex: Int, charOffset: Int) -> Unit,
+    private val onExecuteJump: (needle: String, charOffset: Int) -> Unit
+) {
+    private var searchNavJob: Job? = null
+    var navEpoch: Long = 0L
+        private set
+
+    fun cancel() {
+        searchNavJob?.cancel()
+        searchNavJob = null
+        navEpoch++
+    }
+
+    fun jumpToSearchHit(
+        targetChapter: Int,
+        needle: String,
+        charOffset: Int,
+        currentChapter: Int,
+        isRenderedAndReady: Boolean,
+        renderedChapterFlow: StateFlow<Int>,
+        stateFlow: StateFlow<ReaderSessionState>
+    ) {
+        searchNavJob?.cancel()
+        val epoch = ++navEpoch
+        if (targetChapter == currentChapter && isRenderedAndReady) {
+            onExecuteJump(needle, charOffset)
+        } else {
+            onRequestGotoChapter(targetChapter, charOffset)
+            searchNavJob = scope.launch {
+                try {
+                    renderedChapterFlow.first { it == targetChapter }
+                    stateFlow.first { it.ready && it.chapterIndex == targetChapter }
+                    if (epoch == navEpoch && needle.isNotBlank()) {
+                        onExecuteJump(needle, charOffset)
+                    }
+                } catch (_: CancellationException) {
+                }
+            }
+        }
     }
 }

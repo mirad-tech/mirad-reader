@@ -13,7 +13,11 @@ class TtsController(private val context: Context) {
 
     val state: StateFlow<TtsBus.TtsState> = TtsBus.state
 
-    val isSpeaking: Boolean get() = TtsBus.state.value.active
+    /** 当前是否正在发声播放（暂停态为 false）。 */
+    val isSpeaking: Boolean get() = TtsBus.state.value.playing
+    val isPlaying: Boolean get() = TtsBus.state.value.playing
+    /** 是否存在活跃的朗读任务（包含暂停态）。 */
+    val isActive: Boolean get() = TtsBus.state.value.active
 
     fun play(
         bookId: Long,

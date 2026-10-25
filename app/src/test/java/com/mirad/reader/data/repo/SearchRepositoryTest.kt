@@ -75,6 +75,28 @@ class SearchMatcherTest {
     }
 
     @Test
+    fun unicodeSpecialCaseMappingKeepsAccurateOffsets() {
+        // F03: İ (U+0130) 在 lowercase 下长度会由 1 扩展为 2 (i\u0307)，
+        // 不能因大小写转换导致目标词在原文中的下标越界或错位
+        val text = "İ".repeat(100) + "X"
+        val hits = SearchMatcher.match(chapter(), text, "x", SearchOptions(caseSensitive = false))
+        assertEquals(1, hits.size)
+        val hit = hits[0]
+        assertEquals(100, hit.charOffset)
+        assertEquals("X", hit.match)
+
+        // 区分大小写模式下不应命中大写 X
+        val sensitiveHits = SearchMatcher.match(chapter(), text, "x", SearchOptions(caseSensitive = true))
+        assertTrue(sensitiveHits.isEmpty())
+
+        // 区分大小写模式下命中精确大小写
+        val sensitiveHitsUpper = SearchMatcher.match(chapter(), text, "X", SearchOptions(caseSensitive = true))
+        assertEquals(1, sensitiveHitsUpper.size)
+        assertEquals(100, sensitiveHitsUpper[0].charOffset)
+        assertEquals("X", sensitiveHitsUpper[0].match)
+    }
+
+    @Test
     fun noMatchReturnsEmpty() {
         assertTrue(SearchMatcher.match(chapter(), "没有任何关键字", "STARFIELD").isEmpty())
         assertTrue(SearchMatcher.match(chapter(), "", "x").isEmpty())
@@ -502,5 +524,119 @@ class SearchRepositoryFlowTest {
         }
         assertEquals(1, hitsCaseYes.size)
         assertEquals("Äpfel", hitsCaseYes[0].match)
+    }
+
+    /**
+     * 针对 F03 的双轮严格一致性回归测试：
+     * 第一次扫描并建索引，第二次直接从索引查询；
+     * 结果数、所属章节、原文 charOffset、match 文本与 snippet 必须 100% 绝对一致，
+     * 涵盖 İX/ix、İ×100+X、普通中英文以及区分大小写模式。
+     */
+    @Test
+    fun testF03ScanAndIndexConsistencyForUnicodeAndLanguages() = kotlinx.coroutines.runBlocking {
+        val ch0Text = "前文 İX 后文。" + ("İ".repeat(100)) + "X 结尾。"
+        val ch1Text = "观星台建在半山腰，青石垒成。MiradReader 是一款优秀阅读器。"
+        val ch2Text = "纯普通文本，没有命中目标。"
+        val texts = mapOf(0 to ch0Text, 1 to ch1Text, 2 to ch2Text)
+        val textProvider = MapTextProvider(texts)
+        val ftsDao = TestSearchFtsDao()
+        val repo = SearchRepository(textProvider, ftsDao)
+
+        val book = com.mirad.reader.data.db.entity.BookEntity(
+            id = 300L,
+            title = "Unicode一致性测试书",
+            format = com.mirad.reader.data.db.entity.BookFormat.TXT,
+            filePath = "/fake/unicode.txt"
+        )
+        val chapters = listOf(
+            ChapterEntity(bookId = 300L, index = 0, title = "第0章", charCount = ch0Text.length.toLong()),
+            ChapterEntity(bookId = 300L, index = 1, title = "第1章", charCount = ch1Text.length.toLong()),
+            ChapterEntity(bookId = 300L, index = 2, title = "第2章", charCount = ch2Text.length.toLong())
+        )
+
+        val testCases = listOf(
+            Pair("ix", SearchOptions(caseSensitive = false)),
+            Pair("İX", SearchOptions(caseSensitive = false)),
+            Pair("x", SearchOptions(caseSensitive = false)),
+            Pair("观星台", SearchOptions(caseSensitive = false)),
+            Pair("miradreader", SearchOptions(caseSensitive = false)),
+            Pair("X", SearchOptions(caseSensitive = true))
+        )
+
+        // 第一轮：触发扫描并建库
+        val scanResults = mutableMapOf<String, List<SearchHit>>()
+        for ((query, options) in testCases) {
+            val key = "$query-$options"
+            repo.search(book, chapters, query, options).collect { progress ->
+                if (progress is SearchProgress.Done) {
+                    scanResults[key] = progress.results
+                }
+            }
+        }
+
+        // 验证索引已完整建立
+        assertEquals("全书 3 章应全部入库", 3, ftsDao.storage.size)
+
+        // 第二轮：直接走索引快速通道
+        val indexResults = mutableMapOf<String, List<SearchHit>>()
+        for ((query, options) in testCases) {
+            val key = "$query-$options"
+            repo.search(book, chapters, query, options).collect { progress ->
+                if (progress is SearchProgress.Done) {
+                    indexResults[key] = progress.results
+                }
+            }
+        }
+
+        // 逐项对比：扫描与索引结果必须 100% 完全一致
+        for ((query, options) in testCases) {
+            val key = "$query-$options"
+            val scanHits = scanResults[key] ?: error("扫描结果缺失: $key")
+            val indexHits = indexResults[key] ?: error("索引结果缺失: $key")
+
+            assertEquals("查询 [$query] 扫描与索引命中数必须一致", scanHits.size, indexHits.size)
+            assertTrue("非区分大小写 ix/İX/x 必须至少命中 1 条", if (query in listOf("ix", "İX", "x", "观星台", "miradreader", "X")) scanHits.isNotEmpty() else true)
+
+            for (i in scanHits.indices) {
+                val s = scanHits[i]
+                val idx = indexHits[i]
+                assertEquals("[$query] 命中章号一致", s.chapterIndex, idx.chapterIndex)
+                assertEquals("[$query] 命中原文偏移一致", s.charOffset, idx.charOffset)
+                assertEquals("[$query] 命中 match 文本一致", s.match, idx.match)
+                assertEquals("[$query] 命中 snippet 文本一致", s.snippet, idx.snippet)
+                assertEquals("[$query] 命中 matchStart 一致", s.matchStart, idx.matchStart)
+                assertEquals("[$query] 命中 matchEnd 一致", s.matchEnd, idx.matchEnd)
+            }
+        }
+    }
+
+    @Test
+    fun testAllChaptersFailedReportsError() = kotlinx.coroutines.runBlocking {
+        val texts = mapOf<Int, String?>(0 to null, 1 to null)
+        val textProvider = MapTextProvider(texts)
+        val ftsDao = TestSearchFtsDao()
+        val repo = SearchRepository(textProvider, ftsDao)
+
+        val book = com.mirad.reader.data.db.entity.BookEntity(
+            id = 400L,
+            title = "损坏书",
+            format = com.mirad.reader.data.db.entity.BookFormat.TXT,
+            filePath = "/fake/corrupted.txt"
+        )
+        val chapters = listOf(
+            ChapterEntity(bookId = 400L, index = 0, title = "第0章", charCount = 100),
+            ChapterEntity(bookId = 400L, index = 1, title = "第1章", charCount = 100)
+        )
+
+        var finalProgress: SearchProgress? = null
+        repo.search(book, chapters, "test").collect { progress ->
+            if (progress is SearchProgress.Done || progress is SearchProgress.Error) {
+                finalProgress = progress
+            }
+        }
+
+        assertTrue("全书章节均读取失败时必须返回 Error 而非伪造的 Done 空结果", finalProgress is SearchProgress.Error)
+        val err = finalProgress as SearchProgress.Error
+        assertTrue("错误信息应明确提示读取失败", err.message.contains("失败"))
     }
 }

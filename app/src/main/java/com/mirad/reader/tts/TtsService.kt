@@ -75,11 +75,15 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                TtsBus.update { it.copy(error = "朗读出错") }
+                playing = false
+                TtsBus.update { it.copy(playing = false, error = "朗读出错") }
+                notifyUpdate()
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                TtsBus.update { it.copy(error = "朗读出错（$errorCode）") }
+                playing = false
+                TtsBus.update { it.copy(playing = false, error = "朗读出错（$errorCode）") }
+                notifyUpdate()
             }
 
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
@@ -197,7 +201,11 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                 error = null
             )
         }
-        engine?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), UTTERANCE_ID)
+        val speakResult = engine?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), UTTERANCE_ID)
+        if (speakResult != TextToSpeech.SUCCESS) {
+            playing = false
+            TtsBus.update { it.copy(playing = false, error = "语音引擎拒绝播放") }
+        }
         notifyUpdate()
     }
 

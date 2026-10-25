@@ -45,6 +45,7 @@ object StreamingTxtProcessor {
 
         // 1. 采样探测编码（严格只读前 64KB 字节；循环读满，单次 read 可能短读）
         val sampleSize = minOf(sourceFile.length(), SAMPLE_BYTES.toLong()).toInt()
+        val isPrefix = sourceFile.length() > sampleSize
         val sampleBytes = ByteArray(sampleSize)
         FileInputStream(sourceFile).use { input ->
             var offset = 0
@@ -54,7 +55,7 @@ object StreamingTxtProcessor {
                 offset += read
             }
         }
-        val decodedSample = TextCodec.decode(sampleBytes, manual = manualEncoding)
+        val decodedSample = TextCodec.decode(sampleBytes, manual = manualEncoding, isPrefix = isPrefix)
         val charset = runCatching { Charset.forName(decodedSample.charsetName) }.getOrDefault(Charsets.UTF_8)
 
         // 2. 采样探测分章规则（严格只读前 64KB 字符，避免无换行长行导致内存膨胀）

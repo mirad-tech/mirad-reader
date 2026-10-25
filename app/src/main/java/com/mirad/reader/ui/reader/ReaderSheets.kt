@@ -539,25 +539,40 @@ fun SearchSheet(
     var scanning by remember { mutableStateOf(false) }
     var scannedChapters by remember { mutableStateOf(0) }
     var searched by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
 
     fun runSearch() {
         val keyword = query.trim()
         if (keyword.isEmpty()) return
         results = emptyList()
+        searchError = null
         scanning = true
         searched = true
         scannedChapters = 0
         scope.launch {
-            container.search.search(book, session.chapters, keyword, SearchOptions())
-                .collect { progress ->
-                    when (progress) {
-                        is SearchProgress.Scanning -> scannedChapters = progress.chapterIndex + 1
-                        is SearchProgress.Done -> {
-                            results = progress.results
-                            scanning = false
+            try {
+                container.search.search(book, session.chapters, keyword, SearchOptions())
+                    .collect { progress ->
+                        when (progress) {
+                            is SearchProgress.Scanning -> scannedChapters = progress.chapterIndex + 1
+                            is SearchProgress.Done -> {
+                                results = progress.results
+                                searchError = null
+                                scanning = false
+                            }
+                            is SearchProgress.Error -> {
+                                results = progress.partialResults
+                                searchError = progress.message
+                                scanning = false
+                            }
                         }
                     }
-                }
+            } catch (e: Exception) {
+                searchError = e.message ?: "搜索出错"
+                scanning = false
+            } finally {
+                scanning = false
+            }
         }
     }
 
@@ -593,6 +608,7 @@ fun SearchSheet(
             )
         }
         when {
+            searchError != null -> SheetEmpty(searchError ?: "搜索失败")
             !searched -> SheetEmpty("输入关键词后点右上角「搜索」，会在全书逐章查找。")
             scanning && results.isEmpty() -> SheetEmpty("正在查找…")
             results.isEmpty() -> SheetEmpty("没有找到「$query」")
@@ -633,7 +649,7 @@ fun TtsSheet(
     tts: TtsController,
     config: ReaderConfig,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onStart: (resume: Boolean) -> Unit,
+    onStart: (resume: Boolean, fromBeginning: Boolean) -> Unit,
     onClose: () -> Unit
 ) {
     val state by TtsBus.state.collectAsState()
@@ -655,13 +671,13 @@ fun TtsSheet(
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
                 MiradOutlinedButton(onClick = { tts.previous() }, modifier = Modifier.weight(1f)) { Text("上一句") }
                 MiradOutlinedButton(
-                    onClick = { if (state.active && state.playing) tts.pause() else onStart(state.active) },
+                    onClick = { if (state.active && state.playing) tts.pause() else onStart(state.active, false) },
                     modifier = Modifier.weight(1f)
                 ) { Text(if (state.playing) "暂停" else "播放") }
                 MiradOutlinedButton(onClick = { tts.next() }, modifier = Modifier.weight(1f)) { Text("下一句") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                MiradOutlinedButton(onClick = { onStart(false) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
+                MiradOutlinedButton(onClick = { onStart(false, true) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
                 MiradOutlinedButton(
                     onClick = { tts.stop(); onClose() },
                     modifier = Modifier.weight(1f)

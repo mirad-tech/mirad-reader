@@ -393,12 +393,326 @@ async function run() {
       await page.close();
     }
 
+    // =========================================================================
+    // 测试 8: [F02] 标注背景在 force 模式与日夜主题下非透明、文字可读且往返定位精确
+    // =========================================================================
+    {
+      const prodDayCss = fs.readFileSync(path.join(__dirname, "fixtures", "prod-reader-day.css"), "utf8");
+      const prodNightCss = fs.readFileSync(path.join(__dirname, "fixtures", "prod-reader-night.css"), "utf8");
+
+      const themes = [
+        { name: "day", css: prodDayCss, expectedColor: "rgb(34, 34, 34)" },
+        { name: "night", css: prodNightCss, expectedColor: "rgb(229, 229, 234)" }
+      ];
+
+      for (const theme of themes) {
+        const page = await context.newPage();
+
+        const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <style>${readerCss}</style>
+  <style id="mirad-theme">${theme.css}</style>
+</head>
+<body data-chapter="0"><div id="mirad-content" data-chapter="0"><p>划线测试段落，笔记测试段落，搜索测试段落，朗读语音测试段落，普通正文末尾。</p></div><script>
+    window.MiradBridge = {
+      onReady: function () {},
+      onState: function () {},
+      onChapterChanged: function () {},
+      onSelection: function () {}
+    };
+  </script><script>${readerJs}</script></body></html>`;
+
+        await page.setContent(fullHtml);
+        await page.evaluate(() => {
+          window.MiradReader.init({ mode: "SCROLL", windowedScroll: false });
+        });
+
+        const initialText = await page.evaluate(() => window.MiradReader.getText());
+
+        // 1. 调用真实划线接口与笔记接口
+        await page.evaluate(() => {
+          window.MiradReader.renderHighlights([
+            { start: 0, end: 6, color: "#ffd666", style: "UNDERLINE" },
+            { start: 7, end: 14, color: "#8cc8ff", style: "HIGHLIGHT", note: "测试笔记内容" }
+          ]);
+        });
+
+        // 2. 调用搜索标记
+        await page.evaluate(() => {
+          window.MiradReader.markSearch(15, 21);
+        });
+
+        // 3. 调用 TTS 标记
+        await page.evaluate(() => {
+          window.MiradReader.markTts(22, 31);
+        });
+
+        // 检查各 mark 计算样式背景色与文字前景色
+        const bgStyles = await page.evaluate(() => {
+          function getBg(sel) {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const cs = window.getComputedStyle(el);
+            return {
+              bg: cs.backgroundColor,
+              color: cs.color,
+              text: el.textContent
+            };
+          }
+          return {
+            hl: getBg("mark.mirad-hl:not(.mirad-note)"),
+            note: getBg("mark.mirad-hl.mirad-note"),
+            search: getBg("mark.mirad-search"),
+            tts: getBg("mark.mirad-tts, span.mirad-tts")
+          };
+        });
+
+        console.log(`  [F02] ${theme.name} 主题标注样式:`, JSON.stringify(bgStyles));
+
+        function assertNonTransparent(styleObj, label) {
+          if (!styleObj) throw new Error(label + " 元素必须存在");
+          if (styleObj.bg === "transparent" || styleObj.bg === "rgba(0, 0, 0, 0)") {
+            throw new Error(label + " 背景不能为透明，实际为: " + styleObj.bg);
+          }
+          if (!styleObj.text || styleObj.text.length === 0) {
+            throw new Error(label + " 必须包含可读文本");
+          }
+        }
+
+        assertNonTransparent(bgStyles.hl, theme.name + " 划线");
+        assertNonTransparent(bgStyles.note, theme.name + " 笔记");
+        assertNonTransparent(bgStyles.search, theme.name + " 搜索");
+        assertNonTransparent(bgStyles.tts, theme.name + " TTS");
+
+        // 关键断言：夜间模式下 TTS 标注文字颜色不能退回为默认黑字 rgb(0, 0, 0)
+        if (theme.name === "night") {
+          const ttsColor = bgStyles.tts.color;
+          if (ttsColor === "rgb(0, 0, 0)" || ttsColor === "#000000") {
+            throw new Error("夜间模式下 TTS 标注文字颜色不能退回为默认黑字: " + ttsColor);
+          }
+        }
+
+        // 验证文本、偏移往返定位不被标记注入破坏
+        const postText = await page.evaluate(() => window.MiradReader.getText());
+        if (postText !== initialText) {
+          throw new Error("注入标注后 getText() 必须与初始文本完全一致");
+        }
+
+        const offsetLoc = await page.evaluate(() => {
+          const cfi = window.MiradReader.getCfi(25);
+          const resolvedOffset = window.MiradReader.resolveCfiOffset(cfi);
+          const ok = window.MiradReader.gotoOffset(25, false);
+          return { cfi: cfi, resolvedOffset: resolvedOffset, ok: ok };
+        });
+        if (!offsetLoc.ok) throw new Error("标记内字符 gotoOffset 必须成功");
+        if (offsetLoc.resolvedOffset !== 25) {
+          throw new Error("往返 CFI 解析偏移必须精确等于 25，实际为 " + offsetLoc.resolvedOffset);
+        }
+
+        await page.close();
+      }
+
+      console.log("PASS [F02] 生产 ReaderCss 下日夜主题标注背景非透明、夜间字色不黑且定位精确");
+      passed++;
+    }
+
+    // =========================================================================
+    // 测试 9: [F05] 窗口模式非活动章选区保留章内偏移与所属章节，标注立即可见且重开仍正确
+    // =========================================================================
+    {
+      const page = await context.newPage();
+      const content = `
+        <section class="mirad-chapter" data-chapter="0"><p id="p0">第零章开头内容，活动章。</p></section>
+        <section class="mirad-chapter" data-chapter="1"><p id="p1">第一章非活动正文内容非常丰富，测试选区精准性。</p></section>
+      `;
+
+      let lastSelection = null;
+      await page.exposeFunction("onSelectionReport", (start, end, text, ch) => {
+        lastSelection = { start, end, text, ch };
+      });
+
+      const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>${readerCss}</style>
+</head>
+<body data-chapter="0">
+  <div id="mirad-content" data-chapter="0">${content}</div>
+  <script>
+    window.MiradBridge = {
+      onReady: function () {},
+      onState: function () {},
+      onChapterChanged: function () {},
+      onSelection: function (start, end, text, ch) {
+        window.onSelectionReport(start, end, text, ch);
+      }
+    };
+  </script>
+  <script>${readerJs}</script>
+</body>
+</html>`;
+
+      await page.setContent(fullHtml);
+      await page.evaluate(() => {
+        window.MiradReader.init({ mode: "SCROLL", windowedScroll: true, chapterCount: 2 });
+      });
+
+      // 1. 验证章 0 在顶部时，选中章 1 的正文文字
+      await page.evaluate(() => {
+        const p1 = document.getElementById("p1");
+        const textNode = p1.firstChild;
+        const range = document.createRange();
+        range.setStart(textNode, 3);
+        range.setEnd(textNode, 8);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+
+      await page.waitForTimeout(50);
+      console.log("  [F05] 非活动章选区上报结果:", JSON.stringify(lastSelection));
+      assert(lastSelection !== null, "必须收到选区上报");
+      assert.strictEqual(lastSelection.ch, 1, "选区所属章节必须是章 1，绝不能误标为章 0");
+      assert.strictEqual(lastSelection.text, "非活动正文", "选区文本必须精确匹配");
+      assert.strictEqual(lastSelection.start, 3, "章内 start 偏移必须精确为 3");
+      assert.strictEqual(lastSelection.end, 8, "章内 end 偏移必须精确为 8");
+
+      // 2. 验证跨章选区（start 在章 0，end 在章 1）策略：被判为无效选区并清空
+      lastSelection = null;
+      await page.evaluate(() => {
+        const p0 = document.getElementById("p0").firstChild;
+        const p1 = document.getElementById("p1").firstChild;
+        const range = document.createRange();
+        range.setStart(p0, 2);
+        range.setEnd(p1, 5);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+
+      await page.waitForTimeout(50);
+      console.log("  [F05] 跨章选区上报结果:", JSON.stringify(lastSelection));
+      assert(lastSelection !== null, "跨章选区必须向原生上报清空信号");
+      assert.strictEqual(lastSelection.start, -1, "跨章选区必须标记 start 为 -1");
+      assert.strictEqual(lastSelection.ch, -1, "跨章选区不能误存为任何具体章节");
+
+      // 3. 选区清空验证
+      await page.evaluate(() => {
+        window.getSelection().removeAllRanges();
+        document.dispatchEvent(new Event("selectionchange"));
+      });
+      await page.waitForTimeout(50);
+      assert.strictEqual(lastSelection.start, -1, "清空选区必须上报清空状态");
+
+      // 4. 为非活动章（章 1）渲染高亮：立即可见，且章 0 保持纯净
+      await page.evaluate(() => {
+        window.MiradReader.renderHighlights([
+          { start: 3, end: 8, note: false, chapter: 1 }
+        ], 1);
+      });
+      const p1HasMark = await page.evaluate(() => {
+        const p1 = document.getElementById("p1");
+        return p1.querySelector("mark.mirad-hl") !== null;
+      });
+      assert(p1HasMark, "章 1 渲染高亮后，章 1 内部必须立即可见 mark 元素");
+
+      const p0HasMark = await page.evaluate(() => {
+        const p0 = document.getElementById("p0");
+        return p0.querySelector("mark.mirad-hl") !== null;
+      });
+      assert(!p0HasMark, "渲染章 1 绝不能在章 0 产生干扰标记");
+
+      // 5. 模拟重开/批量恢复多章标注
+      await page.evaluate(() => {
+        window.MiradReader.renderHighlights([
+          { start: 0, end: 4, note: false, chapter: 0 },
+          { start: 3, end: 8, note: true, chapter: 1 }
+        ]);
+      });
+      const bothMarked = await page.evaluate(() => {
+        const p0 = document.getElementById("p0").querySelector("mark.mirad-hl");
+        const p1 = document.getElementById("p1").querySelector("mark.mirad-hl");
+        return !!p0 && !!p1;
+      });
+      assert(bothMarked, "批量按章重开恢复后，章 0 和章 1 均成功保留并展示各自标注");
+
+      console.log("PASS [F05] 窗口模式非活动章选区章内偏移与所属章节准确，标注立即可见且重开仍正确");
+      passed++;
+      await page.close();
+    }
+
+    // =========================================================================
+    // 测试 10: [F11] 窗口模式真实补章入口验证、短末章到底正常结束且无 ReferenceError
+    // =========================================================================
+    {
+      const page = await context.newPage();
+      const content = `
+        <section class="mirad-chapter" data-chapter="0"><p>第零章短文本。</p></section>
+        <section class="mirad-chapter" data-chapter="1"><p>第一章短文本。</p></section>
+        <section class="mirad-chapter" data-chapter="2"><p>第二章大结局。</p></section>
+      `;
+
+      let bottomNotified = false;
+      await page.exposeFunction("onBottomNotified", () => {
+        bottomNotified = true;
+      });
+
+      const fullHtml = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>${readerCss}</style>
+</head>
+<body data-chapter="0" data-total-chapters="3">
+  <div id="mirad-content" data-chapter="0">${content}</div>
+  <script>
+    window.MiradBridge = {
+      onReady: function () {},
+      onState: function () {},
+      onChapterChanged: function () {},
+      onSelection: function () {},
+      onAutoScrollEnd: function () { window.onBottomNotified(); }
+    };
+  </script>
+  <script>${readerJs}</script>
+</body>
+</html>`;
+
+      await page.setContent(fullHtml);
+      await page.evaluate(() => {
+        window.MiradReader.init({ mode: "SCROLL", windowedScroll: true, chapterCount: 3 });
+      });
+
+      // 验证 advanceChapterForAuto 调用正常，绝不触发 appendNextSection is not defined 等 ReferenceError
+      const advanceResult = await page.evaluate(() => {
+        return window.MiradReader.advanceChapterForAuto();
+      });
+      console.log("  [F11] 真实补章/接章入口调用结果:", advanceResult);
+      assert(["BOOK_END", "READY", "LOADING", "FAILED"].includes(advanceResult) || advanceResult === false || advanceResult === true, "advanceChapterForAuto 返回值符合预期");
+
+      // 验证到书末判定
+      const atBookEnd = await page.evaluate(() => {
+        return window.MiradReader.isAtBookEnd();
+      });
+      console.log("  [F11] 短末章已到全书末尾判定:", atBookEnd);
+      assert.strictEqual(atBookEnd, true, "已挂载全部章节且到底部时必须判定到达全书末尾");
+
+      console.log("PASS [F11] 窗口模式真实补章入口正常、短末章平稳收敛且无 ReferenceError");
+      passed++;
+      await page.close();
+    }
   } finally {
     await browser.close();
   }
 
   console.log(`\n========================================`);
-  console.log(`全部 ${passed}/8 项专项 Review 定向验证测试全部通过！`);
+  console.log(`全部 ${passed}/11 项专项 Review 定向验证测试全部通过！`);
   console.log(`========================================\n`);
 }
 

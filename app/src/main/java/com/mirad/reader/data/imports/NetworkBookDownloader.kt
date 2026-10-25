@@ -1,10 +1,14 @@
 package com.mirad.reader.data.imports
 
 import android.content.Context
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -18,6 +22,7 @@ sealed interface DownloadProgress {
     data class Connecting(val url: String) : DownloadProgress
     data class Downloading(val bytesDownloaded: Long, val totalBytes: Long, val percent: Float) : DownloadProgress
     data class Success(val file: File, val title: String) : DownloadProgress
+    data class Skipped(val title: String, val message: String = "书籍已在书架中，无需重复导入") : DownloadProgress
     data class Error(val message: String) : DownloadProgress
 }
 
@@ -29,7 +34,7 @@ sealed interface DownloadProgress {
  */
 class NetworkBookDownloader(
     private val context: Context,
-    private val importer: ImportPipeline
+    private val importer: BookImporter
 ) {
 
     private val _progress = MutableStateFlow<DownloadProgress>(DownloadProgress.Idle)
@@ -51,7 +56,17 @@ class NetworkBookDownloader(
         _progress.value = DownloadProgress.Connecting(trimmedUrl)
 
         var connection: HttpURLConnection? = null
+        var activeStream: InputStream? = null
+        var currentTempFile: File? = null
+        var cancelHandle: kotlinx.coroutines.DisposableHandle? = null
         try {
+            val job = currentCoroutineContext()[kotlinx.coroutines.Job]
+            cancelHandle = job?.invokeOnCompletion { cause ->
+                if (cause is CancellationException) {
+                    runCatching { connection?.disconnect() }
+                    runCatching { activeStream?.close() }
+                }
+            }
             var currentUrl = trimmedUrl
             var redirects = 0
             val maxRedirects = 5
@@ -61,12 +76,15 @@ class NetworkBookDownloader(
             while (true) {
                 val candidate = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 15000
+                    // 读取超时同样作用于响应头，保留正常服务器处理请求的等待时间。
+                    // 无数据时取消可能要等当前读取超时，再由协程取消检查收敛。
                     readTimeout = 20000
                     instanceFollowRedirects = false
                     setRequestProperty(
                         "User-Agent",
                         "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
                     )
+                    setRequestProperty("Connection", "close")
                 }
 
                 val status = candidate.responseCode
@@ -96,32 +114,72 @@ class NetworkBookDownloader(
             if (isHtmlPage(currentUrl, contentType)) {
                 // 网页长文/小说页智能正文抽取（默认 UTF-8，兼顾 meta charset 声明）；
                 // 页面来源不可信，读取必须有上限，防止超大页面直接 OOM。
-                val rawBytes = conn.inputStream.use {
-                    com.mirad.reader.core.epub.ZipEntryReader.readAtMost(it, MAX_HTML_BYTES)
-                } ?: throw IllegalStateException("网页过大（上限 ${MAX_HTML_BYTES / 1024 / 1024}MB），已取消解析")
+                val rawBytes = conn.inputStream.use { stream ->
+                    activeStream = stream
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var total = 0
+                    var read: Int
+                    while (readChunkWithTimeout(stream, buffer).also { read = it } != -1) {
+                        currentCoroutineContext().ensureActive()
+                        total += read
+                        if (total > MAX_HTML_BYTES) {
+                            throw IllegalStateException("网页过大（上限 ${MAX_HTML_BYTES / 1024 / 1024}MB），已取消解析")
+                        }
+                        out.write(buffer, 0, read)
+                    }
+                    out.toByteArray()
+                }
+                currentCoroutineContext().ensureActive()
                 val declaredCharset = com.mirad.reader.core.text.TextCodec.declaredCharset(rawBytes)
                 val htmlText = com.mirad.reader.core.text.TextCodec.decode(rawBytes, declared = declaredCharset).text
                 val parsed = parseWebArticle(htmlText, guessedName)
+                if (parsed.content.isBlank()) {
+                    throw IllegalStateException("未能解析出网页正文内容")
+                }
                 val targetFile = File(downloadDir, "${parsed.title.sanitizeFileName()}.txt")
+                currentTempFile = targetFile
                 targetFile.writeText(parsed.content, Charsets.UTF_8)
-                importer.importAndWait(listOf(ImportSource.FromFile(targetFile)))
+                currentCoroutineContext().ensureActive()
+                val summary = importer.importAndWait(listOf(ImportSource.FromFile(targetFile)))
                 targetFile.delete()
-                _progress.value = DownloadProgress.Success(targetFile, parsed.title)
-                return@withContext true
+                currentTempFile = null
+
+                if (summary.success > 0) {
+                    _progress.value = DownloadProgress.Success(targetFile, parsed.title)
+                    return@withContext true
+                } else if (summary.skipped > 0) {
+                    val msg = summary.messages.firstOrNull() ?: "书籍《${parsed.title}》已在书架中，已跳过"
+                    _progress.value = DownloadProgress.Skipped(parsed.title, msg)
+                    return@withContext false
+                } else {
+                    val msg = summary.messages.firstOrNull() ?: "书籍导入失败（文件损坏或格式不支持）"
+                    _progress.value = DownloadProgress.Error(msg)
+                    return@withContext false
+                }
             } else {
                 // 直接下载电子书文件
                 val targetFile = File(downloadDir, guessedName.sanitizeFileName())
+                currentTempFile = targetFile
                 val totalBytes = conn.contentLength.toLong()
+                if (totalBytes > MAX_FILE_BYTES) {
+                    throw IllegalStateException("文件过大（上限 ${MAX_FILE_BYTES / 1024 / 1024}MB），已取消下载")
+                }
                 var downloaded = 0L
                 var lastReportedBytes = -1L
 
                 conn.inputStream.use { input ->
+                    activeStream = input
                     FileOutputStream(targetFile).use { output ->
                         val buffer = ByteArray(8192)
                         var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
+                        while (readChunkWithTimeout(input, buffer).also { read = it } != -1) {
+                            currentCoroutineContext().ensureActive()
                             downloaded += read
+                            if (downloaded > MAX_FILE_BYTES) {
+                                throw IllegalStateException("文件过大（上限 ${MAX_FILE_BYTES / 1024 / 1024}MB），已取消下载")
+                            }
+                            output.write(buffer, 0, read)
                             // 每 256KB 上报一次：每 8KB 一次会让大文件触发海量无意义重组。
                             if (downloaded - lastReportedBytes >= 256 * 1024L) {
                                 lastReportedBytes = downloaded
@@ -131,6 +189,11 @@ class NetworkBookDownloader(
                         }
                         output.flush()
                     }
+                }
+                currentCoroutineContext().ensureActive()
+
+                if (targetFile.length() == 0L) {
+                    throw IllegalStateException("下载文件内容为空")
                 }
 
                 // 严格通过完整 4 字节魔数核验（标准 ZIP/EPUB 文件头为 0x50, 0x4B, 0x03, 0x04，杜绝以 PK 开头的普通 TXT 误判）
@@ -153,19 +216,61 @@ class NetworkBookDownloader(
                 } else {
                     targetFile
                 }
+                currentTempFile = finalFile
 
                 val title = finalFile.nameWithoutExtension
+                currentCoroutineContext().ensureActive()
                 // 等导入把文件复制进书籍目录后再删除缓存源文件，避免 cacheDir 只增不减。
-                importer.importAndWait(listOf(ImportSource.FromFile(finalFile)))
+                val summary = importer.importAndWait(listOf(ImportSource.FromFile(finalFile)))
                 finalFile.delete()
-                _progress.value = DownloadProgress.Success(finalFile, title)
-                return@withContext true
+                currentTempFile = null
+
+                if (summary.success > 0) {
+                    _progress.value = DownloadProgress.Success(finalFile, title)
+                    return@withContext true
+                } else if (summary.skipped > 0) {
+                    val msg = summary.messages.firstOrNull() ?: "书籍《$title》已在书架中，已跳过"
+                    _progress.value = DownloadProgress.Skipped(title, msg)
+                    return@withContext false
+                } else {
+                    val msg = summary.messages.firstOrNull() ?: "书籍导入失败（文件损坏或格式不支持）"
+                    _progress.value = DownloadProgress.Error(msg)
+                    return@withContext false
+                }
             }
+        } catch (ce: CancellationException) {
+            _progress.value = DownloadProgress.Idle
+            throw ce
         } catch (e: Throwable) {
+            if (currentCoroutineContext()[kotlinx.coroutines.Job]?.isCancelled == true) {
+                _progress.value = DownloadProgress.Idle
+                throw CancellationException("下载已取消", e)
+            }
             _progress.value = DownloadProgress.Error(e.message ?: "下载导入失败")
             return@withContext false
         } finally {
+            cancelHandle?.dispose()
             runCatching { connection?.disconnect() }
+            currentTempFile?.let { runCatching { if (it.exists()) it.delete() } }
+        }
+    }
+
+    /**
+     * 在读取前与读取超时后核验协程取消状态。
+     * 阻塞读取受连接的 20 秒超时约束，无数据时取消也可能等待该超时。
+     */
+    private suspend fun readChunkWithTimeout(input: InputStream, buffer: ByteArray, maxWaitMs: Long = 20000L): Int {
+        val startWait = System.currentTimeMillis()
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            try {
+                return input.read(buffer)
+            } catch (ste: java.net.SocketTimeoutException) {
+                currentCoroutineContext().ensureActive()
+                if (System.currentTimeMillis() - startWait >= maxWaitMs) {
+                    throw ste
+                }
+            }
         }
     }
 
@@ -177,6 +282,9 @@ class NetworkBookDownloader(
     }
 
     companion object {
+        /** 电子书单文件下载容量上限，复用 ImportPipeline.MAX_TXT_BYTES (80MB) */
+        internal val MAX_FILE_BYTES: Long = ImportPipeline.MAX_TXT_BYTES
+
         /** HTML 页面读取上限：页面来源不可信，防超大页面 OOM。 */
         internal const val MAX_HTML_BYTES: Int = 8 * 1024 * 1024
 

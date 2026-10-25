@@ -85,6 +85,49 @@ class TextCodecTest {
     }
 
     @Test
+    fun repeat5000ChineseText90000BytesDecodesUtf8Strictly() {
+        // F01: 90000 字节无 BOM UTF-8 在 64KiB 边界截断，必须正确识别为 UTF-8 且全文一致
+        val content = "中文内容测试".repeat(5000)
+        val bytes = content.toByteArray(Charsets.UTF_8)
+        assertEquals(90000, bytes.size)
+
+        val decoded = TextCodec.decode(bytes)
+        assertEquals("UTF-8", decoded.charsetName)
+        assertEquals("utf8-strict", decoded.source)
+        assertEquals(content, decoded.text)
+    }
+
+    @Test
+    fun boundaryMultiByteCharactersAt64KiBDecodesAsPrefix() {
+        // 2 字节字符在 64KiB 边界截断（byte 65535 为 2-byte 前导字节）
+        val prefix2 = ByteArray(65535) { 'a'.code.toByte() } + byteArrayOf(0xCE.toByte())
+        val decoded2 = TextCodec.decode(prefix2, isPrefix = true)
+        assertEquals("UTF-8", decoded2.charsetName)
+
+        // 3 字节字符在 64KiB 边界截断（byte 65534 为 3-byte 前导字节，65535 为续字节）
+        val prefix3 = ByteArray(65534) { 'a'.code.toByte() } + byteArrayOf(0xE4.toByte(), 0xBD.toByte())
+        val decoded3 = TextCodec.decode(prefix3, isPrefix = true)
+        assertEquals("UTF-8", decoded3.charsetName)
+
+        // 4 字节字符在 64KiB 边界截断（byte 65533 为 4-byte 前导字节，65534/65535 为续字节）
+        val prefix4 = ByteArray(65533) { 'a'.code.toByte() } + byteArrayOf(0xF0.toByte(), 0x9F.toByte(), 0x98.toByte())
+        val decoded4 = TextCodec.decode(prefix4, isPrefix = true)
+        assertEquals("UTF-8", decoded4.charsetName)
+    }
+
+    @Test
+    fun completeInputWithIllegalTrailingUtf8FailsStrictValidation() {
+        // 完整文件（isPrefix = false）末尾残缺字节必须被视为非法 UTF-8，不能被静默截断当成有效
+        val incompleteBytes = "完整内容".toByteArray(Charsets.UTF_8) + byteArrayOf(0xE4.toByte())
+        val isValid = TextCodec.isValidUtf8(incompleteBytes, isPrefix = false)
+        org.junit.Assert.assertFalse("完整输入末尾缺少后续字节应判定为非法 UTF-8", isValid)
+
+        // 而若显式为采样前缀，则允许末尾残缺
+        val isValidPrefix = TextCodec.isValidUtf8(incompleteBytes, isPrefix = true)
+        assertTrue("采样前缀末尾残缺应被容许", isValidPrefix)
+    }
+
+    @Test
     fun fallbackDefaultCharsetIsUtf8() {
         // 当文本无特征且无法通过评分明确判定为遗留编码时，默认编码必须回退为 UTF-8
         val ambiguousBytes = byteArrayOf(0x80.toByte(), 0x81.toByte(), 0x82.toByte(), 0x83.toByte())

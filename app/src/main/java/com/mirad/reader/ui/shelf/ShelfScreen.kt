@@ -143,6 +143,7 @@ fun ShelfScreen(
     var showSearch by remember { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var groupDialog by remember { mutableStateOf(false) }
+    var isSingleBookGroupAction by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<BookEntity?>(null) }
     var editTitle by remember { mutableStateOf("") }
     var editAuthor by remember { mutableStateOf("") }
@@ -215,7 +216,7 @@ fun ShelfScreen(
                 }
                 selection = emptySet()
             } },
-            onGroupSelected = { groupDialog = true }, onDeleteSelected = { confirmDelete = true },
+            onGroupSelected = { isSingleBookGroupAction = false; groupDialog = true }, onDeleteSelected = { confirmDelete = true },
             onImportFile = { filePicker.launch(arrayOf("*/*")) },
             onImportFolder = { folderPicker.launch(null) },
             onImportUrl = { showUrlImportDialog = true },
@@ -272,9 +273,11 @@ fun ShelfScreen(
                 add(ActionItem(if (book.isPinned) "取消置顶" else "置顶") {
                     scope.launch { container.books.setPinned(book.id, !book.isPinned) }
                 })
-                if (groups.isNotEmpty()) {
-                    add(ActionItem("移入分组") { selection = setOf(book.id); groupDialog = true })
-                }
+                add(ActionItem("移入分组") {
+                    selection = setOf(book.id)
+                    isSingleBookGroupAction = true
+                    groupDialog = true
+                })
                 if (!isHidden) {
                     add(ActionItem("在书架隐藏", hint = "可在分组栏「已隐藏」或设置中找回") {
                         scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏《${book.title}》，可在「已隐藏」中找回" }
@@ -356,24 +359,45 @@ fun ShelfScreen(
 
     if (groupDialog) {
         var nameDraft by remember { mutableStateOf("") }
+        val dismissGroupDialog = {
+            groupDialog = false
+            selection = ShelfGroupActions.computeDismissSelection(selection, isSingleBookGroupAction)
+            isSingleBookGroupAction = false
+        }
         AlertDialog(
-            onDismissRequest = { groupDialog = false },
+            onDismissRequest = dismissGroupDialog,
             title = { Text("移入分组") },
             text = {
                 Column {
                     MiradTextButton(onClick = {
+                        val targetBookIds = selection.toSet()
+                        selection = emptySet()
+                        isSingleBookGroupAction = false
+                        groupDialog = false
                         scope.launch {
-                            selection.forEach { container.books.setGroup(it, null) }
-                            selection = emptySet(); groupDialog = false
-                            toast = "已移出分组"
+                            val msg = ShelfGroupActions.commitMoveToGroup(
+                                targetBookIds = targetBookIds,
+                                targetGroupId = null,
+                                targetGroupName = null,
+                                moveBookToGroup = { bId, gId -> container.books.setGroup(bId, gId) }
+                            )
+                            if (msg.isNotEmpty()) toast = msg
                         }
                     }) { Text("移出分组") }
                     groups.forEach { group ->
                         MiradTextButton(onClick = {
+                            val targetBookIds = selection.toSet()
+                            selection = emptySet()
+                            isSingleBookGroupAction = false
+                            groupDialog = false
                             scope.launch {
-                                selection.forEach { container.books.setGroup(it, group.id) }
-                                selection = emptySet(); groupDialog = false
-                                toast = "已移入分组「${group.name}」"
+                                val msg = ShelfGroupActions.commitMoveToGroup(
+                                    targetBookIds = targetBookIds,
+                                    targetGroupId = group.id,
+                                    targetGroupName = group.name,
+                                    moveBookToGroup = { bId, gId -> container.books.setGroup(bId, gId) }
+                                )
+                                if (msg.isNotEmpty()) toast = msg
                             }
                         }) { Text(group.name) }
                     }
@@ -390,15 +414,22 @@ fun ShelfScreen(
                 MiradTextButton(enabled = nameDraft.isNotBlank(), onClick = {
                     val name = nameDraft.trim()
                     if (name.isEmpty()) return@MiradTextButton
+                    val targetBookIds = selection.toSet()
+                    selection = emptySet()
+                    isSingleBookGroupAction = false
+                    groupDialog = false
                     scope.launch {
-                        val id = container.groups.create(name)
-                        selection.forEach { container.books.setGroup(it, id) }
-                        selection = emptySet(); groupDialog = false
-                        toast = "已创建分组「$name」并移入"
+                        val msg = ShelfGroupActions.commitNewGroupAndMove(
+                            name = name,
+                            targetBookIds = targetBookIds,
+                            createGroup = { container.groups.create(it) },
+                            moveBookToGroup = { bId, gId -> container.books.setGroup(bId, gId) }
+                        )
+                        if (msg.isNotEmpty()) toast = msg
                     }
                 }) { Text("新建并移入") }
             },
-            dismissButton = { MiradTextButton(onClick = { groupDialog = false }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = dismissGroupDialog) { Text("取消") } }
         )
     }
 
@@ -1003,8 +1034,8 @@ internal fun ShelfContent(
             }
 
             // 继续阅读：省得每次都要在书架里翻找上次那本
-            val continueReading = remember(shelf) {
-                shelf.filter { it.lastReadAt > 0L }.maxByOrNull { it.lastReadAt }
+            val continueReading = remember(shelf, showHidden) {
+                resolveContinueReading(shelf, showHidden)
             }
             continueReading?.let { item ->
                 Row(
@@ -1251,4 +1282,9 @@ internal fun ShelfContent(
             ImportBar(state.importItems, state.importing)
         }
     }
+}
+
+internal fun resolveContinueReading(shelf: List<ShelfBook>, showHidden: Boolean = false): ShelfBook? {
+    if (showHidden) return null
+    return shelf.filter { !it.book.isHidden && it.lastReadAt > 0L }.maxByOrNull { it.lastReadAt }
 }

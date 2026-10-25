@@ -29,6 +29,7 @@ data class SearchOptions(
 sealed interface SearchProgress {
     data class Scanning(val chapterIndex: Int, val totalChapters: Int, val hits: Int) : SearchProgress
     data class Done(val results: List<SearchHit>, val truncated: Boolean) : SearchProgress
+    data class Error(val message: String, val partialResults: List<SearchHit> = emptyList()) : SearchProgress
 }
 
 /**
@@ -44,15 +45,14 @@ object SearchMatcher {
         limit: Int = SearchOptions().limitPerChapter
     ): List<SearchHit> {
         if (needle.isEmpty() || text.isEmpty() || limit <= 0) return emptyList()
-        val haystack = if (options.caseSensitive) text else text.lowercase()
-        val target = if (options.caseSensitive) needle else needle.lowercase()
         val hits = ArrayList<SearchHit>(minOf(limit, 8))
         var from = 0
+        val ignoreCase = !options.caseSensitive
         while (hits.size < limit) {
-            val found = haystack.indexOf(target, from)
+            val found = text.indexOf(needle, from, ignoreCase = ignoreCase)
             if (found < 0) break
             hits.add(buildHit(chapter, text, found, needle.length))
-            from = found + target.length
+            from = found + maxOf(1, needle.length)
         }
         return hits
     }
@@ -143,7 +143,7 @@ class SearchRepository(
 
         if (ftsDao != null && isFullyIndexed) {
             emit(SearchProgress.Scanning(0, chapters.size, 0))
-            val baseNeedle = if (options.caseSensitive) needle else needle.lowercase()
+            val baseNeedle = if (options.caseSensitive) needle else normalizeCase(needle)
             val escapedNeedle = baseNeedle
                 .replace("\\", "\\\\")
                 .replace("%", "\\%")
@@ -179,6 +179,7 @@ class SearchRepository(
         val shouldBuildIndex = ftsDao != null && !isFullyIndexed
         val ftsCache = if (shouldBuildIndex) HashMap<Int, String>(chapters.size) else null
         var indexBuildFailed = false
+        var failedChapters = 0
         var truncated = false
 
         for ((position, chapter) in chapters.withIndex()) {
@@ -188,6 +189,7 @@ class SearchRepository(
             val textOrNull = textProvider.readTextOrNull(book, chapter)
             if (textOrNull == null) {
                 indexBuildFailed = true
+                failedChapters++
             }
             val text = textOrNull.orEmpty()
             if (ftsCache != null && !indexBuildFailed) {
@@ -212,6 +214,12 @@ class SearchRepository(
             }
         }
 
+        // 全书所有章节均读取失败时，明确报告错误，严禁展示为“没有结果”
+        if (failedChapters > 0 && failedChapters == chapters.size) {
+            emit(SearchProgress.Error("全书正文读取失败，无法完成搜索"))
+            return@flow
+        }
+
         // 只有当全书所有章节都成功读取且没有任何一章读取失败时，才一次性写入数据库，严禁残缺索引入库
         if (ftsDao != null && ftsCache != null && !indexBuildFailed && ftsCache.size == chapters.size) {
             runCatching {
@@ -222,7 +230,7 @@ class SearchRepository(
                         chapterIndex = ch.index,
                         chapterTitle = ch.title,
                         content = content,
-                        contentLower = content.lowercase()
+                        contentLower = normalizeCase(content)
                     )
                 }
                 ftsDao.deleteForBook(book.id)
@@ -232,6 +240,22 @@ class SearchRepository(
 
         emit(SearchProgress.Done(results, truncated))
     }.flowOn(Dispatchers.IO)
+
+    companion object {
+        /**
+         * 字符级小写规范化：与 Kotlin [CharSequence.indexOf(ignoreCase=true)] 比较逻辑严格对齐。
+         *
+         * 避免标准 [String.lowercase] 将 'İ' (U+0130) 展开为 2 字符 "i\u0307" 导致与 SQL LIKE 查询词脱节。
+         * 保持字符一对一映射，保证 SQL LIKE 候选不漏报，且索引前后与扫描前后语义绝对一致。
+         */
+        internal fun normalizeCase(text: String): String {
+            val chars = CharArray(text.length)
+            for (i in 0 until text.length) {
+                chars[i] = text[i].lowercaseChar()
+            }
+            return String(chars)
+        }
+    }
 
     /**
      * 单章匹配（委托给纯函数 [SearchMatcher]，便于单元测试）。

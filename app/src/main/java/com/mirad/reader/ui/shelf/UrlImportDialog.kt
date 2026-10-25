@@ -64,14 +64,17 @@ fun UrlImportDialog(
     }
 
     val isBusy = downloadProgress is DownloadProgress.Connecting || downloadProgress is DownloadProgress.Downloading || downloadProgress is DownloadProgress.Success
+    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    fun cancelAndDismiss() {
+        downloadJob?.cancel()
+        downloadJob = null
+        container.networkDownloader.resetState()
+        onDismiss()
+    }
 
     AlertDialog(
-        onDismissRequest = {
-            if (!isBusy) {
-                container.networkDownloader.resetState()
-                onDismiss()
-            }
-        },
+        onDismissRequest = { cancelAndDismiss() },
         title = {
             Text(
                 text = "输入网址导入书籍",
@@ -149,6 +152,13 @@ fun UrlImportDialog(
                     is DownloadProgress.Error -> {
                         com.mirad.reader.ui.common.ErrorDetails(p.message)
                     }
+                    is DownloadProgress.Skipped -> {
+                        Text(
+                            text = p.message,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     is DownloadProgress.Success -> {
                         Text(
                             text = "已完成下载，正在导入《${p.title}》…",
@@ -164,14 +174,18 @@ fun UrlImportDialog(
             MiradButton(
                 onClick = {
                     if (urlText.isNotBlank()) {
-                        scope.launch {
-                            val success = container.networkDownloader.downloadAndImport(urlText)
-                            if (success) {
-                                val state = container.networkDownloader.progress.value
-                                val bookTitle = if (state is DownloadProgress.Success) state.title else "书籍"
-                                container.networkDownloader.resetState()
-                                onSuccess(bookTitle)
-                                onDismiss()
+                        downloadJob = scope.launch {
+                            try {
+                                val success = container.networkDownloader.downloadAndImport(urlText)
+                                if (success) {
+                                    val state = container.networkDownloader.progress.value
+                                    val bookTitle = if (state is DownloadProgress.Success) state.title else "书籍"
+                                    container.networkDownloader.resetState()
+                                    onSuccess(bookTitle)
+                                    onDismiss()
+                                }
+                            } finally {
+                                downloadJob = null
                             }
                         }
                     }
@@ -183,15 +197,10 @@ fun UrlImportDialog(
             }
         },
         dismissButton = {
-            if (!isBusy) {
-                MiradTextButton(
-                    onClick = {
-                        container.networkDownloader.resetState()
-                        onDismiss()
-                    }
-                ) {
-                    Text("取消")
-                }
+            MiradTextButton(
+                onClick = { cancelAndDismiss() }
+            ) {
+                Text("取消")
             }
         }
     )

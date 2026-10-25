@@ -30,6 +30,10 @@ import java.util.UUID
 
 class ImportException(message: String) : Exception(message)
 
+interface BookImporter {
+    suspend fun importAndWait(sources: List<ImportSource>, force: Boolean = false): ImportSummary
+}
+
 /**
  * 导入管线：复制 → 识别格式 → 解析/分章 → 入库 → 生成封面。
  *
@@ -41,7 +45,7 @@ class ImportPipeline(
     private val books: BookRepository,
     private val scope: CoroutineScope,
     private val appDatabase: com.mirad.reader.data.db.AppDatabase? = null
-) {
+) : BookImporter {
 
     private val batches = ImportBatchQueue()
     val state: StateFlow<ImportState> = batches.state
@@ -60,7 +64,7 @@ class ImportPipeline(
         return batch.id
     }
 
-    suspend fun importAndWait(sources: List<ImportSource>, force: Boolean = false): ImportSummary {
+    override suspend fun importAndWait(sources: List<ImportSource>, force: Boolean): ImportSummary {
         if (sources.isEmpty()) return ImportSummary(0, 0, 0, emptyList())
         val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
         val batch = batches.enqueue(items)

@@ -97,7 +97,7 @@ object ReaderCss {
 
         if (force) {
             sb.append("div,section,article,blockquote,li{text-indent:0;text-align:inherit;}\n")
-            sb.append("#").append(CONTENT_ID).append(" *:not(img):not(svg):not(image):not(figure):not(table)")
+            sb.append("#").append(CONTENT_ID).append(" *:not(img):not(svg):not(image):not(figure):not(table):not(.mirad-hl):not(.mirad-note):not(.mirad-tts):not(.mirad-search)")
                 .append("{font-size:inherit !important;background-color:transparent !important;}\n")
             // 压掉书内 CSS 的固定像素宽度：否则 EPUB 自带样式会把正文撑出屏幕（"没有适应屏幕大小"）
             sb.append("#").append(CONTENT_ID).append(" p,#").append(CONTENT_ID).append(" div,")
@@ -124,10 +124,10 @@ object ReaderCss {
         // 标题与引用不参与首行缩进，避免 EPUB 原书样式叠加出奇怪缩进
         sb.append("blockquote p,li p,td p{text-indent:0;}\n")
         // 划线高亮（reader.js 给带笔记的高亮加的类是 mirad-note，两边必须一致）
-        sb.append("mark.mirad-hl{background:rgba(255,214,102,0.55);color:inherit;padding:0;}\n")
-        sb.append("mark.mirad-note{background:rgba(140,200,255,0.55);}\n")
-        sb.append("span.mirad-tts{background:rgba(255,180,80,0.35);border-radius:2px;}\n")
-        sb.append("mark.mirad-search{background:rgba(255,120,120,0.45);color:inherit;}\n")
+        sb.append("mark.mirad-hl{background-color:rgba(255,214,102,0.55) !important;color:inherit;padding:0;}\n")
+        sb.append("mark.mirad-note{background-color:rgba(140,200,255,0.55) !important;}\n")
+        sb.append("mark.mirad-tts,span.mirad-tts{background-color:rgba(255,180,80,0.35) !important;color:inherit !important;border-radius:2px;}\n")
+        sb.append("mark.mirad-search{background-color:rgba(255,120,120,0.45) !important;color:inherit;}\n")
         // 滚动窗口模式下章与章首尾相连：用分隔线 + 间距区分，避免正文黏在一起
         sb.append("section.mirad-chapter{display:block;}\n")
         sb.append("section.mirad-chapter + section.mirad-chapter{margin-top:1.8em;padding-top:1.2em;border-top:1px solid rgba(128,128,128,0.28);}\n")

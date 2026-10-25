@@ -9,6 +9,7 @@ object SentenceSplitter {
 
     const val MIN_LENGTH = 6
     const val MAX_LENGTH = 110
+    const val MAX_MERGE_LENGTH = 200
 
     data class Sentence(val text: String, val start: Int, val end: Int)
 
@@ -34,7 +35,7 @@ object SentenceSplitter {
             val tooLong = buffer.length >= MAX_LENGTH
             if (isTerminator || isNewline || tooLong) {
                 if (isTerminator) {
-                    while (index < text.length && TRAILING.indexOf(text[index]) >= 0) {
+                    while (index < text.length && TRAILING.indexOf(text[index]) >= 0 && buffer.length < MAX_LENGTH) {
                         buffer.append(text[index])
                         index++
                     }
@@ -60,7 +61,7 @@ object SentenceSplitter {
         out.add(Sentence(content, start + lead, start + lead + content.length))
     }
 
-    /** 过短的碎片并入上一句，减少朗读时的频繁停顿。 */
+    /** 过短的碎片并入上一句，减少朗读时的频繁停顿，但限制合并后的单句总长，防止短句序列无上限膨胀。 */
     private fun mergeShort(sentences: List<Sentence>, source: String): List<Sentence> {
         if (sentences.isEmpty()) return sentences
         val merged = ArrayList<Sentence>(sentences.size)
@@ -69,7 +70,7 @@ object SentenceSplitter {
             if (previous != null && (previous.text.length < MIN_LENGTH || sentence.text.length < MIN_LENGTH)) {
                 val start = previous.start
                 val end = sentence.end.coerceAtMost(source.length)
-                if (end > start) {
+                if (end > start && (end - start) <= MAX_MERGE_LENGTH) {
                     merged[merged.size - 1] = Sentence(source.substring(start, end), start, end)
                     continue
                 }

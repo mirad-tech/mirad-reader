@@ -50,22 +50,24 @@ h2.mirad-chapter-title {
 
 /* 选中与标注 */
 mark.mirad-hl {
-    background: rgba(255, 214, 102, 0.55);
+    background: rgba(255, 214, 102, 0.55) !important;
     color: inherit;
     padding: 0;
 }
 
 mark.mirad-hl.mirad-note {
-    background: rgba(140, 200, 255, 0.55);
+    background: rgba(140, 200, 255, 0.55) !important;
 }
 
 mark.mirad-search {
-    background: rgba(255, 120, 120, 0.5);
+    background: rgba(255, 120, 120, 0.5) !important;
     color: inherit;
 }
 
+mark.mirad-tts,
 span.mirad-tts {
-    background: rgba(255, 180, 80, 0.35);
+    background: rgba(255, 180, 80, 0.35) !important;
+    color: inherit !important;
     border-radius: 2px;
 }
 

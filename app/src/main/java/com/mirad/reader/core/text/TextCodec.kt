@@ -46,7 +46,7 @@ object TextCodec {
     private val META_CHARSET = Regex("(?i)<meta[^>]*charset\\s*=\\s*[\"']?\\s*([\\w.\\-]+)")
     private val META_HTTP_EQUIV = Regex("(?i)content\\s*=\\s*[\"'][^\"']*charset\\s*=\\s*([\\w.\\-]+)")
 
-    fun decode(bytes: ByteArray, declared: String? = null, manual: String? = null): DecodedText {
+    fun decode(bytes: ByteArray, declared: String? = null, manual: String? = null, isPrefix: Boolean = false): DecodedText {
         if (bytes.isEmpty()) return DecodedText("", "UTF-8", "utf8-strict")
 
         manual?.let { name ->
@@ -72,9 +72,11 @@ object TextCodec {
             return DecodedText(clean(String(bytes, charset)), charset.name(), "utf16-heuristic")
         }
 
-        // UTF-8 自带校验能力：全篇严格可解就是最强证据，必须排在 GB18030 之前。
-        if (canDecodeStrict(bytes, Charsets.UTF_8)) {
-            return DecodedText(clean(String(bytes, Charsets.UTF_8)), "UTF-8", "utf8-strict")
+        // UTF-8 自带校验能力：严格可解就是最强证据，必须排在 GB18030 之前。
+        // 若为前缀样本（isPrefix=true），需剔除末尾可能被截断的不完整多字节序列后再行判定。
+        if (isValidUtf8(bytes, isPrefix = isPrefix)) {
+            val targetBytes = if (isPrefix) trimTrailingIncompleteUtf8(bytes) else bytes
+            return DecodedText(clean(String(targetBytes, Charsets.UTF_8)), "UTF-8", "utf8-strict")
         }
 
         val scored = SCORED_CANDIDATES
@@ -146,9 +148,6 @@ object TextCodec {
         META_HTTP_EQUIV.find(head)?.let { return it.groupValues[1] }
         return null
     }
-
-    /** 严格校验：全部字节必须可解码。 */
-    fun isValidUtf8(bytes: ByteArray): Boolean = canDecodeStrict(bytes, Charsets.UTF_8)
 
     private fun bomOf(bytes: ByteArray): Pair<Charset, Int>? {
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
@@ -228,12 +227,45 @@ object TextCodec {
                 .toString()
         }.getOrDefault("")
 
+    fun isValidUtf8(bytes: ByteArray, isPrefix: Boolean = false): Boolean {
+        if (bytes.isEmpty()) return true
+        val target = if (isPrefix) trimTrailingIncompleteUtf8(bytes) else bytes
+        return canDecodeStrict(target, Charsets.UTF_8)
+    }
+
+    internal fun trimTrailingIncompleteUtf8(bytes: ByteArray): ByteArray {
+        if (bytes.isEmpty()) return bytes
+        val len = bytes.size
+        for (i in 1..minOf(4, len)) {
+            val b = bytes[len - i].toInt() and 0xFF
+            if ((b and 0x80) == 0) {
+                // ASCII (0xxxxxxx)
+                break
+            }
+            if ((b and 0xC0) == 0x80) {
+                // Continuation byte (10xxxxxx)
+                continue
+            }
+            val expectedLen = when {
+                (b and 0xE0) == 0xC0 -> 2 // 110xxxxx
+                (b and 0xF0) == 0xE0 -> 3 // 1110xxxx
+                (b and 0xF8) == 0xF0 -> 4 // 11110xxx
+                else -> -1
+            }
+            if (expectedLen > 0 && i < expectedLen) {
+                return bytes.copyOf(len - i)
+            }
+            break
+        }
+        return bytes
+    }
+
     private fun canDecodeStrict(bytes: ByteArray, charset: Charset): Boolean =
         runCatching {
             charset.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT)
-                .decode(ByteBuffer.wrap(sample(bytes)))
+                .decode(ByteBuffer.wrap(bytes))
             true
         }.getOrDefault(false)
 

@@ -84,7 +84,31 @@ class ChapterSectionTest {
         assertTrue(section.contains("src=\"ABS:a.png\""))
         assertTrue(section.contains("href=\"ABS:b.html\""))
         assertTrue(section.contains("srcset=\"ABS:c1.png 1x, ABS:c2.png 2x\""))
-        assertTrue(section.contains("url(\"ABS:d.jpg\")"))
+        assertTrue(section.contains("url('ABS:d.jpg')"))
+    }
+
+    @Test
+    fun epubStyleAttributeAndStyleTagQuoteSafety() {
+        // F14: style 属性引号上下文安全改写，不能破坏 HTML 属性引号导致后方 CSS（如 font-style:italic）失效
+        val doubleQuoted = "<div style=\"background:url('a.jpg');font-style:italic\">text</div>"
+        val singleQuoted = "<div style='background:url(\"a.jpg\");font-style:italic'>text</div>"
+        val styleTag = "<style>div { background: url('a.jpg'); font-style: italic; }</style>"
+        val multiUrl = "<div style=\"background-image:url('a.jpg'), url('b.png');font-style:italic\">text</div>"
+
+        val rewrittenDouble = HtmlUrlRewriter.rewrite(doubleQuoted) { "ABS:$it" }
+        assertTrue(rewrittenDouble.contains("style=\"background:url('ABS:a.jpg');font-style:italic\""))
+
+        val rewrittenSingle = HtmlUrlRewriter.rewrite(singleQuoted) { "ABS:$it" }
+        assertTrue(rewrittenSingle.contains("style='background:url(\"ABS:a.jpg\");font-style:italic'"))
+
+        val rewrittenTag = HtmlUrlRewriter.rewrite(styleTag) { "ABS:$it" }
+        assertTrue(rewrittenTag.contains("url(\"ABS:a.jpg\")"))
+        assertTrue(rewrittenTag.contains("font-style: italic;"))
+
+        val rewrittenMulti = HtmlUrlRewriter.rewrite(multiUrl) { "ABS:$it" }
+        assertTrue(rewrittenMulti.contains("url('ABS:a.jpg')"))
+        assertTrue(rewrittenMulti.contains("url('ABS:b.png')"))
+        assertTrue(rewrittenMulti.contains("font-style:italic"))
     }
 
     @Test

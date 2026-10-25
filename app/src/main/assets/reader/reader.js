@@ -435,6 +435,7 @@
                     rememberThemePosition(retainedThemeAnchor);
                 }
                 scheduleTrim();
+                requestVisualSignal();
                 // 连续短章保护：若插入后总高度仍不足两屏且尚未到达书末，持续向前推进加载下一章
                 if (documentHeight() < viewportHeight() * 2) {
                     var curRange = loadedRange();
@@ -443,7 +444,7 @@
                     }
                 }
             })
-            .catch(function () { win.loading = false; });
+            .catch(function () { win.loading = false; requestVisualSignal(); });
     }
 
     /** 真正的滚动容器（body/html 谁在滚以浏览器为准）。 */
@@ -894,7 +895,7 @@
     var BLOCK_FOR_MARK = 1;
 
     function clearMarks() {
-        var marks = document.querySelectorAll('mark.mirad-hl, mark.mirad-search, span.mirad-tts');
+        var marks = document.querySelectorAll('mark.mirad-hl, mark.mirad-search, span.mirad-tts, mark.mirad-tts');
         for (var i = 0; i < marks.length; i++) {
             var mark = marks[i];
             var parent = mark.parentNode;
@@ -987,10 +988,101 @@
         mark.appendChild(target);
     }
 
-    /** 渲染全部划线。 */
-    function renderHighlights(highlights) {
+    function applySectionSegments(sec, ranges) {
+        if (!sec || !ranges || !ranges.length) return;
+        var nodes = [];
+        var count = 0;
+        var lastB = null;
+        var walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT, null);
+        var cur;
+        while ((cur = walker.nextNode())) {
+            var v = cur.nodeValue;
+            if (!v) continue;
+            var b = cur.parentElement;
+            while (b && b !== sec && !isBlock(b)) b = b.parentElement;
+            if (b !== lastB) {
+                if (count > 0) count++;
+                lastB = b;
+            }
+            nodes.push({node: cur, start: count, len: v.length});
+            count += v.length;
+        }
+        var segments = [];
+        for (var r = 0; r < ranges.length; r++) {
+            var range = ranges[r];
+            var from = Math.max(0, range.start);
+            var to = Math.min(count, range.end);
+            if (to <= from) continue;
+            for (var i = 0; i < nodes.length; i++) {
+                var entry = nodes[i];
+                var nodeStart = entry.start;
+                var nodeEnd = entry.start + entry.len;
+                if (nodeEnd <= from) continue;
+                if (nodeStart >= to) break;
+                var localFrom = Math.max(from, nodeStart) - nodeStart;
+                var localTo = Math.min(to, nodeEnd) - nodeStart;
+                if (localTo > localFrom) {
+                    segments.push({
+                        node: entry.node,
+                        from: localFrom,
+                        to: localTo,
+                        cls: range.cls || 'mirad-hl'
+                    });
+                }
+            }
+        }
+        applySegments(segments);
+    }
+
+    /** 渲染全部划线（支持指定章节或批量按章节渲染）。 */
+    function renderHighlights(highlights, targetChapter) {
+        if (typeof targetChapter === 'number' && targetChapter >= 0) {
+            var sec = container().querySelector('section.mirad-chapter[data-chapter="' + targetChapter + '"]');
+            if (sec) {
+                var oldMarks = sec.querySelectorAll('mark.mirad-hl');
+                for (var i = 0; i < oldMarks.length; i++) {
+                    var m = oldMarks[i];
+                    var p = m.parentNode;
+                    if (!p) continue;
+                    while (m.firstChild) p.insertBefore(m.firstChild, m);
+                    p.removeChild(m);
+                }
+                sec.normalize();
+                if (highlights && highlights.length) {
+                    var ranges = highlights.map(function (h) {
+                        return {start: h.start, end: h.end, cls: h.note ? 'mirad-hl mirad-note' : 'mirad-hl'};
+                    });
+                    applySectionSegments(sec, ranges);
+                }
+                buildTextModel();
+                return state.textLength;
+            }
+        }
         clearMarks();
         if (!highlights || !highlights.length) return state.textLength;
+
+        var hasChapter = highlights.some(function (h) { return typeof h.chapter === 'number'; });
+        if (hasChapter && windowed()) {
+            var grouped = {};
+            for (var j = 0; j < highlights.length; j++) {
+                var item = highlights[j];
+                var ch = typeof item.chapter === 'number' ? item.chapter : currentChapterIndex();
+                if (!grouped[ch]) grouped[ch] = [];
+                grouped[ch].push(item);
+            }
+            for (var chKey in grouped) {
+                var targetSec = container().querySelector('section.mirad-chapter[data-chapter="' + chKey + '"]');
+                if (targetSec) {
+                    var rList = grouped[chKey].map(function (h) {
+                        return {start: h.start, end: h.end, cls: h.note ? 'mirad-hl mirad-note' : 'mirad-hl'};
+                    });
+                    applySectionSegments(targetSec, rList);
+                }
+            }
+            buildTextModel();
+            return state.textLength;
+        }
+
         var ranges = highlights.map(function (h) {
             return {start: h.start, end: h.end, cls: h.note ? 'mirad-hl mirad-note' : 'mirad-hl'};
         });
@@ -1789,25 +1881,99 @@
 
     document.addEventListener('scroll', onScroll, true);
 
-    // 选区上报：原生选区工具条动作（划线/笔记）需要精确区间
+    function textOfSection(sec) {
+        if (!sec || sec === activeRoot()) return state.text;
+        var walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT, null);
+        var cur, t = '', lastB = null;
+        while ((cur = walker.nextNode())) {
+            var v = cur.nodeValue;
+            if (!v) continue;
+            var b = cur.parentElement;
+            while (b && b !== sec && !isBlock(b)) b = b.parentElement;
+            if (b !== lastB) {
+                if (t.length > 0) t += '\n';
+                lastB = b;
+            }
+            t += v;
+        }
+        return t;
+    }
+
+    function offsetWithinSection(sec, node, offset) {
+        if (!sec) return -1;
+        if (sec === activeRoot()) return offsetOfPoint(node, offset);
+        var target = node.nodeType === 3 ? node : null;
+        var walker = document.createTreeWalker(sec, NodeFilter.SHOW_TEXT, null);
+        var cur, count = 0, lastB = null;
+        while ((cur = walker.nextNode())) {
+            var v = cur.nodeValue;
+            if (!v) continue;
+            var b = cur.parentElement;
+            while (b && b !== sec && !isBlock(b)) b = b.parentElement;
+            if (b !== lastB) {
+                if (count > 0) count++;
+                lastB = b;
+            }
+            if (cur === target || cur === node) {
+                if (offset > v.length) return -1;
+                return count + Math.max(0, offset);
+            }
+            count += v.length;
+        }
+        return -1;
+    }
+
+    // 选区上报：原生选区工具条动作（划线/笔记）需要精确区间与章节归属
     document.addEventListener('selectionchange', function () {
         var b = bridge();
         if (!b) return;
         var sel = window.getSelection();
         if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+            try {
+                if (b.onSelection) b.onSelection(-1, -1, '', -1);
+            } catch (e) {}
             return;
         }
         var range = sel.getRangeAt(0);
         var root = content();
         if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return;
-        var start = offsetOfPoint(range.startContainer, range.startOffset);
-        var end = offsetOfPoint(range.endContainer, range.endOffset);
-        if (start < 0 || end < 0 || end <= start) return;
-        var text = state.text.substring(start, end);
-        try {
-            b.onSelection(start, end, text);
-        } catch (e) {
+
+        function findSection(n) {
+            var el = (n && n.nodeType === 1) ? n : (n ? n.parentElement : null);
+            while (el && el !== root && !el.classList.contains('mirad-chapter')) {
+                el = el.parentElement;
+            }
+            return (el && el.classList.contains('mirad-chapter')) ? el : null;
         }
+
+        var startSec = findSection(range.startContainer);
+        var endSec = findSection(range.endContainer);
+
+        // 跨章选区策略：不允许跨章划线/笔记，视为无效选区，清理原生选区
+        if (startSec && endSec && startSec !== endSec) {
+            try {
+                if (b.onSelection) b.onSelection(-1, -1, '', -1);
+            } catch (e) {}
+            return;
+        }
+
+        var targetSec = startSec || endSec || activeRoot();
+        var targetCh = sectionIndex(targetSec);
+        if (targetCh < 0) targetCh = currentChapterIndex();
+
+        var start = offsetWithinSection(targetSec, range.startContainer, range.startOffset);
+        var end = offsetWithinSection(targetSec, range.endContainer, range.endOffset);
+        if (start < 0 || end < 0 || end <= start) {
+            try {
+                if (b.onSelection) b.onSelection(-1, -1, '', -1);
+            } catch (e) {}
+            return;
+        }
+        var fullText = textOfSection(targetSec);
+        var text = (end <= fullText.length) ? fullText.substring(start, end) : range.toString();
+        try {
+            if (b.onSelection) b.onSelection(start, end, text, targetCh);
+        } catch (e) {}
     });
 
     function offsetOfPoint(node, offset) {
@@ -2377,16 +2543,62 @@
             return true;
         },
 
+        isAtBookEnd: function () {
+            if (!windowed()) {
+                var idx = currentChapterIndex();
+                return idx >= lastChapterIndex();
+            }
+            var sections = container().querySelectorAll('section.mirad-chapter');
+            if (!sections.length) return currentChapterIndex() >= lastChapterIndex();
+            var maxIdx = -1;
+            for (var i = 0; i < sections.length; i++) {
+                var idx = sectionIndex(sections[i]);
+                if (idx > maxIdx) maxIdx = idx;
+            }
+            if (maxIdx < lastChapterIndex()) return false;
+            var scrollY = window.scrollY || 0;
+            var docH = Math.max(document.documentElement.scrollHeight, document.body.scrollHeight);
+            var winH = window.innerHeight || 0;
+            return (scrollY + winH >= docH - 4);
+        },
+
         /** 自动滚动到章末后由原生调用：进入下一章（预取优先，失败走原生兜底）。 */
         advanceChapterForAuto: function () {
-            if (CFG.mode !== 'SCROLL' || !state.ready) return false;
+            if (CFG.mode !== 'SCROLL' || !state.ready) return 'FAILED';
+            if (windowed()) {
+                if (this.isAtBookEnd()) {
+                    notifyBottomOnce();
+                    return 'BOOK_END';
+                }
+                var sections = container().querySelectorAll('section.mirad-chapter');
+                var maxIdx = -1;
+                for (var i = 0; i < sections.length; i++) {
+                    var idx = sectionIndex(sections[i]);
+                    if (idx > maxIdx) maxIdx = idx;
+                }
+                var activeIdx = currentChapterIndex();
+                // 若 DOM 中已挂载活动章之后的章节，且当前下方有可滚空间
+                if (maxIdx > activeIdx && (documentHeight() > (window.scrollY || 0) + viewportHeight() + 10)) {
+                    return 'READY';
+                }
+                if (maxIdx < lastChapterIndex()) {
+                    if (!win.loading) ensureSection(+1);
+                    return 'LOADING';
+                }
+                if (this.isAtBookEnd()) {
+                    notifyBottomOnce();
+                    return 'BOOK_END';
+                }
+                return 'FAILED';
+            }
             var idx = currentChapterIndex();
-            if (idx < 0) return false;
+            if (idx < 0) return 'FAILED';
             if (idx >= lastChapterIndex()) {
                 notifyBottomOnce();
-                return false;
+                return 'BOOK_END';
             }
-            return advanceChapter();
+            var started = advanceChapter();
+            return started ? 'ADVANCING' : 'FAILED';
         },
 
         gotoPage: function (page, animate) {
@@ -2428,8 +2640,8 @@
             return offsetAtPage(state.page);
         },
 
-        renderHighlights: function (highlights) {
-            renderHighlights(highlights || []);
+        renderHighlights: function (highlights, targetChapter) {
+            renderHighlights(highlights || [], targetChapter);
             if (CFG.mode === 'PAGED') {
                 applyLayout();
             }

@@ -14,7 +14,7 @@ import android.webkit.JavascriptInterface
 class ReaderJsBridge(
     private val onReady: (pages: Int, textLength: Int) -> Unit,
     private val onState: (page: Int, pages: Int, offset: Int, textLength: Int) -> Unit,
-    private val onSelection: (start: Int, end: Int, text: String) -> Unit,
+    private val onSelection: (start: Int, end: Int, text: String, chapterIndex: Int) -> Unit,
     /** 版心几何回报：正文列相对屏幕的居中偏移与列宽（CSS px = dp）。 */
     private val onMetrics: (insetLeft: Int, columnWidth: Int) -> Unit = { _, _ -> },
     /** JS 已在同一文档内换到别的章（滚动模式无感接章），原生层据此同步章节状态。 */
@@ -26,6 +26,27 @@ class ReaderJsBridge(
     /** 合并后的真实正文变化；不把 Android onDraw 当成内容变化。 */
     private val onVisualChanged: () -> Unit = {}
 ) {
+    /** 兼容旧版不带 chapterIndex 的调用方 */
+    constructor(
+        onReady: (pages: Int, textLength: Int) -> Unit,
+        onState: (page: Int, pages: Int, offset: Int, textLength: Int) -> Unit,
+        onSelection: (start: Int, end: Int, text: String) -> Unit,
+        onMetrics: (insetLeft: Int, columnWidth: Int) -> Unit = { _, _ -> },
+        onChapterChanged: (index: Int) -> Unit = {},
+        onRequestNextChapter: (index: Int) -> Unit = {},
+        onAutoScrollEnd: (chapterIndex: Int) -> Unit = {},
+        onVisualChanged: () -> Unit = {}
+    ) : this(
+        onReady = onReady,
+        onState = onState,
+        onSelection = { start, end, text, _ -> onSelection(start, end, text) },
+        onMetrics = onMetrics,
+        onChapterChanged = onChapterChanged,
+        onRequestNextChapter = onRequestNextChapter,
+        onAutoScrollEnd = onAutoScrollEnd,
+        onVisualChanged = onVisualChanged
+    )
+
     private val main = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
@@ -74,6 +95,12 @@ class ReaderJsBridge(
     @JavascriptInterface
     fun onSelection(start: Int, end: Int, text: String) {
         val callback = this.onSelection
-        main.post { callback(start, end, text) }
+        main.post { callback(start, end, text, -1) }
+    }
+
+    @JavascriptInterface
+    fun onSelection(start: Int, end: Int, text: String, chapterIndex: Int) {
+        val callback = this.onSelection
+        main.post { callback(start, end, text, chapterIndex) }
     }
 }

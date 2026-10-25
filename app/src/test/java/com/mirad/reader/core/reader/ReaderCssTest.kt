@@ -165,4 +165,26 @@ class ReaderCssTest {
         assertEquals(ReaderConfig.DEFAULT, ReaderConfigJson.decode("not json"))
         assertEquals(ReaderConfig.DEFAULT, ReaderConfigJson.decode(null))
     }
+
+    @Test
+    fun generatesProductionThemeFixturesForBrowserChecks() {
+        val dayPalette = ThemePaletteResolver.resolve(ReaderConfig.DEFAULT.copy(theme = ThemeKey.LIGHT), systemDark = false)
+        val nightPalette = ThemePaletteResolver.resolve(ReaderConfig.DEFAULT.copy(theme = ThemeKey.DARK), systemDark = true)
+        val dayConfig = ReaderConfig.DEFAULT.copy(epubLayoutMode = EpubLayoutMode.UNIFIED, fontSizeSp = 18f)
+        val nightConfig = ReaderConfig.DEFAULT.copy(epubLayoutMode = EpubLayoutMode.UNIFIED, fontSizeSp = 18f)
+
+        val dayCss = ReaderCss.themeCss(dayConfig, dayPalette)
+        val nightCss = ReaderCss.themeCss(nightConfig, nightPalette)
+
+        assertTrue(dayCss.contains("color:inherit !important;border-radius:2px;}"))
+        assertTrue(nightCss.contains("color:inherit !important;border-radius:2px;}"))
+
+        val fixtureDir = java.io.File("../tools/browser-checks/fixtures").let {
+            if (it.exists()) it else java.io.File("tools/browser-checks/fixtures")
+        }
+        if (fixtureDir.exists()) {
+            java.io.File(fixtureDir, "prod-reader-day.css").writeText(dayCss)
+            java.io.File(fixtureDir, "prod-reader-night.css").writeText(nightCss)
+        }
+    }
 }

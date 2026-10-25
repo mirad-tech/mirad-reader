@@ -44,7 +44,8 @@ object HtmlUrlRewriter {
         out = rewriteAttribute(out, "poster", resolve)
         out = rewriteAttribute(out, "data-src", resolve)
         out = rewriteSrcset(out, resolve)
-        out = rewriteStyleUrls(out, resolve)
+        out = rewriteStyleAttribute(out, resolve)
+        out = rewriteStyleTags(out, resolve)
         return out
     }
 
@@ -81,11 +82,33 @@ object HtmlUrlRewriter {
         }
     }
 
-    private fun rewriteStyleUrls(html: String, resolve: (String) -> String?): String {
-        val regex = Regex("(?i)url\\(\\s*(['\"]?)([^)'\"]+)\\1\\s*\\)")
+    private fun rewriteStyleAttribute(html: String, resolve: (String) -> String?): String {
+        val regex = Regex("(?i)\\bstyle\\s*=\\s*(\"([^\"]*)\"|'([^']*)')")
         return regex.replace(html) { match ->
+            val isDoubleQuoted = match.groupValues[1].startsWith("\"")
+            val content = if (isDoubleQuoted) match.groupValues[2] else match.groupValues[3]
+            val attrQuote = if (isDoubleQuoted) "\"" else "'"
+            val innerQuote = if (isDoubleQuoted) "'" else "\""
+            val rewritten = rewriteCssUrls(content, innerQuote, resolve)
+            "style=$attrQuote$rewritten$attrQuote"
+        }
+    }
+
+    private fun rewriteStyleTags(html: String, resolve: (String) -> String?): String {
+        val regex = Regex("(?is)<style\\b[^>]*>(.*?)</style>")
+        return regex.replace(html) { match ->
+            val content = match.groupValues[1]
+            val rewritten = rewriteCssUrls(content, "\"", resolve)
+            val openTag = match.value.substring(0, match.value.indexOf('>') + 1)
+            "$openTag$rewritten</style>"
+        }
+    }
+
+    private fun rewriteCssUrls(css: String, defaultQuote: String, resolve: (String) -> String?): String {
+        val regex = Regex("(?i)url\\(\\s*(['\"]?)([^)'\"]+)\\1\\s*\\)")
+        return regex.replace(css) { match ->
             val raw = match.groupValues[2]
-            if (shouldKeep(raw)) match.value else resolve(raw)?.let { "url(\"$it\")" } ?: match.value
+            if (shouldKeep(raw)) match.value else resolve(raw)?.let { "url($defaultQuote$it$defaultQuote)" } ?: match.value
         }
     }
 }

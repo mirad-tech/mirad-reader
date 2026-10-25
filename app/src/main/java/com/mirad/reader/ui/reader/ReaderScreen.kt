@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import com.mirad.reader.ui.common.LocalReaderWindowPolicy
 import com.mirad.reader.ui.common.ReaderWindowPolicy
+import com.mirad.reader.tts.ReaderTtsActions
 import com.mirad.reader.ui.common.ApplyReaderWindowPolicy
 import com.mirad.reader.ui.common.ReaderSystemBarProtection
 import androidx.compose.runtime.DisposableEffect
@@ -181,6 +182,13 @@ fun ReaderScreen(
     )
 }
 
+private data class PendingNote(
+    val start: Int,
+    val end: Int,
+    val text: String,
+    val chapterIndex: Int
+)
+
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ReaderContent(
@@ -225,7 +233,7 @@ private fun ReaderContent(
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("reader:${book.id}")
     var toast by feedback
     var bottomControlsHeight by remember { mutableStateOf(0) }
-    var pendingNote by remember { mutableStateOf<Triple<Int, Int, String>?>(null) }
+    var pendingNote by remember { mutableStateOf<PendingNote?>(null) }
     var noteDraft by remember { mutableStateOf("") }
 
     val autoReadState by session.autoReadState.collectAsState()
@@ -291,19 +299,23 @@ private fun ReaderContent(
         // 朗读与自动阅读都控制阅读位置：启动朗读先暂停自动阅读，且不自动恢复。
         session.pauseAutoRead()
         ensureNotificationPermission()
+        val targetChapter = session.state.value.chapterIndex
+        val targetBookId = book.id
         scope.launch {
             val sentences = ensureTtsSentences()
             if (sentences.isEmpty()) {
                 toast = "本章没有可朗读的内容"
                 return@launch
             }
-            val currentOffset = session.state.value.offset
-            val startIndex = if (fromBeginning) 0 else {
-                sentences.indexOfLast { it.start <= currentOffset }.coerceAtLeast(0)
+            // 若异步等待期间章节已改变，直接作废在途请求，绝不能错位播放
+            if (!ReaderTtsActions.isRequestValid(targetBookId, book.id, targetChapter, session.state.value.chapterIndex)) {
+                return@launch
             }
+            val currentOffset = session.state.value.offset
+            val startIndex = ReaderTtsActions.computeStartIndex(sentences, currentOffset, fromBeginning)
             tts.play(
-                bookId = book.id,
-                chapterIndex = session.state.value.chapterIndex,
+                bookId = targetBookId,
+                chapterIndex = targetChapter,
                 title = state.chapterTitle,
                 sentences = sentences,
                 startIndex = startIndex,
@@ -318,10 +330,11 @@ private fun ReaderContent(
         if (ttsState.playing) session.pauseAutoRead()
     }
 
-    // 朗读时高亮当前句并跟随滚动
-    LaunchedEffect(ttsState.active, ttsState.sentenceStart, ttsState.sentenceEnd, state.ready) {
+    // 朗读时高亮当前句并跟随滚动（严格核对 bookId 与 chapterIndex，防止旧章朗读驱动新章位置）
+    LaunchedEffect(ttsState.active, ttsState.bookId, ttsState.chapterIndex, ttsState.sentenceStart, ttsState.sentenceEnd, state.ready, state.chapterIndex) {
         if (!state.ready) return@LaunchedEffect
-        if (ttsState.active) {
+        val isCurrentChapterTts = ttsState.active && ttsState.bookId == book.id && ttsState.chapterIndex == state.chapterIndex
+        if (isCurrentChapterTts) {
             session.evaluatePublic("MiradReader.markTts(${ttsState.sentenceStart}, ${ttsState.sentenceEnd});")
             session.evaluatePublic("MiradReader.gotoOffset(${ttsState.sentenceStart}, true);")
         } else {
@@ -329,24 +342,38 @@ private fun ReaderContent(
         }
     }
 
-    // 本章读完后自动进入下一章
+    // 本章读完后自动进入下一章（必须严格核对已读完的章是否就是当前屏幕上的章）
     LaunchedEffect(ttsState.chapterFinished) {
         if (!ttsState.chapterFinished) return@LaunchedEffect
+        val finishedChapter = ttsState.chapterIndex
+        val finishedBookId = ttsState.bookId
         tts.consumeChapterFinished()
-        if (!config.ttsAutoNextChapter) return@LaunchedEffect
-        val next = session.state.value.chapterIndex + 1
+        if (!ReaderTtsActions.canAutoAdvanceChapter(
+                finishedBookId = finishedBookId,
+                currentBookId = book.id,
+                finishedChapter = finishedChapter,
+                currentChapter = session.state.value.chapterIndex,
+                autoNextChapterEnabled = config.ttsAutoNextChapter
+            )
+        ) return@LaunchedEffect
+        val next = finishedChapter + 1
         if (next < session.chapters.size) {
-            ttsSentences = emptyList()
-            ttsChapterIndex = -1
-            session.gotoChapter(next, 0)
-            // 等新章真正就绪再开读：固定 delay 在慢机上会读到空句子
-            var waited = 0
-            while (!session.state.value.ready && waited < 4000) {
-                kotlinx.coroutines.delay(60)
-                waited += 60
+            // 接章任务委托给独立协程作用域，绝不因消费事件后的 key 变化而被自身取消
+            scope.launch {
+                ttsSentences = emptyList()
+                ttsChapterIndex = -1
+                session.gotoChapter(next, 0)
+                var waited = 0
+                while (!session.state.value.ready && waited < 4000) {
+                    if (session.state.value.chapterIndex != next) return@launch
+                    kotlinx.coroutines.delay(60)
+                    waited += 60
+                }
+                kotlinx.coroutines.delay(120)
+                if (session.state.value.chapterIndex == next) {
+                    startTts(true)
+                }
             }
-            kotlinx.coroutines.delay(120)
-            startTts(true)
         } else {
             toast = "已读完最后一章"
         }
@@ -602,13 +629,23 @@ private fun ReaderContent(
                         } else {
                             when (action) {
                                 SelectionAction.HIGHLIGHT -> {
-                                    session.addHighlight(selection.start, selection.end, selection.text) { ok ->
+                                    session.addHighlight(
+                                        start = selection.start,
+                                        end = selection.end,
+                                        text = selection.text,
+                                        chapterIndex = selection.chapterIndex
+                                    ) { ok ->
                                         toast = if (ok) "已划线" else "划线失败"
                                     }
                                     session.clearSelection()
                                 }
                                 SelectionAction.NOTE -> {
-                                    pendingNote = Triple(selection.start, selection.end, selection.text)
+                                    pendingNote = PendingNote(
+                                        start = selection.start,
+                                        end = selection.end,
+                                        text = selection.text,
+                                        chapterIndex = selection.chapterIndex
+                                    )
                                     noteDraft = ""
                                 }
                                 SelectionAction.SEARCH -> {
@@ -699,13 +736,13 @@ private fun ReaderContent(
                 },
                 onSettings = { showSettings = true },
                 onToggleTts = {
-                    if (tts.isSpeaking) {
-                        tts.pause()
-                    } else {
-                        showTts = true
-                    }
+                    ReaderTtsActions.onToolbarClick(
+                        isPlaying = ttsState.playing,
+                        onPause = { tts.pause() },
+                        onOpenPanel = { showTts = true }
+                    )
                 },
-                speaking = tts.isSpeaking
+                speaking = ttsState.playing
             )
         }
 
@@ -726,9 +763,16 @@ private fun ReaderContent(
                 onSettings = { showSettings = true },
                 onNotes = { showNotes = true },
                 onSearch = { showSearch = true },
-                onTts = { if (tts.isSpeaking) tts.pause() else showTts = true },
-                speaking = tts.isSpeaking,
+                onTts = {
+                    ReaderTtsActions.onToolbarClick(
+                        isPlaying = ttsState.playing,
+                        onPause = { tts.pause() },
+                        onOpenPanel = { showTts = true }
+                    )
+                },
+                speaking = ttsState.playing,
                 onSliderChange = {
+                    if (ttsState.active) tts.stop()
                     // 拖动进度条是"直接跳转"，不属于翻页：先清掉可能残留的覆盖位图，
                     // 否则旧页会盖在新位置上，看起来就是两页文字叠在一起。
                     clearOverlay()
@@ -742,10 +786,14 @@ private fun ReaderContent(
                 tts = tts,
                 config = config,
                 onChange = applyConfig,
-                onStart = { resume ->
+                onStart = { resume, fromBeginning ->
                     // 继续/开始朗读前先暂停自动阅读，两者不同时控制阅读位置。
                     session.pauseAutoRead()
-                    if (resume && ttsState.active) tts.resume() else startTts(false)
+                    when (ReaderTtsActions.resolveStartPlan(resume, ttsState.active, fromBeginning)) {
+                        ReaderTtsActions.StartPlan.ResumeExisting -> tts.resume()
+                        ReaderTtsActions.StartPlan.StartFromBeginning -> startTts(fromBeginning = true)
+                        ReaderTtsActions.StartPlan.StartFromCurrent -> startTts(fromBeginning = false)
+                    }
                 },
                 onClose = { showTts = false }
             )
@@ -766,6 +814,7 @@ private fun ReaderContent(
             currentIndex = state.chapterIndex,
             onDismiss = { showToc = false },
             onSelect = { index ->
+                if (ttsState.active && index != state.chapterIndex) tts.stop()
                 session.gotoChapter(index)
                 showToc = false
             }
@@ -821,9 +870,16 @@ private fun ReaderContent(
             chapterTitle = state.chapterTitle,
             page = state.page,
             pages = state.pages,
-            onJump = { clearOverlay(); session.jumpToPercent(it) },
+            onJump = {
+                if (ttsState.active) tts.stop()
+                clearOverlay()
+                session.jumpToPercent(it)
+            },
             onJumpChapter = { index ->
-                if (index in session.chapters.indices) session.gotoChapter(index)
+                if (index in session.chapters.indices) {
+                    if (ttsState.active && index != state.chapterIndex) tts.stop()
+                    session.gotoChapter(index)
+                }
             },
             onDismiss = { showProgress = false }
         )
@@ -837,6 +893,7 @@ private fun ReaderContent(
             onDismiss = { showNotes = false },
             onJump = { chapterIndex, offset ->
                 if (chapterIndex != session.state.value.chapterIndex) {
+                    if (ttsState.active) tts.stop()
                     session.gotoChapter(chapterIndex, offset)
                 } else {
                     session.jumpToOffset(offset, mark = true)
@@ -853,29 +910,21 @@ private fun ReaderContent(
             book = book,
             onDismiss = { showSearch = false },
             onJump = { hit ->
-                if (hit.chapterIndex != session.state.value.chapterIndex) {
-                    session.gotoChapter(hit.chapterIndex, hit.charOffset)
-                    // 章节加载后由 findText 就近精确定位
-                    scope.launch {
-                        kotlinx.coroutines.delay(900)
-                        session.findTextAndJump(hit.match, hit.charOffset)
-                    }
-                } else {
-                    session.findTextAndJump(hit.match, hit.charOffset)
-                }
+                if (ttsState.active && hit.chapterIndex != session.state.value.chapterIndex) tts.stop()
+                session.jumpToSearchHit(hit.chapterIndex, hit.match, hit.charOffset)
                 showSearch = false
             }
         )
     }
 
-    pendingNote?.let { (start, end, text) ->
+    pendingNote?.let { noteInfo ->
         com.mirad.reader.ui.common.MiradDialog(
             onDismissRequest = { pendingNote = null },
             title = { Text("写笔记") },
             text = {
                 Column {
                     Text(
-                        text = text.take(80),
+                        text = noteInfo.text.take(80),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -891,7 +940,13 @@ private fun ReaderContent(
             },
             confirmButton = {
                 MiradTextButton(onClick = {
-                    session.addHighlight(start, end, text, note = noteDraft.ifBlank { null }) { ok ->
+                    session.addHighlight(
+                        start = noteInfo.start,
+                        end = noteInfo.end,
+                        text = noteInfo.text,
+                        note = noteDraft.ifBlank { null },
+                        chapterIndex = noteInfo.chapterIndex
+                    ) { ok ->
                         toast = if (ok) "已保存笔记" else "保存失败"
                     }
                     session.clearSelection()
