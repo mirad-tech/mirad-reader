@@ -2,13 +2,15 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前构建版本：1.1.0（versionCode 19）**
+**当前构建版本：1.1.1（versionCode 20）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.0.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.1.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-本轮 1.1.0 本地正式包为 `build/release/mirad-reader-1.1.0-release-20261025/mirad-reader-1.1.0-release.apk`，校验文件 `SHA256SUMS.txt` 位于同一目录。它包含阅读 GPU 玻璃、统一日夜外观与设置信息架构重构；验收边界见[本次更新](docs/releases/1.1.0.md)。已发布版本可从 Releases 下载。
+[下载墨读 1.1.1 正式 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/mirad-reader-1.1.1-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.1)。本版本包含本轮审查补修及下载 20 秒超时修复；验证范围和保留的待办见[本次更新](docs/releases/1.1.1.md)。
+
+本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
 支持 Android 8.0 及以上。正式版本沿用同一发行证书，可覆盖同签名的旧正式版；无需先卸载旧版。
 
@@ -61,11 +63,17 @@ app/src/main/java/com/mirad/reader/
 app/src/main/assets/reader/   WebView 阅读引擎
 app/src/test/                JVM 单元测试
 app/schemas/                 Room schema 历史
-tools/                       素材工具与浏览器回归检查
-docs/                        开发说明、发布记录和历史设计文档
+tools/                       素材工具、浏览器检查与打包脚本
+docs/plans/                  设计与修复计划
+docs/reviews/                审查记录
+docs/reports/                实施与验证报告
+docs/releases/               版本说明
+artifacts/apk/               本机安装包与配套校验文件（不入 Git）
 ```
 
 `tools/` 包含背景、字体、样书生成工具，以及可独立安装依赖的 `browser-checks/`。测试输出统一放入被忽略的 `build/verification/`；本机临时验证数据放在被忽略的 `verification/`。
+
+`app/build/outputs/` 保留 Gradle 自动生成的当前构建产物；与截图、日志绑定的验证 APK 保留在原验证目录。长期保留的发布包和交付副本归档到 `artifacts/apk/`，不再散放仓库根目录或 `build/release/`。
 
 ## 验证边界
 

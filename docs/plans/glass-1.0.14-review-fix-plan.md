@@ -29,11 +29,11 @@
 
 ## 2 最新证据与五项问题映射
 
-当前审查结论见 [第三轮独立复验记录](../build/verification/accept-r2-1.0.14-20261023-085747/review-summary.json)。证据文件位于 Git 忽略目录，缺失时应根据场景重建最小复现，不编造旧输出。
+当前审查结论见 [第三轮独立复验记录](../../build/verification/accept-r2-1.0.14-20261023-085747/review-summary.json)。证据文件位于 Git 忽略目录，缺失时应根据场景重建最小复现，不编造旧输出。
 
-- [三个失败检查及两个已通过旧反例](../build/verification/accept-r2-1.0.14-20261023-085747/candidate-probes.log)、[失败检查源码](../build/verification/accept-r2-1.0.14-20261023-085747/src/review/CandidateChecks.java)、[旧对比度反例源码](../build/verification/accept-r2-1.0.14-20261023-085747/src/review/AcceptanceChecks.java)。调度检查使用真正挂起并恢复的协程；位图夹具提供确定的像素数据。
-- [原生空闲及非零到零再恢复记录](../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.json)与 [对应日志](../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.log)。
-- [47 张截图核验](../build/verification/accept-r2-1.0.14-20261023-085747/delivered-screenshot-check.json)与 [构建后哈希对照](../build/verification/accept-r2-1.0.14-20261023-085747/artifact-after-build-check.json)。
+- [三个失败检查及两个已通过旧反例](../../build/verification/accept-r2-1.0.14-20261023-085747/candidate-probes.log)、[失败检查源码](../../build/verification/accept-r2-1.0.14-20261023-085747/src/review/CandidateChecks.java)、[旧对比度反例源码](../../build/verification/accept-r2-1.0.14-20261023-085747/src/review/AcceptanceChecks.java)。调度检查使用真正挂起并恢复的协程；位图夹具提供确定的像素数据。
+- [原生空闲及非零到零再恢复记录](../../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.json)与 [对应日志](../../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.log)。
+- [47 张截图核验](../../build/verification/accept-r2-1.0.14-20261023-085747/delivered-screenshot-check.json)与 [构建后哈希对照](../../build/verification/accept-r2-1.0.14-20261023-085747/artifact-after-build-check.json)。
 
 | 本轮编号 | 审查编号 | 剩余问题 |
 | --- | --- | --- |
@@ -130,7 +130,7 @@ npm --prefix tools/browser-checks test
 
 JVM 测试应实际执行，构建缓存命中如实说明。禁止自动安装依赖或下载浏览器；必要环境不可用就列出具体缺口。浏览器检查不能代替 Android 渲染、窗口、真实字体缩放或保存反馈的原生交互验证。
 
-隔离原生流程见 [预览说明](../tools/glass-preview/README.md)。新的 RunId 必须贯穿 Create/Start/Status/Install/Adb/Capture/Stop，启动和清理遵守 S5；使用隐藏后台进程，失败先读日志，不反复启动或误停其他实例。结束后确认本次进程与端口已释放，保留证据。
+隔离原生流程见 [预览说明](../../tools/glass-preview/README.md)。新的 RunId 必须贯穿 Create/Start/Status/Install/Adb/Capture/Stop，启动和清理遵守 S5；使用隐藏后台进程，失败先读日志，不反复启动或误停其他实例。结束后确认本次进程与端口已释放，保留证据。
 
 ## 7 交付与独立验收
 
@@ -143,7 +143,7 @@ JVM 测试应实际执行，构建缓存命中如实说明。禁止自动安装�
 ## 8 可复制的简短执行 Prompt
 
 ```text
-请按 G:\mirad\mirad-server\book\docs\glass-1.0.14-review-fix-plan.md 最新版完成 S1–S5，并实现 T1“100% 时明显更透明”。先复验当前代码，修复在途末帧丢失、稀疏指纹漏更、彩色背景对比度、保存失败反馈和 ADB 归属检查；保留空闲停绘、有界读回、清理恢复、B1 等已通过修复及后续改动，保持执行时版本（文档更新时为 1.0.15 / 16）。
+请按 G:\mirad\mirad-server\book\docs\plans\glass-1.0.14-review-fix-plan.md 最新版完成 S1–S5，并实现 T1“100% 时明显更透明”。先复验当前代码，修复在途末帧丢失、稀疏指纹漏更、彩色背景对比度、保存失败反馈和 ADB 归属检查；保留空闲停绘、有界读回、清理恢复、B1 等已通过修复及后续改动，保持执行时版本（文档更新时为 1.0.15 / 16）。
 验收要覆盖三个审查反例、可见失败提示与重试、误占端口不停止他人服务，以及同背景“旧100%/新100%”“60%/100%”原生对照。新100%整块蒙层更轻、背景更清楚，普通文字对比度仍至少4.5:1。重跑计划回归，全部原生证据对应实际安装的固定APK。
 不安装依赖、不改业务数据或阅读行为，不提交、推送、签名、发布，不操作手机或默认ADB。交付diff、逐项结果、命令与退出码、新证据、构建哈希和未验证项；自测后停止，由原对话审核agent独立验收。
 ```

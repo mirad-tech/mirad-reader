@@ -29,7 +29,7 @@ try {
     if ($metadata.applicationId -ne 'com.mirad.reader' -or @($metadata.elements).Count -ne 1) { throw 'Unexpected release artifact metadata.' }
     $artifact = $metadata.elements[0]
     $version = $artifact.versionName
-    if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot "build/release/publish-$version" }
+    if (-not $OutputDirectory) { $OutputDirectory = Join-Path $projectRoot "artifacts/apk/release/$version/$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
     $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
     $apk = Join-Path $OutputDirectory "mirad-reader-$version-release.apk"
     if (Test-Path -LiteralPath $apk) { throw 'Output APK already exists. Choose a new OutputDirectory; historical artifacts are never overwritten.' }

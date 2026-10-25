@@ -7,7 +7,7 @@
 
 原审查对象为 `Zcode/glm5.3` 相对 `origin/main` 的修改，指定比较基线为 `e5d007deff899eafb54825e6a6f07fcbd60f1a4a`，包含已暂存、未暂存及未跟踪文件。结果复核时工作区分支已是 `feature/settings-refactor`；执行前核对实际分支，不要为匹配文档名称而切换分支。
 
-本轮补充依据是对[修复完成报告](glm5.3-review-fix-report-2026-10-25.md)、当前源码和已有验证产物的只读复核。已有 355 项单测通过记录真实存在，但未覆盖下述两个遗漏路径，不能据此认定两项已经闭环。以下行号是复核时的位置，实现前按函数重新定位。
+本轮补充依据是对[修复完成报告](../reports/glm5.3-review-fix-report-2026-10-25.md)、当前源码和已有验证产物的只读复核。已有 355 项单测通过记录真实存在，但未覆盖下述两个遗漏路径，不能据此认定两项已经闭环。以下行号是复核时的位置，实现前按函数重新定位。
 
 ## 执行边界
 
@@ -19,7 +19,7 @@
 
 ## P1 重新识别编码的临时文件与发布安全
 
-定位：[BookMaintenance.kt](../app/src/main/java/com/mirad/reader/data/repo/BookMaintenance.kt)，`redetect`，本轮重点约 196–203 行；关联数据库事务、`ContentReplacer.publish()` 和异常清理。
+定位：[BookMaintenance.kt](../../app/src/main/java/com/mirad/reader/data/repo/BookMaintenance.kt)，`redetect`，本轮重点约 196–203 行；关联数据库事务、`ContentReplacer.publish()` 和异常清理。
 
 初次审查发现共用 `content.utf8.txt.tmp` 会导致取消后重试的任务串扰。独占临时文件和同书互斥现已实现，这部分应保留。
 
@@ -46,7 +46,7 @@
 
 ## P2 背景图片必须在配置成功落盘后清理
 
-定位：[SettingsRepository.kt](../app/src/main/java/com/mirad/reader/data/repo/SettingsRepository.kt)，本轮重点约 268–269 行的清理通知；关联 `persistAppearanceSnapshotLocked`、旧兼容配置的异步保存及 [AppContainer.kt](../app/src/main/java/com/mirad/reader/AppContainer.kt) 的实际文件清理。
+定位：[SettingsRepository.kt](../../app/src/main/java/com/mirad/reader/data/repo/SettingsRepository.kt)，本轮重点约 268–269 行的清理通知；关联 `persistAppearanceSnapshotLocked`、旧兼容配置的异步保存及 [AppContainer.kt](../../app/src/main/java/com/mirad/reader/AppContainer.kt) 的实际文件清理。
 
 初次审查指出 `onApplied` 只证明内存配置更新，不能触发旧图片删除。首轮修复已把清理移到新外观记录成功持久化后的差集回调，改善了这一问题，应保留该方向。
 
@@ -59,7 +59,7 @@
 - 沿用现有编辑、代次、互斥锁、防抖和 flush 链，让调用方能够明确获知本次持久化成功或失败。不能用固定延时、当前内存 Flow 值或 `onApplied` 代替成功落盘。
 - 只有新外观及其必要兼容字段保存成功，才允许清理旧图片；保存失败、取消或尚未完成时保留旧文件。
 - 删除前依据已持久化的日间、夜间及兼容配置重新核对 URI 引用。另一组仍使用、已被后续操作重新引用，或新旧 URI 相同的文件都不能删除。
-- 保持项目规定的 `app_appearance_v1` 事实源、旧字段双写和 `NonCancellable` 写入纪律，不能另开直写偏好通路。规则见 [AGENTS.md](../AGENTS.md) 第 37–38 行。
+- 保持项目规定的 `app_appearance_v1` 事实源、旧字段双写和 `NonCancellable` 写入纪律，不能另开直写偏好通路。规则见 [AGENTS.md](../../AGENTS.md) 第 37–38 行。
 - 如果清理失败，允许留下未引用的旧文件并按现有方式处理错误；不要为此回滚已成功的外观设置，也不要新增后台清理服务。
 
 必要验收：
@@ -76,7 +76,7 @@
 
 **状态：已通过本轮复核，以下原始要求保留作背景，本次不要重新实施。** 现有证据确认 StartupOnly 7/7、完整外观流程 67/67、theme 26/26、layout 48/48；两份脚本及 Preview APK 哈希与记录匹配。除非两项数据安全补丁直接影响这些流程，不重复运行整套模拟器矩阵。
 
-定位：[Test-AppAppearance.ps1](../tools/glass-preview/Test-AppAppearance.ps1)，首次捕获断言约第 93 行、启动入口约第 121–122 行；同时检查 [Test-ImmersionSettings.ps1](../tools/glass-preview/Test-ImmersionSettings.ps1) 中同类旧入口。
+定位：[Test-AppAppearance.ps1](../../tools/glass-preview/Test-AppAppearance.ps1)，首次捕获断言约第 93 行、启动入口约第 121–122 行；同时检查 [Test-ImmersionSettings.ps1](../../tools/glass-preview/Test-ImmersionSettings.ps1) 中同类旧入口。
 
 初次审查时，脚本进入 `THEME` 后立即要求找到“跟随系统”，后续还直接点击“夜间”“日间”；应用模式控件已经位于 `APPEARANCE`，`THEME` 显示的是“日间样式／夜间样式”，导致普通运行和 `-StartupOnly` 在首次捕获失败。首轮修复已使导航与断言匹配当前 UI。
 
@@ -101,6 +101,6 @@
 
 最终用中文逐项报告：修复位置和行为、两个关键故障场景如何被覆盖、执行命令及退出码、测试失败数，以及未验证项和原因。测试数量和 lint 结果必须来自本次输出，不复用历史通过记录；静态检查不能冒充设备验证。
 
-完成后据实更新 [修复完成报告](glm5.3-review-fix-report-2026-10-25.md)，纠正与代码不符的事务、异常清理和临时文件描述，并记录执行时的实际分支。只有两项新增回归确实通过、其安全不变量得到验证后，才可把这两项标记为完成。
+完成后据实更新 [修复完成报告](../reports/glm5.3-review-fix-report-2026-10-25.md)，纠正与代码不符的事务、异常清理和临时文件描述，并记录执行时的实际分支。只有两项新增回归确实通过、其安全不变量得到验证后，才可把这两项标记为完成。
 
 交付范围是修复代码、相关回归和简短结果说明。本文档及其中的修复要求，不授予提交、推送、签名或公开发布的权限。

@@ -64,7 +64,7 @@ $env:MIRAD_KEYSTORE_PASSWORD_FILE = '<密码文件>'
 .\tools\package-release.ps1
 ```
 
-工具执行 Release 构建、签名、证书核验、APK 对齐与版本信息核验，输出 `build/release/publish-<版本>/mirad-reader-<版本>-release.apk` 和 `SHA256SUMS.txt`。已有同名输出时拒绝覆盖；如需重新构建，可用 `-OutputDirectory` 指定新的目录。
+工具执行 Release 构建、签名、证书核验、APK 对齐与版本信息核验，默认输出到 `artifacts/apk/release/<版本>/<yyyyMMdd-HHmmss>/`，其中包含 `mirad-reader-<版本>-release.apk`、`SHA256SUMS.txt` 与签名验证记录。已有同名 APK 时仍拒绝覆盖；显式传入 `-OutputDirectory` 时遵循指定目录，建议继续使用版本与批次分层。
 
 PKCS12 使用与密钥库相同的密钥密码时，不要把同一个单行密码文件同时传给 `--ks-pass` 和 `--key-pass`，以免读取到文件末尾。
 
@@ -74,5 +74,7 @@ PKCS12 使用与密钥库相同的密钥密码时，不要把同一个单行密�
 - `agent.md` 为本机交接记录，保留在本地，不作为公共源码上传；公共操作说明以本文件为准。
 - 新正式版本递增 `versionName` 与 `versionCode`，更新 README 和对应的 `docs/releases/<版本>.md`。
 - 保留已发布标签及附件，不覆盖旧版 APK，不重写公开历史。
+- 长期保留的安装包统一进入 `artifacts/apk/`：正式构建位于 `release/`，调试包位于 `debug/`，独立预览包位于 `preview/`；同一批次的 APK、idsig、校验和及验证记录一起保存。交付副本也放在该批次内，不再复制到仓库根目录。
+- `app/build/outputs/` 是 Gradle 固定输出；验证目录中与截图、日志绑定的 APK 原位保留。2026-10-26 的整理清单与前后路径、SHA-256 记录见本机 `artifacts/apk/organization-20261026.json`。
 - 发布前检查实际差异、单测、Lint 与签名；发布后核对远端提交、标签、Release 状态，并下载 APK 比对 SHA-256。
 - 用户设备安装、生产数据操作及额外发布行为需要明确授权。验证记录须区分源码、JVM、Chromium 和 Android 设备证据。

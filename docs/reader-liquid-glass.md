@@ -84,6 +84,6 @@ COVER 在 API 29+ 通过 RenderNode、HardwareRenderer 和 ImageReader 生成独
 
 本次本地 Release 的输出目录为：
 
-`build/release/local-reader-gpu-integration-20261024/`
+`artifacts/apk/release/1.0.17/local-reader-gpu-integration-20261024/`
 
 产物为 `mirad-reader-1.0.17-release.apk`、`SHA256SUMS.txt` 及 `signature-verification.txt`。已验证发行证书、非 debuggable、版本和 16KB 对齐；APK 为 5,752,412 字节，SHA-256 为 `5a368fa7c2bd72adca7b0e49ba743dd12b82338c1c60aa0c64869bbcceb85532`。本版本尚未公开发布，手机安装由用户执行。

@@ -15,6 +15,7 @@
 /*.keystore
 
 # Local artifacts and diagnostics
+/artifacts/
 *.apk
 *.aab
 /dist/
