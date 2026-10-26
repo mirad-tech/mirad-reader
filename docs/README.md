@@ -8,6 +8,7 @@
 
 ## 计划
 
+- [2026-10-26 阅读外观与交互修复计划](plans/reading-appearance-interaction-fix-plan-2026-10-26.md)
 - [2026-10-26 验收补修计划](plans/full-repo-followup-fix-plan-2026-10-26.md)
 - [2026-10-25 全仓审查修复计划](plans/full-repo-fix-plan-2026-10-25.md)
 - [2026-10-25 审查修复计划](plans/glm5.3-review-fix-plan-2026-10-25.md)
@@ -31,6 +32,7 @@
 
 ## 版本说明
 
+- [1.1.2](releases/1.1.2.md)
 - [1.1.1](releases/1.1.1.md)
 - [1.1.0](releases/1.1.0.md)
 - [1.0.17](releases/1.0.17.md)

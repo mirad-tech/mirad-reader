@@ -2,13 +2,15 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前构建版本：1.1.1（versionCode 20）**
+**当前构建版本：1.1.2（versionCode 21）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.1.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.2.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-[下载墨读 1.1.1 正式 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/mirad-reader-1.1.1-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.1)。本版本包含本轮审查补修及下载 20 秒超时修复；验证范围和保留的待办见[本次更新](docs/releases/1.1.1.md)。
+当前 1.1.2 按本地正式签名包交付，尚未上传 GitHub Release；内容与验证边界见 [1.1.2 更新说明](docs/releases/1.1.2.md)。
+
+已公开发布的版本：[墨读 1.1.1 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/mirad-reader-1.1.1-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.1)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
@@ -23,7 +25,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
 - **统一外观**：全应用共享跟随系统、日间、夜间模式；日夜分别记忆阅读配色、背景图片和图片不透明度，阅读弹层与当前模式一致。
-- **玻璃外观**：全局设置与阅读设置共享 0–100% 玻璃透明度，默认 60%；高透明度复杂背景下仍有文字对比度限制，详见[本次更新](docs/releases/1.0.17.md)。
+- **玻璃外观**：独立的磨砂玻璃开关与 0–100% 清晰度控制，默认清晰度 60%；日夜主题共用边缘散射与高光绘制。高清晰度下仍有背景文字干扰前景的限制，详见[本次更新](docs/releases/1.1.2.md)。
 
 ### 阅读设置的作用范围
 
