@@ -37,6 +37,8 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     private var pendingPlay = false
     private var pendingRate = 1f
     private var pendingPitch = 1f
+    /** 只清理本服务实际接收的负载，不能清空尚未送达的新请求。 */
+    private var playlistToken: String? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -116,9 +118,25 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             TtsBus.ACTION_PLAY -> {
-                readPlaylist(intent)
+                // 先解析负载再亮通知：通知文案要读 texts/index，顺序反了会先闪一条空列表的通知。
+                // 无论成功与否都必须 startForeground（服务是以 startForegroundService 拉起的）。
+                val request = TtsBus.resolvePlayRequest(intent.getStringExtra(TtsBus.EXTRA_TOKEN))
+                if (request is TtsBus.PlayRequest.Ready) readPlaylist(intent, request.playlist)
                 startForeground(NOTIFICATION_ID, buildNotification())
-                playOrDefer()
+                when (request) {
+                    TtsBus.PlayRequest.Superseded -> return START_NOT_STICKY
+                    TtsBus.PlayRequest.Missing -> {
+                        pendingPlay = false
+                        playing = false
+                        TtsBus.update {
+                            it.copy(active = false, playing = false, error = "朗读请求已失效，请重新开始朗读")
+                        }
+                        // 仅结束本次启动；较新的 start 请求可能还未送达 onStartCommand。
+                        if (stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE)
+                        return START_NOT_STICKY
+                    }
+                    is TtsBus.PlayRequest.Ready -> playOrDefer()
+                }
             }
             TtsBus.ACTION_PAUSE -> {
                 pendingPlay = false
@@ -151,20 +169,27 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                 }
             }
             TtsBus.ACTION_STOP -> {
-                stopEverything()
+                stopEverything(startId)
             }
         }
         return START_NOT_STICKY
     }
 
-    private fun readPlaylist(intent: Intent) {
-        texts = intent.getStringArrayListExtra(TtsBus.EXTRA_TEXTS) ?: emptyList()
-        starts = intent.getIntegerArrayListExtra(TtsBus.EXTRA_STARTS)?.toIntArray() ?: IntArray(0)
-        ends = intent.getIntegerArrayListExtra(TtsBus.EXTRA_ENDS)?.toIntArray() ?: IntArray(0)
+    /**
+     * 从进程内负载恢复播放列表；token 不匹配说明请求已失效。
+     *
+     * 旧实现把整章句子塞进 Intent，EPUB「整本书一个 spine」时会因为超过 Binder 事务上限
+     * 直接崩溃；现在只传 token，负载由 [TtsBus.playlist] 持有。
+     */
+    private fun readPlaylist(intent: Intent, playlist: TtsBus.Playlist) {
+        playlistToken = playlist.token
+        texts = playlist.texts
+        starts = playlist.starts
+        ends = playlist.ends
         index = intent.getIntExtra(TtsBus.EXTRA_INDEX, 0).coerceIn(0, (texts.size - 1).coerceAtLeast(0))
         // 新的播放列表：上一章的"已读完"标记不能带过来，否则暂停后继续会误从头播。
         chapterDone = false
-        title = intent.getStringExtra(TtsBus.EXTRA_TITLE) ?: "墨读"
+        title = playlist.title
         val rate = intent.getFloatExtra(TtsBus.EXTRA_RATE, 1f)
         val pitch = intent.getFloatExtra(TtsBus.EXTRA_PITCH, 1f)
         // 记下用户选的语速/音调：引擎晚就绪时 onInit 要用它们，而不是默认值
@@ -176,8 +201,8 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
             TtsBus.TtsState(
                 active = true,
                 playing = true,
-                bookId = intent.getLongExtra(TtsBus.EXTRA_BOOK_ID, 0L),
-                chapterIndex = intent.getIntExtra(TtsBus.EXTRA_CHAPTER_INDEX, -1),
+                bookId = playlist.bookId,
+                chapterIndex = playlist.chapterIndex,
                 index = index,
                 total = texts.size,
                 sentenceStart = starts.getOrElse(index) { 0 },
@@ -209,20 +234,29 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
         notifyUpdate()
     }
 
-    private fun stopEverything() {
+    private fun stopEverything(startId: Int) {
         pendingPlay = false
         playing = false
         engine?.stop()
-        TtsBus.reset()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        // 播放列表可能是一整章文本，停止后立即释放，不必等 GC。
+        if (TtsBus.clearPlaylist(playlistToken)) TtsBus.reset()
+        if (stopSelfResult(startId)) stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     override fun onDestroy() {
+        pendingPlay = false
+        playing = false
         engine?.stop()
         engine?.shutdown()
         engine = null
-        TtsBus.reset()
+        // 保留"朗读已失效"这类错误提示：界面刚收到就被 reset 掉的话，用户看不到任何解释。
+        if (TtsBus.clearPlaylist(playlistToken)) {
+            if (TtsBus.state.value.error == null) {
+                TtsBus.reset()
+            } else {
+                TtsBus.update { it.copy(active = false, playing = false) }
+            }
+        }
         super.onDestroy()
     }
 

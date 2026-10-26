@@ -269,7 +269,8 @@ fun LabeledSlider(
     range: ClosedFloatingPointRange<Float>,
     onChange: (Float) -> Unit,
     onCommit: (() -> Unit)? = null,
-    steps: Int = 0
+    steps: Int = 0,
+    enabled: Boolean = true
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -290,6 +291,7 @@ fun LabeledSlider(
             onValueChangeFinished = onCommit ?: LocalSettingsCommit.current,
             valueRange = range,
             steps = steps,
+            enabled = enabled,
             modifier = Modifier.fillMaxWidth().semantics { contentDescription = label }
         )
     }

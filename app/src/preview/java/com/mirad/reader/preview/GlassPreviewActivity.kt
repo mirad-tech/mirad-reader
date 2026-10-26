@@ -143,7 +143,7 @@ class GlassPreviewActivity : ComponentActivity() {
                     SettingsRepository(dao = inMemoryDao, repositoryScope = repoScope)
                 }
                 val glassAppearance by previewSettingsRepo.glassAppearance.collectAsState(
-                    initial = GlassAppearance(initialTransparency)
+                    initial = GlassAppearance(clarityPercent = initialTransparency)
                 )
                 val glassSaveFailed by previewSettingsRepo.glassSaveFailed.collectAsState(initial = false)
                 val savedRaw by inMemoryDao.savedGlassFlow.collectAsState(initial = initialTransparency.toString())
@@ -246,7 +246,7 @@ private fun PreviewDiagnosticsReceiver(
                     }
                     "com.mirad.reader.preview.ACTION_SET_TRANSPARENCY" -> {
                         val pct = intent.getIntExtra("percent", GlassAppearance.DEFAULT_PERCENT).coerceIn(0, 100)
-                        controller.update(GlassAppearance(pct))
+                        controller.update(GlassAppearance(clarityPercent = pct))
                         controller.commit()
                     }
                     "com.mirad.reader.preview.ACTION_SET_SAVE_FAIL_MODE" -> {
@@ -435,7 +435,7 @@ class PatternAcceptanceActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             MiradTheme(darkTheme = dark) {
-                CompositionLocalProvider(LocalGlassAppearance provides GlassAppearance(transparency)) {
+                CompositionLocalProvider(LocalGlassAppearance provides GlassAppearance(clarityPercent = transparency)) {
                     GlassBackdropHost {
                         MixedPatternPreview(
                             baseBgColorHex = baseBgColorHex,

@@ -10,6 +10,7 @@ import com.mirad.reader.core.model.ReadingStyle
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.PreferenceEntity
 import com.mirad.reader.ui.common.GlassAppearance
+import com.mirad.reader.ui.common.GlassAppearanceJson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
@@ -317,7 +318,7 @@ class SettingsRepository @JvmOverloads constructor(
     private val glassWriteGeneration = java.util.concurrent.atomic.AtomicLong(0L)
 
     fun queueGlassAppearance(appearance: GlassAppearance, scope: CoroutineScope? = null) {
-        val sanitized = GlassAppearance(appearance.transparencyPercent.coerceIn(0, 100))
+        val sanitized = appearance.normalized()
         val gen = glassWriteGeneration.incrementAndGet()
         pendingGlass.value = sanitized
         glassSaveJob?.cancel()
@@ -343,6 +344,8 @@ class SettingsRepository @JvmOverloads constructor(
         if (expectedGen < glassWriteGeneration.get()) return@withLock
         val value = pendingGlass.value ?: return@withLock
         runCatching {
+            // 新记录是事实源；旧键只是给旧版 APK 的单调投影，写入失败会在下次 flush 自愈。
+            dao.put(PreferenceEntity(KEY_GLASS_APPEARANCE, GlassAppearanceJson.encode(value), System.currentTimeMillis()))
             dao.put(PreferenceEntity(KEY_GLASS_TRANSPARENCY, value.transparencyPercent.toString(), System.currentTimeMillis()))
         }.onSuccess {
             // 与 persistGlobal 同理：pendingGlass 保留为最新值缓存，避免失效通知到达前闪回旧库值。
@@ -356,18 +359,44 @@ class SettingsRepository @JvmOverloads constructor(
         }
     }
 
-    val glassAppearance: Flow<GlassAppearance> = combine(dao.observe(KEY_GLASS_TRANSPARENCY), pendingGlass) { saved, pending ->
-        pending ?: GlassAppearance.parse(saved)
+    val glassAppearance: Flow<GlassAppearance> = flow {
+        // 首次订阅前完成一次性迁移，避免界面先看到默认值再跳变。
+        emit(currentGlassAppearance())
+        emitAll(combine(dao.observe(KEY_GLASS_APPEARANCE), pendingGlass) { saved, pending ->
+            pending ?: GlassAppearanceJson.decode(saved)
+        })
     }
 
-    suspend fun currentGlassAppearance(): GlassAppearance =
-        pendingGlass.value ?: GlassAppearance.parse(dao.get(KEY_GLASS_TRANSPARENCY))
+    suspend fun currentGlassAppearance(): GlassAppearance {
+        pendingGlass.value?.let { return it }
+        return withContext(NonCancellable) {
+            glassWrites.withLock {
+                pendingGlass.value?.let { return@withLock it }
+                val stored = dao.get(KEY_GLASS_APPEARANCE)
+                val migrated = if (stored != null) {
+                    GlassAppearanceJson.decode(stored)
+                } else {
+                    // 只有新记录不存在时才迁移旧百分比；损坏的新记录一律回退默认，不重复迁移。
+                    val legacy = GlassAppearance.fromLegacyPercent(dao.get(KEY_GLASS_TRANSPARENCY))
+                    runCatching {
+                        dao.put(PreferenceEntity(KEY_GLASS_APPEARANCE, GlassAppearanceJson.encode(legacy), System.currentTimeMillis()))
+                        dao.put(PreferenceEntity(KEY_GLASS_TRANSPARENCY, legacy.transparencyPercent.toString(), System.currentTimeMillis()))
+                    }
+                    legacy
+                }
+                // DAO 挂起期间 UI 可以排入新设置；只发布到尚未被新值占用的缓存。
+                pendingGlass.compareAndSet(null, migrated)
+                pendingGlass.value ?: migrated
+            }
+        }
+    }
 
     suspend fun saveGlassAppearance(appearance: GlassAppearance) = glassWrites.withLock {
-        val sanitized = GlassAppearance(appearance.transparencyPercent.coerceIn(0, 100))
+        val sanitized = appearance.normalized()
         val gen = glassWriteGeneration.incrementAndGet()
         pendingGlass.value = sanitized
         runCatching {
+            dao.put(PreferenceEntity(KEY_GLASS_APPEARANCE, GlassAppearanceJson.encode(sanitized), System.currentTimeMillis()))
             dao.put(PreferenceEntity(KEY_GLASS_TRANSPARENCY, sanitized.transparencyPercent.toString(), System.currentTimeMillis()))
         }.onSuccess {
             if (glassWriteGeneration.get() == gen) {
@@ -415,6 +444,9 @@ class SettingsRepository @JvmOverloads constructor(
     companion object {
         const val KEY_GLOBAL = "reader_config_global"
         const val KEY_APP_APPEARANCE = "app_appearance_v1"
+        /** 新记录：磨砂开关 + 清晰度。 */
+        const val KEY_GLASS_APPEARANCE = "ui_glass_appearance_v1"
+        /** 旧版兼容投影（0 = 关闭，1..100 = 开启）；只写不读，除迁移外。 */
         const val KEY_GLASS_TRANSPARENCY = "ui_glass_transparency_percent"
         const val KEY_SHELF_LAYOUT = "shelf_layout"
 

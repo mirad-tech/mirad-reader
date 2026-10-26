@@ -8,6 +8,9 @@ import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.PreferenceEntity
 import com.mirad.reader.ui.common.GlassAppearance
+import com.mirad.reader.ui.common.GlassAppearanceJson
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -19,6 +22,7 @@ import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.TestScope
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -170,7 +174,7 @@ class SettingsRepositoryTest {
         val repoScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
         val settings = SettingsRepository(dao, repoScope)
         val uiScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
-        settings.queueGlassAppearance(GlassAppearance(78), uiScope)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 78), uiScope)
         assertEquals(78, settings.currentGlassAppearance().transparencyPercent)
         advanceTimeBy(150)
         // Simulate configuration change / page exit cancelling UI scope before 400ms
@@ -185,14 +189,15 @@ class SettingsRepositoryTest {
         val repoScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
         val settings = SettingsRepository(dao, repoScope)
         // Entry 1 (e.g. Global Settings) updates to 35%
-        settings.queueGlassAppearance(GlassAppearance(35), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 35), this)
         assertEquals(35, settings.glassAppearance.first().transparencyPercent)
         // Entry 2 (e.g. Reader Sheet) immediately sees 35% and updates to 85% before debounce finishes
         advanceTimeBy(100)
-        settings.queueGlassAppearance(GlassAppearance(85), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 85), this)
         assertEquals(85, settings.glassAppearance.first().transparencyPercent)
         advanceUntilIdle()
-        assertEquals(1, dao.writes)
+        // 一次逻辑落库现在写两行（新记录 + 旧版兼容投影），两次快速修改仍只落库一次。
+        assertEquals(2, dao.writes)
         assertEquals("85", dao.get(SettingsRepository.KEY_GLASS_TRANSPARENCY))
 
         // Reset to default (60%)
@@ -207,7 +212,7 @@ class SettingsRepositoryTest {
         val repoScope = CoroutineScope(StandardTestDispatcher(testScheduler) + Job())
         val settings = SettingsRepository(dao, repoScope)
         dao.failNextPut = true
-        settings.queueGlassAppearance(GlassAppearance(42), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 42), this)
         advanceUntilIdle()
         assertTrue(settings.glassSaveFailed.first())
         // In-memory state must remain 42 so UI does not silently revert while user is still on screen
@@ -257,13 +262,13 @@ class SettingsRepositoryTest {
         val settings = SettingsRepository(dao, repoScope)
 
         // 1. Trigger first write (40%) and let it enter dao.put()
-        settings.queueGlassAppearance(GlassAppearance(40), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 40), this)
         settings.flushGlassAppearance(this)
         testScheduler.runCurrent()
         firstWriteEntered.await()
 
         // 2. While first write is suspended in dao.put(), user selects 85% and commits
-        settings.queueGlassAppearance(GlassAppearance(85), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 85), this)
         settings.flushGlassAppearance(this)
         assertEquals(85, settings.currentGlassAppearance().transparencyPercent)
 
@@ -317,10 +322,108 @@ class SettingsRepositoryTest {
         assertEquals("失效通知到达后仍是最新值", 30f, settings.global.first().fontSizeSp)
     }
 
+    /** 旧键只在新记录不存在时迁移一次；新记录成为事实源后，旧键变化不得反向覆盖。 */
+    @Test fun glassAppearanceMigratesLegacyPercentOnce() = runTest {
+        val dao = MemoryPreferences()
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLASS_TRANSPARENCY, "45", 0L))
+        val settings = SettingsRepository(dao, this)
+        val migrated = settings.currentGlassAppearance()
+        assertTrue("旧值 > 0 应迁移为开启", migrated.enabled)
+        assertEquals(45, migrated.clarityPercent)
+
+        settings.saveGlassAppearance(GlassAppearance(enabled = true, clarityPercent = 20))
+        // 旧键被外部改成 99（旧版 APK 回写等场景）
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLASS_TRANSPARENCY, "99", 0L))
+        val reopened = SettingsRepository(dao, this)
+        assertEquals("新记录是事实源，旧投影不能覆盖它", 20, reopened.currentGlassAppearance().clarityPercent)
+    }
+
+    @Test fun glassInitialReadPreservesChangesQueuedWhileReadingNewRecord() = runTest {
+        assertGlassLoadPreservesQueuedChange("new-read")
+    }
+
+    @Test fun glassMigrationPreservesChangesQueuedWhileReadingLegacyRecord() = runTest {
+        assertGlassLoadPreservesQueuedChange("legacy-read")
+    }
+
+    @Test fun glassMigrationPreservesChangesQueuedWhileWritingMigratedRecord() = runTest {
+        assertGlassLoadPreservesQueuedChange("migration-write")
+    }
+
+    /** 确定性暂停真实 repository 的 DAO 边界，再模拟 UI 更新及立即离页 flush。 */
+    private suspend fun TestScope.assertGlassLoadPreservesQueuedChange(blockAt: String) {
+        val storage = MemoryPreferences()
+        storage.put(PreferenceEntity(SettingsRepository.KEY_GLASS_TRANSPARENCY, "45", 0L))
+        if (blockAt == "new-read") {
+            storage.put(PreferenceEntity(SettingsRepository.KEY_GLASS_APPEARANCE,
+                GlassAppearanceJson.encode(GlassAppearance(clarityPercent = 45)), 0L))
+        }
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val dao = object : PreferenceDao by storage {
+            override suspend fun get(key: String): String? {
+                val saved = storage.get(key)
+                if ((blockAt == "new-read" && key == SettingsRepository.KEY_GLASS_APPEARANCE) ||
+                    (blockAt == "legacy-read" && key == SettingsRepository.KEY_GLASS_TRANSPARENCY)) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+                return saved
+            }
+
+            override suspend fun put(preference: PreferenceEntity) {
+                if (blockAt == "migration-write" && !entered.isCompleted &&
+                    preference.key == SettingsRepository.KEY_GLASS_APPEARANCE) {
+                    entered.complete(Unit)
+                    release.await()
+                }
+                storage.put(preference)
+            }
+        }
+        val settings = SettingsRepository(dao, this)
+        val initialEmission = async { settings.glassAppearance.first() }
+        testScheduler.runCurrent()
+        assertTrue("首次加载必须已进入指定 DAO 挂起点", entered.isCompleted)
+
+        val latest = GlassAppearance(enabled = false, clarityPercent = 83)
+        settings.queueGlassAppearance(latest, this)
+        settings.flushGlassAppearance(this)
+        testScheduler.runCurrent()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals("首次流发射不能用旧值覆盖新选择", latest, initialEmission.await())
+        assertEquals(latest, settings.currentGlassAppearance())
+        assertEquals(latest, GlassAppearanceJson.decode(storage.get(SettingsRepository.KEY_GLASS_APPEARANCE)))
+        assertEquals("0", storage.get(SettingsRepository.KEY_GLASS_TRANSPARENCY))
+        assertEquals(latest, SettingsRepository(storage, this).currentGlassAppearance())
+    }
+
+    /** 新记录损坏回退默认，且不得再次用旧值迁移。 */
+    @Test fun corruptGlassRecordFallsBackToDefaultWithoutReusingLegacy() = runTest {
+        val dao = MemoryPreferences()
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLASS_APPEARANCE, "{broken", 0L))
+        dao.put(PreferenceEntity(SettingsRepository.KEY_GLASS_TRANSPARENCY, "88", 0L))
+        val settings = SettingsRepository(dao, this)
+        assertEquals(GlassAppearance.DEFAULT, settings.currentGlassAppearance())
+    }
+
+    /** 关闭玻璃：旧键写 0，重新打开仓库后仍是关闭且清晰度保留。 */
+    @Test fun disabledGlassWritesZeroProjectionAndKeepsClarity() = runTest {
+        val dao = MemoryPreferences()
+        val settings = SettingsRepository(dao, this)
+        settings.saveGlassAppearance(GlassAppearance(enabled = false, clarityPercent = 73))
+
+        assertEquals("0", dao.entries[SettingsRepository.KEY_GLASS_TRANSPARENCY]?.value)
+        val reopened = SettingsRepository(dao, this).currentGlassAppearance()
+        assertFalse(reopened.enabled)
+        assertEquals(73, reopened.clarityPercent)
+    }
+
     @Test fun glassAppearanceFlowDoesNotFallBackToStaleSavedValueBeforeInvalidation() = runTest {
         val dao = AsyncInvalidationPreferences()
         val settings = SettingsRepository(dao)
-        settings.queueGlassAppearance(GlassAppearance(78), this)
+        settings.queueGlassAppearance(GlassAppearance(clarityPercent = 78), this)
         advanceTimeBy(500)
         assertEquals("落库后、失效通知前不能回退到旧库值", 78, settings.glassAppearance.first().transparencyPercent)
         dao.invalidate(SettingsRepository.KEY_GLASS_TRANSPARENCY)

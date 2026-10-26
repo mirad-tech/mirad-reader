@@ -80,6 +80,8 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
         val initialRoute = SettingsRoute.parse(intent.getStringExtra("category"))
         val initialIsEpub = intent.getBooleanExtra("isEpub", false)
         val transparency = intent.getIntExtra("transparency", 60)
+        // 新增：磨砂玻璃开关的预览开关（仅预览包），默认开启。
+        val glassEnabled = intent.getBooleanExtra("glassEnabled", true)
         val initialConfig = ReaderConfig.DEFAULT.copy(
             theme = intent.getStringExtra("theme") ?: ThemeKey.PAPER,
             pageMode = intent.getStringExtra("pageMode") ?: PageMode.SCROLL,
@@ -120,12 +122,14 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
             val savedConfig by dao.observe(SettingsRepository.KEY_GLOBAL).collectAsState(null)
             val savedAppearance by dao.observe(SettingsRepository.KEY_APP_APPEARANCE).collectAsState(null)
             val appearanceSaveFailed by repo.appAppearanceSaveFailed.collectAsState(false)
-            val glass by repo.glassAppearance.collectAsState(GlassAppearance(transparency))
+            val glass by repo.glassAppearance.collectAsState(GlassAppearance(enabled = glassEnabled, clarityPercent = transparency))
             var scene by remember { mutableStateOf(initialEntry) }
             var category by remember { mutableStateOf(initialRoute) }
             var navigationGeneration by remember { mutableIntStateOf(0) }
             var isEpub by remember { mutableStateOf(initialIsEpub) }
             var chrome by remember { mutableStateOf(initialChrome) }
+            // 仅预览：边缘质感开关，用于在同一进程内做"边缘临时禁用"的前后对照。
+            var edgeTexture by remember { mutableStateOf(intent.getBooleanExtra("edge", true)) }
             var dialog by remember { mutableStateOf(false) }
             val probe = remember {
                 ImmersionReaderProbe().apply {
@@ -180,6 +184,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                     LocalAppAppearanceSaveFailed provides appearanceSaveFailed,
                     LocalGlassAppearance provides glass,
                     LocalGlassForceFallback provides intent.getBooleanExtra("fallback", false),
+                    LocalGlassEdgeTexture provides edgeTexture,
                     LocalGlassAppearanceController provides glassController,
                     LocalSettingsCommit provides { if (unifiedAppearance) appearanceController.commitReadingConfig() else repo.flushGlobalConfig(scope) }
                 ) {
@@ -226,8 +231,11 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                                 "scroll" -> probe.view?.evaluateJavascript("window.scrollTo(0, ${command.getIntExtra("y", 360)});", null)
                                  "panel", "cover", "hide-cover", "chapter", "image", "animate", "stop-animation" ->
                                      if (hardwarePreview) probe.hardwareCommand?.invoke(command)
-                                 "transparency" -> {
-                                     repo.queueGlassAppearance(GlassAppearance(command.getIntExtra("percent", glass.transparencyPercent).coerceIn(0, 100)), scope)
+                                 "edge" -> {
+                                    edgeTexture = command.getBooleanExtra("enabled", true)
+                                }
+                                "transparency" -> {
+                                     repo.queueGlassAppearance(GlassAppearance(enabled = command.getBooleanExtra("enabled", glass.enabled), clarityPercent = command.getIntExtra("percent", glass.clarityPercent).coerceIn(0, 100)), scope)
                                      repo.flushGlassAppearance(scope)
                                  }
                                 "dump" -> {

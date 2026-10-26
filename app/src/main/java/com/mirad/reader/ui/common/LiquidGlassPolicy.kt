@@ -19,9 +19,21 @@ internal fun liquidBaseOpacity(percent: Int): Float {
     return .02f + .98f * remaining * remaining
 }
 
-internal fun liquidBlurDp(style: GlassStyle): Float = when (style) {
-    GlassStyle.Toolbar -> 10f
-    GlassStyle.Panel -> 14f
+/**
+ * GPU 路径的模糊半径。
+ *
+ * 与 Compose 路径共用同一方向与端点语义：清晰度 0 = 最朦胧，100 = 不模糊（调用方据此走无 effect 分支），
+ * 50 是改造前观感的校准点。工具栏与面板保留各自基值，不再是一组与用户设置无关的常量。
+ */
+internal fun liquidBlurDp(style: GlassStyle, clarityPercent: Int = 50): Float {
+    val base = when (style) {
+        GlassStyle.Toolbar -> 10f
+        GlassStyle.Panel -> 14f
+    }
+    val clarity = clarityPercent.coerceIn(0, 100)
+    if (clarity >= 100) return 0f
+    val scale = 1f + (50 - clarity) / 50f * 0.75f
+    return (base * scale).coerceIn(1f, 26f)
 }
 
 internal data class LiquidBackdropMetrics(val darkest: Int, val lightest: Int, val fingerprint: Long)

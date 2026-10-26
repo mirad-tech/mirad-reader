@@ -181,7 +181,8 @@ class ReaderGpuPreviewActivity : ComponentActivity() {
     private fun ProbeUi() {
         MiradTheme(darkTheme = dark) {
             CompositionLocalProvider(
-                LocalGlassAppearance provides GlassAppearance(percent),
+                // 探针保留历史百分比语义：0 关闭，其余值迁移为开启时的清晰度。
+                LocalGlassAppearance provides GlassAppearance.fromLegacyPercent(percent.toString()),
                 LocalContentColor provides MaterialTheme.colorScheme.onSurface
             ) {
                 GlassBackdropHost {

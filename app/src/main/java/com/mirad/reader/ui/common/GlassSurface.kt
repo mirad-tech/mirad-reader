@@ -35,8 +35,6 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.drawOutline
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -65,6 +63,7 @@ import kotlin.math.max
 /** Preview overrides only: neither value is persisted or exposed in the product. */
 val LocalGlassLegacy = staticCompositionLocalOf { false }
 val LocalGlassForceFallback = staticCompositionLocalOf { false }
+
 val LocalGlassBackdrop = staticCompositionLocalOf<GlassBackdropState?> { null }
 
 enum class GlassStyle { Toolbar, Panel }
@@ -666,6 +665,7 @@ fun Modifier.glassBackground(
     var glassSize by remember { mutableStateOf(IntSize.Zero) }
     var separateWindow by remember { mutableStateOf(false) }
     val enabled = source?.enabled == true && !legacy
+    val edgeTexture = LocalGlassEdgeTexture.current
     val percent = appearance.transparencyPercent
 
     // 局部背景特征分析：最多 5 次/秒（200ms 节流），仅在采样位图或组件几何实际变化后执行并缓存
@@ -713,13 +713,15 @@ fun Modifier.glassBackground(
     }
 
     val canBlur = enabled && view.isHardwareAccelerated && percent > 0
-    val rawParams = remember(percent, style, dark, canBlur, cachedMetrics) {
+    val clarity = appearance.clarityPercent
+    val rawParams = remember(percent, clarity, style, dark, canBlur, cachedMetrics) {
         computeGlassParams(
             transparencyPercent = percent,
             style = style,
             isDark = dark,
             canBlur = canBlur,
-            metrics = cachedMetrics
+            metrics = cachedMetrics,
+            clarityPercent = clarity
         )
     }
 
@@ -918,18 +920,16 @@ fun Modifier.glassBackground(
 
             drawContent()
 
-            // 边缘描边
-            if (!legacy) {
-                drawOutline(
-                    shape.createOutline(size, layoutDirection, this),
-                    brush = Brush.linearGradient(
-                        listOf(
-                            Color.White.copy(alpha = rawParams.borderAlpha),
-                            color.copy(alpha = .12f),
-                            Color.White.copy(alpha = rawParams.borderAlpha * 0.45f)
-                        )
-                    ),
-                    style = Stroke(1.dp.toPx())
+            // 边缘质感：方向性高光 + 内侧衰减带（见 GlassEdgeTexture），
+            // 与 GPU 路径共用同一份实现，两条路径的边界观感保持一致。
+            // 顶部柔光由上面的 highlightAlpha 负责，这里不再重复叠加。
+            if (!legacy && edgeTexture) {
+                drawGlassEdgeTexture(
+                    outline = shape.createOutline(size, layoutDirection, this),
+                    surface = color,
+                    clarity = clarity,
+                    tintAlpha = 1f,
+                    topSheen = false
                 )
             }
         }

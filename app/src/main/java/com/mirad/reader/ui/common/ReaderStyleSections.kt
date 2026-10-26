@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -84,6 +85,31 @@ private object BackgroundThumbs {
             }.getOrNull()
         }
         bitmap?.let { cache.put(assetName, it) }
+        return bitmap
+    }
+
+    /**
+     * 预览用的背景图：内置素材走 assets，本机图片走文件路径（选择时已复制进 backgroundsDir）。
+     * 结果进 LruCache，避免每次重组或滑动都重新解码。
+     */
+    suspend fun loadUri(context: Context, uri: String?): ImageBitmap? {
+        if (uri.isNullOrBlank()) return null
+        BuiltinBackgrounds.fromUri(uri)?.let { return load(context, it.assetName) }
+        cache.get("file:$uri")?.let { return it }
+        val bitmap = withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(uri, bounds)
+                if (bounds.outWidth <= 0) return@runCatching null
+                var sample = 1
+                while (bounds.outWidth / sample > 320) sample *= 2
+                BitmapFactory.decodeFile(
+                    uri,
+                    BitmapFactory.Options().apply { inSampleSize = sample }
+                )?.asImageBitmap()
+            }.getOrNull()
+        }
+        bitmap?.let { cache.put("file:$uri", it) }
         return bitmap
     }
 }
@@ -245,38 +271,14 @@ fun BackgroundSection(
     }
     Column(modifier = modifier.fillMaxWidth()) {
         SettingCard(title = if (sectionDark) "夜间配色" else "日间配色") {
+            // 1) 先选要编辑的样式组
             SegmentedRow(
                 options = listOf(false to "日间样式", true to "夜间样式"),
                 selected = sectionDark,
                 onSelect = { dark -> sectionDark = dark }
             )
-            // 目标组预览：底色块 + 文字色示例条（不带示例文字），所见即当前编辑组的实际观感。
-            val previewPalette = ThemePaletteResolver.resolve(
-                config.copy(
-                    theme = style.theme,
-                    backgroundType = style.backgroundType,
-                    backgroundColor = style.backgroundColor,
-                    backgroundImageUri = style.backgroundImageUri
-                ), sectionDark
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .height(40.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(Color(previewPalette.background))
-            ) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(horizontal = 12.dp)
-                        .width(72.dp)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(Color(previewPalette.text))
-                )
-            }
+            // 2) 目标组预览：与阅读画面同构（图片 + 不透明度 + 衬底色 + 文字色）
+            BackgroundPreview(style = style, dark = sectionDark)
             if (sectionDark != effectiveDark) {
                 Text(
                     text = if (sectionDark) "切换到夜间模式后生效" else "切换到日间模式后生效",
@@ -284,6 +286,170 @@ fun BackgroundSection(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            CardDivider()
+            // 3) 背景来源二选一；下方只展示当前来源的设置，避免两个分支同时表现成"正在生效"
+            SegmentedRow(
+                options = listOf(BackgroundType.COLOR to "纯色背景", BackgroundType.IMAGE to "图片背景"),
+                selected = style.backgroundType,
+                onSelect = { key -> change { it.copy(backgroundType = key) } }
+            )
+            if (style.backgroundType == BackgroundType.IMAGE) {
+                ImageBackgroundControls(style, sectionDark, change, onPickImage)
+            } else {
+                ColorBackgroundControls(style, sectionDark, change)
+            }
+        }
+    }
+}
+
+/**
+ * 目标样式组的真实预览：底色 + 图片（按不透明度）+ 衬底蒙层 + 文字色。
+ *
+ * 旧实现只画一条纯色色块，选了图片背景后预览仍是纯色，用户无法判断当前到底是什么效果。
+ * 这里与 `ReaderCss` 的合成方式保持一致：图片铺满，衬底色以 `1 - 不透明度` 覆盖其上。
+ */
+@Composable
+private fun BackgroundPreview(style: ReadingStyle, dark: Boolean) {
+    val context = LocalContext.current
+    val palette = ThemePaletteResolver.resolve(
+        ReaderConfig.DEFAULT.copy(
+            theme = style.theme,
+            backgroundType = style.backgroundType,
+            backgroundColor = style.backgroundColor,
+            backgroundImageUri = style.backgroundImageUri,
+            backgroundImageAlpha = style.backgroundImageAlpha
+        ),
+        dark
+    )
+    var image by remember(style.backgroundImageUri) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(style.backgroundImageUri) {
+        image = BackgroundThumbs.loadUri(context, style.backgroundImageUri)
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .height(72.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(Color(palette.background))
+    ) {
+        val bitmap = image
+        if (style.backgroundType == BackgroundType.IMAGE && bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "当前背景预览",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop
+            )
+            // 与 ReaderCss 的 #mirad-tint 同口径：不透明度越低，衬底色盖得越多。
+            val overlay = 1f - style.backgroundImageAlpha.coerceIn(0f, 1f)
+            if (overlay > 0f) {
+                Box(Modifier.fillMaxSize().background(Color(palette.background).copy(alpha = overlay)))
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .padding(horizontal = 12.dp)
+                .width(72.dp)
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color(palette.text))
+        )
+    }
+}
+
+/** 纯色背景分支：配色预设 + 自定义颜色。选中即表示"当前背景是纯色"。 */
+@Composable
+private fun ColorBackgroundControls(
+    style: ReadingStyle,
+    sectionDark: Boolean,
+    change: ((ReaderConfig) -> ReaderConfig) -> Unit
+) {
+    ChoiceRow(
+        label = "配色预设",
+        options = readingThemeChoices(sectionDark),
+        selected = style.theme,
+        onSelect = { key ->
+            change { it.copy(theme = key, backgroundType = BackgroundType.COLOR) }
+        },
+        columns = 3
+    )
+    if (style.theme == ThemeKey.CUSTOM) {
+        ColorDotRow(
+            colors = readingCustomColors(sectionDark, style.backgroundColor),
+            selected = style.backgroundColor,
+            onSelect = { color ->
+                change { it.copy(backgroundColor = color, backgroundType = BackgroundType.COLOR) }
+            }
+        )
+    }
+}
+
+/** 图片背景分支：内置/本机图片、不透明度；衬底配色只在图片未铺满时按需展开。 */
+@Composable
+private fun ImageBackgroundControls(
+    style: ReadingStyle,
+    sectionDark: Boolean,
+    change: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    onPickImage: (dark: Boolean) -> Unit
+) {
+    Text(
+        text = "内置背景",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(readingBackgroundChoices(sectionDark), key = { it.key }) { preset ->
+            BackgroundPresetTile(
+                preset = preset,
+                selected = style.backgroundImageUri == preset.uri,
+                onClick = {
+                    change {
+                        it.copy(
+                            backgroundType = BackgroundType.IMAGE,
+                            backgroundImageUri = preset.uri
+                        )
+                    }
+                }
+            )
+        }
+    }
+    MiradOutlinedButton(
+        onClick = { onPickImage(sectionDark) },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text("选择本机图片作为背景")
+    }
+    val current = style.backgroundImageUri
+    if (!current.isNullOrBlank() && BuiltinBackgrounds.fromUri(current) == null) {
+        Text(
+            text = "当前：本机图片",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    LabeledSlider(
+        label = "背景不透明度",
+        value = style.backgroundImageAlpha,
+        valueText = "${(style.backgroundImageAlpha * 100).toInt()}%",
+        range = 0.1f..1f,
+        onChange = { value -> change { it.copy(backgroundImageAlpha = value) } }
+    )
+    if (style.backgroundImageAlpha < 1f) {
+        var expanded by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+        MiradTextButton(
+            onClick = { expanded = !expanded },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(if (expanded) "收起衬底配色" else "衬底配色")
+        }
+        if (expanded) {
+            Text(
+                text = "图片不透明度低于 100% 时，衬底色与文字色按这里的选择；不会切回纯色背景。",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             ChoiceRow(
                 label = "",
                 options = readingThemeChoices(sectionDark),
@@ -291,7 +457,6 @@ fun BackgroundSection(
                 onSelect = { key -> change { it.copy(theme = key) } },
                 columns = 3
             )
-
             if (style.theme == ThemeKey.CUSTOM) {
                 ColorDotRow(
                     colors = readingCustomColors(sectionDark, style.backgroundColor),
@@ -300,58 +465,12 @@ fun BackgroundSection(
                 )
             }
         }
-        SettingCard(title = "背景素材") {
-            SegmentedRow(
-                options = listOf(BackgroundType.COLOR to "纯色背景", BackgroundType.IMAGE to "图片背景"),
-                selected = style.backgroundType,
-                onSelect = { key -> change { it.copy(backgroundType = key) } }
-            )
-
-            if (style.backgroundType == BackgroundType.IMAGE) {
-                Text(
-                    text = "内置背景",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(readingBackgroundChoices(sectionDark), key = { it.key }) { preset ->
-                        BackgroundPresetTile(
-                            preset = preset,
-                            selected = style.backgroundImageUri == preset.uri,
-                            onClick = {
-                                change {
-                                    it.copy(
-                                        backgroundType = BackgroundType.IMAGE,
-                                        backgroundImageUri = preset.uri
-                                    )
-                                }
-                            }
-                        )
-                    }
-                }
-                MiradOutlinedButton(
-                    onClick = { onPickImage(sectionDark) },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("选择本机图片作为背景")
-                }
-                val current = style.backgroundImageUri
-                if (!current.isNullOrBlank() && BuiltinBackgrounds.fromUri(current) == null) {
-                    Text(
-                        text = "当前：本机图片",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                LabeledSlider(
-                    label = "背景不透明度",
-                    value = style.backgroundImageAlpha,
-                    valueText = "${(style.backgroundImageAlpha * 100).toInt()}%",
-                    range = 0.1f..1f,
-                    onChange = { value -> change { it.copy(backgroundImageAlpha = value) } }
-                )
-            }
-        }
+    } else {
+        Text(
+            text = "不透明度 100% 时底色不可见，衬底配色已隐藏。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

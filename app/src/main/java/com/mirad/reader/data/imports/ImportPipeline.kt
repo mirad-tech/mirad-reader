@@ -19,6 +19,9 @@ import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.repo.BookRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -74,8 +77,15 @@ class ImportPipeline(
     private suspend fun runBatch(
         batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean
     ): ImportSummary = mutex.withLock {
-        for (index in sources.indices) importOne(sources[index], items[index].id, force)
-        batches.complete(batch)
+        var summary: ImportSummary? = null
+        // 收敛逻辑见 BatchCompletionGuard：取消/异常也要把批次收成终态，否则 running 永远为 true。
+        BatchCompletionGuard(
+            abort = { reason -> batches.abort(batch, reason) },
+            complete = { summary = batches.complete(batch) }
+        ).run {
+            for (index in sources.indices) importOne(sources[index], items[index].id, force)
+        }
+        checkNotNull(summary)
     }
 
     // ------------------------------------------------------------------ 单个文件
@@ -160,13 +170,17 @@ class ImportPipeline(
                 it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId)
             }
         } catch (t: Throwable) {
-            withContext(Dispatchers.IO) {
+            // 清理必须包 NonCancellable：协程已取消时，裸的 withContext 会立刻抛
+            // CancellationException，文件/DB 补偿一步都不会执行。
+            withContext(NonCancellable + Dispatchers.IO) {
                 insertedBookId?.let { id -> books.getBook(id)?.let { books.deleteBook(it) } }
                 // 封面写在 coversDir（不在书籍目录下），补偿必须显式带上，否则孤儿 jpg 会累积。
                 if (insertedBookId == null) {
                     paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
                 }
             }
+            // 取消不是"导入失败"：往上抛，由 runBatch 统一把批次收敛成"已取消"。
+            if (t is kotlinx.coroutines.CancellationException) throw t
             updateItem(itemId) {
                 it.copy(
                     stage = ImportStage.FAILED,
@@ -413,6 +427,10 @@ class ImportPipeline(
         const val EPUB_EXT = "epub"
         const val TXT_EXT = "txt"
         const val MAX_TXT_BYTES = 80L * 1024 * 1024
+
+        /** 取消/异常中断时写入条目的原因，用户能在导入结果里看到。 */
+        const val CANCELLED_MESSAGE = "导入已取消"
+        const val INTERRUPTED_MESSAGE = "导入未完成"
 
         internal fun detectExtension(name: String, isZip: Boolean): String {
             if (isZip) return EPUB_EXT

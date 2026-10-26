@@ -59,6 +59,7 @@ class ReaderResourceProvider(
     @Volatile
     var fontAssetName: String? = null
 
+    @Synchronized
     fun bind(book: BookEntity, chapters: List<ChapterEntity>) {
         this.book = book
         this.chapters = chapters
@@ -76,18 +77,30 @@ class ReaderResourceProvider(
     /** 当前主题样式表（阅读中改设置时注入到已打开的页面）。 */
     fun currentThemeCss(): String = themeCss
 
+    /**
+     * 与 [bind] / [zipReader] 共用同一把锁：否则 `zipReader()` 先读到非空 `book`、
+     * 再等锁时，`release()` 已经把书清空，结果会给一本已关闭的书留下一个打开的 zip 句柄。
+     */
+    @Synchronized
     fun release() {
         releaseZip()
         book = null
         chapters = emptyList()
     }
 
+    /**
+     * Chromium 会在多个线程并发拦截资源请求，而这里只有一份共享的 `ZipFile`。
+     * "检查—释放—打开—赋值" 不加锁时，一个线程可能关掉另一个线程正在读的句柄
+     * （表现为章节/图片偶发空白），或重复打开造成句柄泄漏。
+     */
+    @Synchronized
     private fun releaseZip() {
         runCatching { zip?.close() }
         zip = null
         zipPath = null
     }
 
+    @Synchronized
     private fun zipReader(): ZipEntryReader? {
         val current = book ?: return null
         if (current.format != BookFormat.EPUB) return null
@@ -103,6 +116,32 @@ class ReaderResourceProvider(
     companion object {
         const val HOST = "mirad.local"
         const val ORIGIN = "https://$HOST"
+
+        /**
+         * 阅读文档的内容安全策略。
+         *
+         * EPUB 正文是不可信内容，`wrapBody()` 只做包裹、不做消毒，因此首次整章加载时
+         * `<script>` / `<iframe>` / `on*` 属性都会以 `mirad.local` 同源身份执行，能直接调用
+         * `MiradBridge` 的回调伪造进度与标注。这里用 CSP 在渲染层兜底，与是否消毒无关：
+         *
+         * - `script-src` 只放行虚拟源里的 reader.js（EPUB 内联脚本无源可用）；
+         * - `connect-src` 必须保留本机虚拟源：滚动模式的补章走 `fetch(fragmentUrl)`；
+         * - `style-src` 保留 `unsafe-inline`：内置样式、EPUB 自带 `<style>` 与 style 属性都靠它；
+         * - 图片/字体允许 `data:`，部分 EPUB 用 data URI 内嵌图片与字体。
+         */
+        internal val CONTENT_SECURITY_POLICY = listOf(
+            "default-src 'none'",
+            "script-src $ORIGIN",
+            "style-src 'unsafe-inline' $ORIGIN",
+            "img-src $ORIGIN data:",
+            "font-src $ORIGIN data:",
+            "media-src $ORIGIN data:",
+            "connect-src $ORIGIN",
+            "base-uri 'self'",
+            "form-action 'none'",
+            "frame-src 'none'",
+            "object-src 'none'"
+        ).joinToString("; ")
 
         fun chapterUrl(bookId: Long, chapterIndex: Int): String = "$ORIGIN/book/$bookId/chapter/$chapterIndex"
         fun assetUrl(bookId: Long, zipPath: String): String {
@@ -271,6 +310,12 @@ class ReaderResourceProvider(
     }
     private fun injectHead(html: String, baseHref: String?): String {
         val extra = StringBuilder(512)
+        // 与响应头同源的双保险：不同 WebView 版本对 shouldInterceptRequest 响应头的处理不完全一致，
+        // 文档内的 meta 版本在任何版本都生效。策略只有一份常量，两条通道不会漂移。
+        // （meta 形式不支持 frame-ancestors / report-uri / sandbox，这里都没用到。）
+        extra.append("<meta http-equiv=\"Content-Security-Policy\" content=\"")
+            .append(CONTENT_SECURITY_POLICY)
+            .append("\">")
         extra.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no\">")
         if (!baseHref.isNullOrBlank()) {
             extra.append("<base href=\"").append(baseHref).append("\">")
@@ -316,7 +361,11 @@ class ReaderResourceProvider(
 
     private fun response(mime: String, bytes: ByteArray): WebResourceResponse =
         WebResourceResponse(mime, "UTF-8", ByteArrayInputStream(bytes)).apply {
-            responseHeaders = mapOf("Cache-Control" to "no-store")
+            responseHeaders = mapOf(
+                "Cache-Control" to "no-store",
+                // 只挂在文档响应上：reader.js/CSS/图片不需要，挂上也不会错，但这里保持最小面。
+                "Content-Security-Policy" to CONTENT_SECURITY_POLICY
+            )
         }
 
     private fun notFound(): WebResourceResponse =

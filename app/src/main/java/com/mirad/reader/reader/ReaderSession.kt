@@ -140,6 +140,15 @@ class ReaderSession(
     private var sessionStartedAt: Long = 0L
     private var sessionStartAbsolute: Long = 0L
 
+    /**
+     * [prepare] 是否成功走完。
+     *
+     * 未完成时会话没有可信的阅读位置：`chapters` 可能已加载，而 `_state.chapterIndex` 还是
+     * 初始值 0。此时任何写库都会把用户真实进度覆盖成"第 0 章开头"，所以 [saveProgressNow]
+     * 必须挡住这种半初始化状态（打开失败后界面会调用 [release] 丢弃会话）。
+     */
+    private var prepared = false
+
     /** 状态栏 / 手势条预留高度（dp），由界面按 WindowInsets 写入。 */
     private var insetTopDp = 0
     private var insetBottomDp = 0
@@ -286,6 +295,7 @@ class ReaderSession(
             )
         }
         startSession()
+        prepared = true
     }
 
     /**
@@ -962,7 +972,8 @@ class ReaderSession(
 
     fun saveProgressNow() {
         val current = _state.value
-        if (chapters.isEmpty()) return
+        // 半初始化的会话（prepare 失败后被丢弃）没有可信位置，写库会覆盖用户进度。
+        if (!prepared || chapters.isEmpty()) return
         // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢；
         // 互斥串行化保证快速连续跨章时旧快照不会后写覆盖新位置。
         container.appScope.launch {

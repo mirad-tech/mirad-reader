@@ -111,6 +111,7 @@ import com.mirad.reader.core.model.ThemePalette
 import com.mirad.reader.core.model.ThemePaletteResolver
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.repo.SearchHit
+import com.mirad.reader.reader.AutoReadState
 import com.mirad.reader.reader.ReaderSession
 import com.mirad.reader.reader.ReaderWebView
 import com.mirad.reader.reader.SelectionAction
@@ -145,8 +146,15 @@ fun ReaderScreen(
         val appearance = container.settings.currentAppAppearance()
         val config = appearance.resolveReaderConfig(container.settings.currentGlobal(), latestSystemDark)
         val created = ReaderSession(container, loaded, scope)
-        runCatching { created.prepare(config, appearance.effectiveDark(latestSystemDark)) }
-            .onFailure { error = it.message ?: "打开失败" }
+        // prepare 失败也要释放：会话在 init 里注册了全局音量键 handler，不释放会让
+        // ReaderKeys.pager 指向一个已经废弃的会话，同时 resources/zip 句柄一直挂着。
+        // release() 不会写坏进度：ReaderSession 用 prepared 标记挡住了半初始化状态的写库。
+        val prepared = runCatching { created.prepare(config, appearance.effectiveDark(latestSystemDark)) }
+        if (prepared.isFailure) {
+            created.release()
+            error = prepared.exceptionOrNull()?.message ?: "打开失败"
+            return@LaunchedEffect
+        }
         book = loaded
         session = created
     }
@@ -763,14 +771,12 @@ private fun ReaderContent(
                 onSettings = { showSettings = true },
                 onNotes = { showNotes = true },
                 onSearch = { showSearch = true },
-                onTts = {
-                    ReaderTtsActions.onToolbarClick(
-                        isPlaying = ttsState.playing,
-                        onPause = { tts.pause() },
-                        onOpenPanel = { showTts = true }
-                    )
+                onAutoRead = {
+                    // 打开面板即暂停：调速时保持暂停，继续时再用新速度启动。
+                    session.pauseAutoRead()
+                    showAutoRead = true
                 },
-                speaking = ttsState.playing,
+                autoReading = autoReadState == AutoReadState.RUNNING,
                 onSliderChange = {
                     if (ttsState.active) tts.stop()
                     // 拖动进度条是"直接跳转"，不属于翻页：先清掉可能残留的覆盖位图，

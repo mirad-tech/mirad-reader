@@ -19,10 +19,12 @@
 
 ## 审查记录
 
+- [2026-10-26 全仓审查报告（1.1.1）](reviews/full-repo-review-2026-10-26.md)
 - [2026-10-25 全仓审计报告](reviews/full-repo-audit-2026-10-25.md)
 
 ## 实施与验证报告
 
+- [2026-10-26 阅读外观与交互修复报告](reports/reading-appearance-fix-2026-10-26.md)
 - [设置重构计划 v3 完成报告](reports/glm5.3-settings-refactor-plan3-report-2026-10-25.md)
 - [2026-10-25 审查修复报告](reports/glm5.3-review-fix-report-2026-10-25.md)
 - [现代阅读器增强交付记录](reports/modern-reader-enhancements-report.md)

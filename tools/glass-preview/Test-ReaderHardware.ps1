@@ -140,7 +140,12 @@ try {
     Check ((Metric $initial 'cpuDisplayCaptures') -eq '0') 'GPU display has zero CPU bitmap captures'
     if($Suite -ne 'fallback') {
     Check ((Metric $initial 'hardware') -eq 'true' -and (Metric $initial 'gpuActive') -eq 'true') 'the reader uses an active hardware content node'
-    Check ([double](Metric $initial 'baseOpacity') -le .04 -and [double](Metric $initial 'blurDp') -gt 0) 'the first toolbar frame leaves the opaque fallback and uses the glass material'
+    # 语义已改为"清晰度"：100% 是"最清晰"，按计划必须走显式的无 blur 分支（blur=0、薄底、不是 fallback）。
+    Check ([double](Metric $initial 'baseOpacity') -le .04 -and [double](Metric $initial 'blurDp') -eq 0) 'at 100% clarity the first toolbar frame uses the explicit no-blur branch with a thin tint'
+    $midLaunch=Device @('shell','am','start','-S','-W','-n',$component,'--es','scene','appearance','--es','entry','reader','--ez','hardware','true','--es','mode','DAY','--ez','chrome','true','--ei','transparency','50','--ez','fullScreen','false','--ez','showClock','false','--ez','fallback','false')
+    Start-Sleep -Milliseconds 900
+    $mid=Capture 'clarity-50'
+    Check ([double](Metric $mid 'blurDp') -gt 0) 'mid clarity keeps a non-zero blur radius (not a renamed opacity slider)'
     Check ([int](Metric $initial 'analysisSamples') -gt 0 -and (Metric $initial 'analysisFailures') -eq '0') 'background analysis succeeds'
     $dims=(Metric $initial 'analysisSize') -split 'x'
     Check ([int]$dims[0] -le 64 -and [int]$dims[1] -le 64 -and (Metric $initial 'maxAnalysisInFlight') -eq '1') 'analysis is bounded to 64 pixels and one task'
@@ -225,16 +230,25 @@ try {
         Command 'navigate' @('--es','scene','reader-settings','--es','category','THEME')
         foreach($mode in @('DAY','NIGHT')) {
             Command 'mode' @('--es','mode',$mode)
-            foreach($percent in @(0,60,100)) {
-                Command 'transparency' @('--ei','percent',"$percent")
-                $state=Capture "$mode-$percent"
-                if($percent -eq 0) {
-                    Check ((Metric $state 'gpuActive') -eq 'false') '0 percent disables GPU material work'
-                    $zeroAgain=Dump
-                    Check ((Metric $state 'analysisSamples') -eq (Metric $zeroAgain 'analysisSamples')) '0 percent stops background analysis'
+            # 新语义：清晰度 0/25/50/75/100 五档；"关闭"用真实开关，不再用 0% 冒充。
+            foreach($clarity in @(0,25,50,75,100)) {
+                Command 'transparency' @('--ez','enabled','true','--ei','percent',"$clarity")
+                $state=Capture "$mode-c$clarity"
+                if($clarity -eq 100) {
+                    Check ([double](Metric $state 'blurDp') -eq 0) "$mode 100% clarity takes the explicit no-blur branch"
+                } else {
+                    Check ([double](Metric $state 'blurDp') -gt 0) "$mode $clarity% clarity keeps a non-zero blur radius"
                 }
-                if($percent -eq 100) {Check ([double](Metric $state 'baseOpacity') -le .04) "$mode high transparency base tint is at most four percent"}
+                if($clarity -eq 0) {
+                    Check ((Metric $state 'gpuActive') -eq 'true') "$mode 0% clarity still runs the material (it is not 'off')"
+                }
             }
+            Command 'transparency' @('--ez','enabled','false','--ei','percent','60')
+            $off=Capture "$mode-glass-off"
+            Check ((Metric $off 'gpuActive') -eq 'false') "$mode glass switch off disables GPU material work"
+            $offAgain=Dump
+            Check ((Metric $off 'analysisSamples') -eq (Metric $offAgain 'analysisSamples')) "$mode glass switch off stops background analysis"
+            Command 'transparency' @('--ez','enabled','true','--ei','percent','60')
             $background=if($mode -eq 'DAY'){'dawn'}else{'night'}
             Command 'config' @('--es','background',$background)
             $image=Capture "$mode-image"

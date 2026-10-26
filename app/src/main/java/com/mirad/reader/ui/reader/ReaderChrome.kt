@@ -71,7 +71,8 @@ internal fun readerHorizontalInsetDp(inset: Dp): Int =
 
 /**
  * 阅读顶栏：只保留「返回 / 章节信息 / 书签 / 更多」。
- * 朗读、笔记、搜索、目录、设置都收到下方的操作条里，避免顶栏挤 5 个图标。
+ * 笔记、搜索、目录、设置与自动阅读都收到下方的操作条里，避免顶栏挤 5 个图标；
+ * 朗读在「更多」菜单里，不占底栏位置。
  */
 @Composable
 fun ReaderTopBar(
@@ -98,26 +99,35 @@ fun ReaderTopBar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                // 返回 / 文字列 / 右侧操作组之间留 8dp：旧版三组贴在一起，长标题时看着"挤成一团"。
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 IconButton(onClick = onBack) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "返回")
                 }
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    // 标题与章节信息之间留 2dp，行高本身不再额外撑开。
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = subtitle,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    // 空副标题不占一行：旧版用空字符串的 Text 占位，多出一行高度还拉大了视觉间距。
+                    if (subtitle.isNotBlank()) {
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
                 IconButton(onClick = onBookmark) {
                     Icon(
@@ -165,8 +175,8 @@ fun ReaderBottomBar(
     onSettings: () -> Unit,
     onNotes: () -> Unit,
     onSearch: () -> Unit,
-    onTts: () -> Unit,
-    speaking: Boolean,
+    onAutoRead: () -> Unit,
+    autoReading: Boolean,
     onSliderChange: (Float) -> Unit
 ) {
     val legacy = LocalGlassLegacy.current
@@ -202,11 +212,13 @@ fun ReaderBottomBar(
             ) {
                 BarAction("目录", Icons.Default.List, onToc)
                 BarAction("笔记", Icons.Default.Edit, onNotes)
+                // 底栏给"自动阅读"而不是朗读：它是阅读中最常用的位置控制，
+                // 朗读仍在右上「更多」菜单里（朗读本章 / 暂停朗读），功能不丢。
                 BarAction(
-                    text = if (speaking) "暂停" else "朗读",
-                    icon = if (speaking) Icons.Default.Clear else Icons.Default.PlayArrow,
-                    onClick = onTts,
-                    active = speaking
+                    text = "自动阅读",
+                    icon = Icons.Default.PlayArrow,
+                    onClick = onAutoRead,
+                    active = autoReading
                 )
                 BarAction("搜索", Icons.Default.Search, onSearch)
                 BarAction("设置", Icons.Default.Settings, onSettings)

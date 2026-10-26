@@ -60,4 +60,48 @@ class ImportBatchQueueTest {
         val queue = ImportBatchQueue()
         queue.complete(queue.enqueue(listOf(ImportItem("a", "等待中的书"))))
     }
+
+    /**
+     * 取消/异常路径必须能把批次收敛掉。
+     *
+     * 旧实现直接调用 complete()，未终态条目会触发 check 抛异常，批次永远停在 running=true，
+     * 导入浮层卡在"导入中"。
+     */
+    @Test fun abortClosesBatchLeftUnfinishedByCancellation() {
+        val queue = ImportBatchQueue()
+        val batch = queue.enqueue(listOf(ImportItem("a", "已入库的书"), ImportItem("b", "拷到一半的书")))
+        queue.update("a") { it.copy(stage = ImportStage.DONE) }
+        queue.update("b") { it.copy(stage = ImportStage.COPYING, progress = 0.4f) }
+
+        queue.abort(batch, ImportPipeline.CANCELLED_MESSAGE)
+        val summary = queue.complete(batch)
+
+        assertEquals(1, summary.success)
+        assertEquals(1, summary.failed)
+        assertEquals(1, summary.messages.size)
+        assertTrue(summary.messages.single().contains(ImportPipeline.CANCELLED_MESSAGE))
+        assertFalse("取消后 running 必须复位", queue.state.value.running)
+        assertTrue("批次条目必须全部出队", queue.state.value.items.isEmpty())
+    }
+
+    /** abort 不得覆盖已有失败原因，也不得把其他批次的条目算进来。 */
+    @Test fun abortKeepsExistingFailureMessageAndOtherBatches() {
+        val queue = ImportBatchQueue()
+        val first = queue.enqueue(listOf(ImportItem("f", "坏文件")))
+        val second = queue.enqueue(listOf(ImportItem("g", "仍在排队")))
+        queue.update("f") { it.copy(stage = ImportStage.FAILED, message = "文件已截断") }
+
+        queue.abort(first, ImportPipeline.CANCELLED_MESSAGE)
+        val summary = queue.complete(first)
+
+        assertEquals(listOf("坏文件：文件已截断"), summary.messages)
+        assertTrue(queue.state.value.running)
+        assertEquals(listOf("g"), queue.state.value.items.map { it.id })
+        assertEquals(ImportStage.PENDING, queue.state.value.items.single().stage)
+        // abort 只负责把条目收成终态；running 与出队由紧随其后的 complete 收敛（生产代码成对调用）。
+        queue.abort(second, ImportPipeline.INTERRUPTED_MESSAGE)
+        queue.complete(second)
+        assertFalse(queue.state.value.running)
+        assertTrue(queue.state.value.items.isEmpty())
+    }
 }

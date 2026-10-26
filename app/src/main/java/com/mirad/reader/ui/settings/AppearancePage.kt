@@ -34,6 +34,7 @@ import com.mirad.reader.ui.common.LocalGlassAppearanceController
 import com.mirad.reader.ui.common.LocalGlassSaveFailed
 import com.mirad.reader.ui.common.MiradTextButton
 import com.mirad.reader.ui.common.SettingCard
+import com.mirad.reader.ui.common.SettingSwitchRow
 
 /** 「界面外观」应用级设置页：日夜模式与玻璃质感。 */
 @Composable
@@ -57,8 +58,9 @@ fun AppearanceSettings() {
     val appSaveFailed = LocalAppAppearanceSaveFailed.current
     val appController = LocalAppAppearanceController.current
     val saveFailed = appSaveFailed || LocalGlassSaveFailed.current || controller.saveFailed
-    var previewPercent by remember(appearance.transparencyPercent) {
-        mutableFloatStateOf(appearance.transparencyPercent.toFloat())
+    // 本地拖拽值：拖动中只改这里，松手才提交，避免每帧写库。
+    var previewClarity by remember(appearance.clarityPercent) {
+        mutableFloatStateOf(appearance.clarityPercent.toFloat())
     }
 
     DisposableEffect(Unit) {
@@ -113,19 +115,44 @@ fun AppearanceSettings() {
             )
         }
 
+        SettingSwitchRow(
+            label = "磨砂玻璃",
+            subtitle = if (appearance.enabled) {
+                "关闭后改用不透明表面，停止模糊、折射与背景分析"
+            } else {
+                "已关闭；清晰度会保留，重新开启时恢复"
+            },
+            checked = appearance.enabled,
+            onCheckedChange = { enabled ->
+                controller.update(GlassAppearance(enabled = enabled, clarityPercent = appearance.clarityPercent))
+                controller.commit()
+            }
+        )
+
         LabeledSlider(
-            label = "玻璃透明度",
-            value = previewPercent,
-            valueText = "${previewPercent.toInt()}%",
+            label = "清晰度",
+            value = previewClarity,
+            valueText = if (appearance.enabled) {
+                "${previewClarity.toInt()}%"
+            } else {
+                "${previewClarity.toInt()}%（已关闭）"
+            },
             range = 0f..100f,
             steps = 99,
+            enabled = appearance.enabled && !isSimplified,
             onChange = { value ->
-                previewPercent = value
-                controller.update(GlassAppearance(value.toInt()))
+                previewClarity = value
+                controller.update(GlassAppearance(enabled = true, clarityPercent = value.toInt()))
             },
             onCommit = {
                 controller.commit()
             }
+        )
+        Text(
+            text = "0% 最朦胧，100% 最清晰；两端都不等于关闭玻璃。标题与正文始终清晰。",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp)
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -137,7 +164,7 @@ fun AppearanceSettings() {
             MiradTextButton(
                 onClick = {
                     controller.reset()
-                    previewPercent = GlassAppearance.DEFAULT_PERCENT.toFloat()
+                    previewClarity = GlassAppearance.DEFAULT_CLARITY.toFloat()
                 }
             ) {
                 Text("恢复默认")
