@@ -68,7 +68,7 @@ COVER 在 API 29+ 通过 RenderNode、HardwareRenderer 和 ImageReader 生成独
 
 120Hz 是设备报告的刷新率，FrameMetrics 回调数不是持续渲染帧率证明。这份记录确认的是当时探针的背景同步与硬件路径，不能替代最终集成场景中的多个弹层、IME、COVER、前景保护和生命周期验收；也不能据此宣称持续 120fps、零掉帧或已经通过 Perfetto。
 
-证据：[原始目标机探针](../build/verification/reader-gpu-integration-20261024/target-gpu-probe.json)、[带用户反馈的摘要](../build/verification/reader-gpu-integration-20261024/target-probe-summary.json)。这些文件位于本机忽略目录，不随源码自动分发。
+证据：原始目标机探针（`build/verification/reader-gpu-integration-20261024/target-gpu-probe.json`）、带用户反馈的摘要（`build/verification/reader-gpu-integration-20261024/target-probe-summary.json`）。这些文件位于本机忽略目录，不随源码自动分发。
 
 原生套件分批验证固定快照，APK 哈希保存在各自的 `summary.json` 中。末次焦点滚动补丁只完成编译和单测，没有将较早原生结果冒充为该补丁的最终设备验收：
 

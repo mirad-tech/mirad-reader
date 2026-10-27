@@ -29,11 +29,11 @@
 
 ## 2 最新证据与五项问题映射
 
-当前审查结论见 [第三轮独立复验记录](../../build/verification/accept-r2-1.0.14-20261023-085747/review-summary.json)。证据文件位于 Git 忽略目录，缺失时应根据场景重建最小复现，不编造旧输出。
+当前审查结论见 第三轮独立复验记录（`build/verification/accept-r2-1.0.14-20261023-085747/review-summary.json`）。证据文件位于 Git 忽略目录，缺失时应根据场景重建最小复现，不编造旧输出。
 
-- [三个失败检查及两个已通过旧反例](../../build/verification/accept-r2-1.0.14-20261023-085747/candidate-probes.log)、[失败检查源码](../../build/verification/accept-r2-1.0.14-20261023-085747/src/review/CandidateChecks.java)、[旧对比度反例源码](../../build/verification/accept-r2-1.0.14-20261023-085747/src/review/AcceptanceChecks.java)。调度检查使用真正挂起并恢复的协程；位图夹具提供确定的像素数据。
-- [原生空闲及非零到零再恢复记录](../../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.json)与 [对应日志](../../build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.log)。
-- [47 张截图核验](../../build/verification/accept-r2-1.0.14-20261023-085747/delivered-screenshot-check.json)与 [构建后哈希对照](../../build/verification/accept-r2-1.0.14-20261023-085747/artifact-after-build-check.json)。
+- 三个失败检查及两个已通过旧反例（`build/verification/accept-r2-1.0.14-20261023-085747/candidate-probes.log`）、失败检查源码（`build/verification/accept-r2-1.0.14-20261023-085747/src/review/CandidateChecks.java`）、旧对比度反例源码（`build/verification/accept-r2-1.0.14-20261023-085747/src/review/AcceptanceChecks.java`）。调度检查使用真正挂起并恢复的协程；位图夹具提供确定的像素数据。
+- 原生空闲及非零到零再恢复记录（`build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.json`）与 对应日志（`build/verification/accept-r2-1.0.14-20261023-085747/native-shelf-transition.log`）。
+- 47 张截图核验（`build/verification/accept-r2-1.0.14-20261023-085747/delivered-screenshot-check.json`）与 构建后哈希对照（`build/verification/accept-r2-1.0.14-20261023-085747/artifact-after-build-check.json`）。
 
 | 本轮编号 | 审查编号 | 剩余问题 |
 | --- | --- | --- |

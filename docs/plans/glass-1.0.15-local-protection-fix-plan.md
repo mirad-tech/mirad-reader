@@ -10,7 +10,7 @@
 
 工作目录：`G:\mirad\mirad-server\book`。制定计划时，版本为 **1.0.15 / versionCode 16**，分支为 `main`，HEAD 为 `75aa18f68dd17d7066113e3d8defea81916723a3`，功能代码包含未提交及未跟踪文件。执行前重新记录源码状态、版本与文件哈希；若已有后续修复，先复现再判断，不能按旧行号覆盖新代码。
 
-最新事实源为[第四轮独立复验记录](../../build/verification/accept-s1t1-1.0.15-20261023-183439/review-summary.json)。下列结果只描述该轮代码与证据，不自动代表下一次构建通过：
+最新事实源为第四轮独立复验记录（`build/verification/accept-s1t1-1.0.15-20261023-183439/review-summary.json`）。下列结果只描述该轮代码与证据，不自动代表下一次构建通过：
 
 | 保留项 | 已验证结果与保留要求 |
 | --- | --- |
@@ -48,8 +48,8 @@
 
 证据：
 
-- [原生像素测量](../../build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-contrast.json)、[原始截图](../../build/verification/glass-native-preview/accept-s1t1-1015-20261023/captures/mixed-pattern-100.png)、[运行与绘制参数](../../build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern.log)。
-- [夹具源码](../../build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-project/app/src/preview/java/com/mirad/reader/preview/PatternAcceptanceActivity.kt)、[生产源码一致性记录](../../build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-source-check.json)。
+- 原生像素测量（`build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-contrast.json`）、原始截图（`build/verification/glass-native-preview/accept-s1t1-1015-20261023/captures/mixed-pattern-100.png`）、运行与绘制参数（`build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern.log`）。
+- 夹具源码（`build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-project/app/src/preview/java/com/mirad/reader/preview/PatternAcceptanceActivity.kt`）、生产源码一致性记录（`build/verification/accept-s1t1-1.0.15-20261023-183439/native-pattern-source-check.json`）。
 
 证据边界：混色场景来自独立审查用 Preview 构建，新增的 Activity 和 manifest 项仅位于审查副本，不属于原交付 APK。可以把这个夹具迁入现有 `preview` 源集，但正式用户界面不能出现诊断页面、参数或测试文本。原证据在 Git 忽略目录，跨机器缺失时按上述输入重建，不伪造旧结果。
 
@@ -59,7 +59,7 @@
 
 径向渐变在尚未衰减到透明的位置被矩形边界裁切，相邻单元又叠加，形成可见的方格、硬边和明暗条带。固定交付 Preview APK 中已直接复现阅读面板与顶栏的异常，原先 100% 对照没有这些规则图案。
 
-证据：[交付 APK 的原生实拍](../../build/verification/glass-native-preview/accept-s1t1-1015-20261023/captures/reader-panel-dark-100-actual.png)、[T1 改造前的 100% 对照](../../build/verification/fix-r3-1.0.15-20261023-093814/t1-baseline/captures/t1-reader-panel-dark-before-100.png)。
+证据：交付 APK 的原生实拍（`build/verification/glass-native-preview/accept-s1t1-1015-20261023/captures/reader-panel-dark-100-actual.png`）、T1 改造前的 100% 对照（`build/verification/fix-r3-1.0.15-20261023-093814/t1-baseline/captures/t1-reader-panel-dark-before-100.png`）。
 
 两组原生证据必须区分：网格复现使用交付 APK，SHA-256 为 `73BA5ED892D016976DBE69065DF54D15F31D03B519B545615153F566B030ED7D`；混色夹具 APK 的 SHA-256 为 `003E8ABFC0057A6687C16DBF7559AF12172B93C0E30F33E00715DBA9F742D3B1`。本轮应生成自己的固定新产物和对应记录，不能沿用这些哈希声明新代码通过。
 
