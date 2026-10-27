@@ -1,6 +1,10 @@
 # Isolated native glass preview
 
+当前维护的构建入口为 `debug`、`release` 和 `preview`。独立 GPU 原型已退役；阅读 GPU 检查使用下文 Integrated reader hardware checks 中的生产组件预览。三个单轮修复脚本已从当前树移除，需要追溯时从 Git 历史查看，不再作为常规验收入口。
+
 This driver uses the existing Android Studio runtime, Android SDK, and API 37 image. It does not install dependencies. Each run owns an AVD, Android preferences, logs, captures, and a private ADB server under `build/verification/glass-native-preview/<run-id>/`.
+
+新建的隔离实例在测试结束并执行 `Stop` 后，会先确认本次模拟器及专用 ADB 已停止、相关端口已释放，再仅删除该运行目录的 `avd` 子目录；`captures`、`logs` 和 `instance.json` 保留。旧实例或未带本工具所有权标记的实例不会自动删除。清理状态和失败原因记录在 `instance.json` 与 `logs/avd-cleanup.log`；无法确认安全时不开始清理，清理过程出错时可能留下部分文件并输出警告。需要稍后继续使用同一临时模拟器时，可在停止时传入 `-KeepAvdOnStop`；已清理的运行应使用新的 RunId 创建实例。
 
 Run with PowerShell 7.4 or newer from the repository root:
 
@@ -29,6 +33,12 @@ New instances disable hardware navigation keys so gesture/three-button navigatio
 `Capture` copies stdout as binary bytes and checks the PNG signature. Screenshots go to the run's `captures` directory. API 37 can exercise current GPU effects; it does not prove API 26–30 compatibility. Forced fallback screenshots must be labeled accordingly.
 
 The `preview` build variant uses a plain `android.app.Application`, disables the business activity, and includes a separate preview activity. Build it from existing caches with `./gradlew.bat --offline :app:assemblePreview`. Its UI uses in-memory sample metadata/text from the existing regression fixtures, without constructing repositories or a Room database. Debug and Release do not include this activity.
+
+预览启动参数 `transparency` 表示清晰度 0–100，`glassEnabled` 独立控制开关（默认 true）；0 不表示关闭。两个入口的内存偏好在首次订阅前初始化完整的新玻璃记录。可用以下命令运行预览夹具回归（AGP 9 默认只为 debug 创建单测任务，因此显式开启其他构建类型的单测）：
+
+```powershell
+.\gradlew.bat '-Pandroid.onlyEnableUnitTestForTheTestedBuildType=false' :app:testPreviewUnitTest --tests com.mirad.reader.preview.PreviewInMemoryPreferenceDaoTest --console=plain
+```
 
 After installing `app/build/outputs/apk/preview/app-preview.apk`:
 
@@ -61,7 +71,7 @@ The settings and immersive-window checks use `SettingsImmersionPreviewActivity`,
 
 The available suites are `settings` (category/context visibility and retained preferences), `theme` (image independence and actual system night-mode/resume changes), `window` (cutouts, rotation, backgrounds and window transitions), and `layout` (both settings entries at actual system font scales 1.0/1.3/1.6). Captures record the installed APK hash, current scene, control hierarchy, insets and reader state. Review the screenshots as well as `summary.json`; assertions alone do not prove visual continuity or unclipped text. The fixture never opens a business database, and its saved-value assertions cover the shared repository with an in-memory DAO, not durable user data. Each suite restores its emulator display settings but deliberately leaves the owned emulator running until the final stop below.
 
-After all preview work has finished:
+外层测试流程必须在 `finally` 中停止自己创建的实例。多个套件共用一个实例时，由创建方在全部套件结束后执行以下收尾；确需后续复用才传入 `-KeepAvdOnStop`：
 
 ```powershell
 & './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Stop
@@ -69,26 +79,7 @@ Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
     Where-Object { $_.LocalPort -in @(5049, 5580, 5581) }
 ```
 
-The stop action targets the recorded emulator serial and private ADB port. It leaves the run's files and evidence intact. If startup fails, inspect `logs/create.log`, `logs/adb-server.log`, and the emulator stdout/stderr logs before considering another attempt; do not download tools or reuse an existing AVD to work around the failure.
-
-## Same-window WebView GPU prototype
-
-The separate `gpuPreview` variant is release-optimized, non-debuggable and profileable. Its package is `com.mirad.reader.gpupreview`, its launcher is **Mirad 玻璃测试**, and it uses the local test signing identity. It has a plain `Application`, no book database and no business initialization. The prototype Activity belongs to `src/gpuPreview/java`; it is not part of the normal Debug, Preview or Release application.
-
-```powershell
-./gradlew.bat --offline :app:assembleGpuPreview
-& './tools/glass-preview/Test-GpuBackdrop.ps1' -RunId '<owned run id>' -Apk '<pinned app-gpuPreview.apk>' -OutputDirectory '<repo>/build/verification/<new directory>'
-```
-
-The finite check uses the existing isolated emulator driver. It compares raw hardware content with an independent screenshot after scroll-only invalidation, chapter changes, delayed images and real touch scrolling. It separately verifies that blurred content changes without changing the panel configuration, captures day/night at 0/60/100 percent, and compares the edge shader enabled/disabled while checking that the center stays unchanged. Each result contains the exact APK hash, current device identity, hardware-path state, viewport state and pixel comparison. An emulator pass is not approval of the physical target device or proof of a one-frame freshness bound.
-
-For the target iQOO 12 Pro / Android 16, the user installs this separate APK manually. Compare **关闭玻璃**, **旧玻璃** and **GPU 玻璃** using the same scrolling and panel-drag operations. Check both day/night appearances, chapter changes and delayed image loading. **记录 30 秒** records one immutable run; **保存结果** exports that run without changing its labels or completion flag. Pausing the Activity ends an unfinished run as incomplete. A new automatic scroll sequence cancels the previous sequence.
-
-Repeat each of the three modes three times, with the same 30-second operation sequence. Save each completed run before starting the next, using a distinct document name. Choose the mode, theme and opacity before recording; those controls are disabled during a run. Use ordinary touch input while recording: delivering another Activity intent may pause the Activity and correctly end the run as incomplete. Do chapter/image freshness checks separately from the fixed-configuration performance runs.
-
-FrameMetrics collection uses a dedicated thread. Its exported timings are diagnostic data; formal performance acceptance still uses Perfetto FrameTimeline and the actual refresh rate granted by the device. Host `contentRecords` counts display-list recordings, not presented frames. The prototype requests 120Hz but reports the observed rate instead of assuming it was granted.
-
-The physical-device prerequisite was confirmed for the iQOO 12 Pro / Android 16 on 2026-10-24. The production reader now uses the integrated hardware scene described below. The prototype remains a separate diagnostic application; its FrameMetrics results are not final integrated performance acceptance.
+The stop action targets the recorded emulator serial and private ADB port. It preserves evidence and cleans only the owned temporary AVD unless -KeepAvdOnStop is specified. If startup fails, inspect `logs/create.log`, `logs/adb-server.log`, and the emulator stdout/stderr logs before considering another attempt; do not download tools or reuse an existing AVD to work around the failure.
 
 ## Unified appearance checks
 

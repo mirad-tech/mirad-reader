@@ -9,6 +9,7 @@ param(
     [string]$ExpectedPackage = 'com.mirad.reader.preview',
     [string]$Name = 'preview',
     [string[]]$AdbArgs = @(),
+    [switch]$KeepAvdOnStop,
     [string]$CommandLogFile = $env:MIRAD_GLASS_CMD_LOG
 )
 $ErrorActionPreference = 'Stop'
@@ -35,6 +36,7 @@ $taskEnvironment = @{
     ADB_MDNS_AUTO_CONNECT = '0'
     ADB_LOCAL_TRANSPORT_MAX_PORT = "$($ConsolePort + 1)"
 }
+. (Join-Path $PSScriptRoot 'Remove-ManagedGlassAvd.ps1')
 
 function Write-CommandAudit([string]$Kind, [string]$Executable, [string[]]$Arguments) {
     if ($CommandLogFile) {
@@ -232,6 +234,8 @@ switch ($Action) {
             EmulatorPid          = 0
             AdbServerPid         = 0
             AdbServerCommandLine = ''
+            CleanupPolicy        = 'owned-glass-avd-v1'
+            ManagedAvdRoot       = (Join-Path $runRoot 'avd')
             CreatedAt            = [DateTimeOffset]::Now.ToString('o')
         } | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding utf8
         Get-Content -LiteralPath $statePath
@@ -240,6 +244,11 @@ switch ($Action) {
         $ownership = Assert-InstanceOwnership -ForStart
         if ($ownership.Status -eq 'OWNED_RUNNING') {
             return $ownership.State
+        }
+        if ($ownership.State.PSObject.Properties.Name -contains 'CleanupPolicy' -and
+            $ownership.State.CleanupPolicy -eq 'owned-glass-avd-v1' -and
+            -not (Test-Path -LiteralPath (Join-Path $runRoot 'avd') -PathType Container)) {
+            throw "The temporary AVD for RunId '$RunId' has been cleaned; create a new RunId."
         }
         # A USB serial that cannot identify a phone prevents this dedicated server from attaching to USB devices.
         $server = Invoke-TaskProcess $adb @('-P', "$ServerPort", '--one-device', "mirad-isolated-$RunId", 'start-server')
@@ -299,16 +308,57 @@ switch ($Action) {
     }
     'Stop' {
         $ownership = Assert-InstanceOwnership -ForStop
+        $state = $ownership.State
+        $isManagedAvd = $state.PSObject.Properties.Name -contains 'CleanupPolicy' -and $state.CleanupPolicy -eq 'owned-glass-avd-v1'
+        $stoppedProcessIds = @($state.EmulatorPid, $state.AdbServerPid)
+        if ($state.PSObject.Properties.Name -contains 'QemuPid') { $stoppedProcessIds += $state.QemuPid }
         $result = Invoke-InstanceAdb @('emu', 'kill') 10000 -ForStop
         $result
+        if ($isManagedAvd -and $result.ExitCode -ne 0) {
+            throw 'The isolated emulator did not stop successfully; its AVD and ownership state were retained.'
+        }
         # Kill only the verified server on the private port; the user's default server remains untouched.
-        Invoke-TaskProcess $adb @('-P', "$ServerPort", 'kill-server')
-        $state = $ownership.State
+        $serverResult = Invoke-TaskProcess $adb @('-P', "$ServerPort", 'kill-server')
+        $serverResult
+        if ($isManagedAvd -and $serverResult.ExitCode -ne 0) {
+            throw 'The dedicated ADB server did not stop successfully; the AVD and ownership state were retained.'
+        }
         $state.EmulatorPid = 0
         $state.AdbServerPid = 0
         $state | Add-Member -NotePropertyName QemuPid -NotePropertyValue 0 -Force
         $state | Add-Member -NotePropertyName AdbServerCommandLine -NotePropertyValue '' -Force
         $state | Add-Member -NotePropertyName StoppedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
         $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding utf8
+
+        if ($isManagedAvd) {
+            $cleanupStatus = 'Skipped'
+            $cleanupError = ''
+            try {
+                if ($KeepAvdOnStop) {
+                    $cleanupStatus = 'KeptByRequest'
+                } else {
+                    # 仅等待已记录的进程退出；不停止或修改任何其他进程。
+                    foreach ($processId in @($stoppedProcessIds | Where-Object { $_ -gt 0 } | Select-Object -Unique)) {
+                        if (Get-Process -Id $processId -ErrorAction SilentlyContinue) {
+                            Wait-Process -Id $processId -Timeout 10 -ErrorAction SilentlyContinue
+                        }
+                    }
+                    $cleanup = Remove-ManagedGlassAvd -ProjectRoot $projectRoot -RunId $RunId -State $state -StoppedProcessIds $stoppedProcessIds -ServerPort $ServerPort -ConsolePort $ConsolePort
+                    $cleanupStatus = $cleanup.Reason
+                }
+            } catch {
+                $cleanupStatus = 'Failed'
+                $cleanupError = $_.Exception.Message
+                Write-Warning "Temporary AVD cleanup did not complete; inspect the run before reuse: $cleanupError"
+            }
+            $state | Add-Member -NotePropertyName CleanupStatus -NotePropertyValue $cleanupStatus -Force
+            $state | Add-Member -NotePropertyName CleanupError -NotePropertyValue $cleanupError -Force
+            if ($cleanupStatus -eq 'Removed') {
+                $state | Add-Member -NotePropertyName AvdCleanedAt -NotePropertyValue ([DateTimeOffset]::Now.ToString('o')) -Force
+            }
+            $state | ConvertTo-Json | Set-Content -LiteralPath $statePath -Encoding utf8
+            $logPath = Join-Path $runRoot 'logs/avd-cleanup.log'
+            Add-Content -LiteralPath $logPath -Value ("{0} {1} {2}" -f [DateTimeOffset]::Now.ToString('o'), $cleanupStatus, $cleanupError) -Encoding utf8
+        }
     }
 }

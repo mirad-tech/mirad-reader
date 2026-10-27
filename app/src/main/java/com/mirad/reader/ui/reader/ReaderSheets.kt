@@ -9,11 +9,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.mirad.reader.ui.common.bouncingVerticalScroll
 import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
 import com.mirad.reader.ui.common.MiradOutlinedButton
@@ -76,7 +76,7 @@ import com.mirad.reader.ui.common.SegmentedRow
 import com.mirad.reader.ui.common.SettingCard
 import com.mirad.reader.ui.common.SettingSwitchRow
 import com.mirad.reader.ui.common.SheetActionButton
-import com.mirad.reader.ui.common.SheetEmpty
+import com.mirad.reader.ui.common.BouncingSheetEmpty
 import com.mirad.reader.ui.common.SheetScaffold
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Spacing
@@ -121,9 +121,9 @@ fun TocSheet(
             )
         }
         if (filtered.isEmpty()) {
-            SheetEmpty("没有匹配的章节")
+            BouncingSheetEmpty("没有匹配的章节")
         } else {
-            LazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
+            BouncingLazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(filtered, key = { it.index }) { chapter ->
                     ListRow(
                         title = chapter.title,
@@ -316,7 +316,7 @@ internal fun ReaderSettingsPanel(
         maxHeightFraction = 0.62f,
         actions = { if (page != null) SheetActionButton("返回", { page = null }) }
     ) {
-        Column(Modifier.fillMaxWidth().verticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
+        Column(Modifier.fillMaxWidth().bouncingVerticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
             val selected = page
             if (selected == null) {
                 // 快捷调节卡放最前：窄屏大字体下面板高度受限时，日夜模式与主题色块仍要一眼可达。
@@ -463,9 +463,9 @@ fun NotesSheet(
         }
         when (tab) {
             0 -> if (highlights.isEmpty()) {
-                SheetEmpty("还没有划线或笔记。\n长按选中文字后点工具条上的「划线」或「笔记」。")
+                BouncingSheetEmpty("还没有划线或笔记。\n长按选中文字后点工具条上的「划线」或「笔记」。")
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     items(highlights, key = { it.id }) { highlight ->
                         val stale = NoteAnchor.isStale(
                             highlight.chapterIndex,
@@ -491,9 +491,9 @@ fun NotesSheet(
                 }
             }
             else -> if (bookmarks.isEmpty()) {
-                SheetEmpty("还没有书签。\n点顶栏的星标即可把当前位置加入书签。")
+                BouncingSheetEmpty("还没有书签。\n点顶栏的星标即可把当前位置加入书签。")
             } else {
-                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                     items(bookmarks, key = { it.id }) { bookmark ->
                         val stale = NoteAnchor.isStale(
                             bookmark.chapterIndex,
@@ -608,11 +608,11 @@ fun SearchSheet(
             )
         }
         when {
-            searchError != null -> SheetEmpty(searchError ?: "搜索失败")
-            !searched -> SheetEmpty("输入关键词后点右上角「搜索」，会在全书逐章查找。")
-            scanning && results.isEmpty() -> SheetEmpty("正在查找…")
-            results.isEmpty() -> SheetEmpty("没有找到「$query」")
-            else -> LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            searchError != null -> BouncingSheetEmpty(searchError ?: "搜索失败")
+            !searched -> BouncingSheetEmpty("输入关键词后点右上角「搜索」，会在全书逐章查找。")
+            scanning && results.isEmpty() -> BouncingSheetEmpty("正在查找…")
+            results.isEmpty() -> BouncingSheetEmpty("没有找到「$query」")
+            else -> BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(results) { hit ->
                     ListRow(
                         title = hit.snippet,

@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -143,7 +143,7 @@ fun NotesScreen(
         }
     ) { padding ->
         key(tab) {
-            LazyColumn(
+            BouncingLazyColumn(
                 modifier = Modifier.fillMaxSize().glassBackdropSource(),
                 contentPadding = PaddingValues(
                     start = padding.calculateStartPadding(LocalLayoutDirection.current),

@@ -36,6 +36,9 @@ import com.mirad.reader.core.model.*
 import com.mirad.reader.core.reader.ReaderCss
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.reader.AutoReadState
+import com.mirad.reader.reader.AutoReadController
+import com.mirad.reader.reader.AutoTurnResult
+import com.mirad.reader.reader.AutoAdvanceResult
 import com.mirad.reader.reader.ReaderJsBridge
 import com.mirad.reader.reader.ReaderKeys
 import com.mirad.reader.reader.ReaderWebView
@@ -46,6 +49,7 @@ import com.mirad.reader.ui.settings.ReadingSettingsPage
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import org.json.JSONTokener
 import java.io.ByteArrayInputStream
@@ -94,7 +98,6 @@ internal fun HardwareReaderPreview(
     var noteSaveCount by remember { mutableIntStateOf(0) }
     var tapCount by remember { mutableIntStateOf(0) }
     var volumeTurns by remember { mutableIntStateOf(0) }
-    var autoState by remember { mutableStateOf(AutoReadState.OFF) }
     var animationRunning by remember { mutableStateOf(false) }
     var animationToken by remember { mutableIntStateOf(0) }
     var animationJob by remember { mutableStateOf<Job?>(null) }
@@ -153,7 +156,6 @@ internal fun HardwareReaderPreview(
         animationJob?.cancel()
         animationJob = null
         animationRunning = false
-        if (autoState == AutoReadState.RUNNING) autoState = if (paused) AutoReadState.PAUSED else AutoReadState.OFF
         evaluate("window.__hardwareProbeToken=(window.__hardwareProbeToken||0)+1;if(window.__hardwareProbeRaf)cancelAnimationFrame(window.__hardwareProbeRaf);")
     }
     fun startAnimation(durationMs: Int) {
@@ -234,6 +236,47 @@ internal fun HardwareReaderPreview(
         probe.view?.loadDataWithBaseURL("https://appassets.androidplatform.net/hardware/chapter/$chapter",
             latestHtml(chapter), "text/html", "utf-8", null)
     }
+    // 与产品使用相同控制器和 reader.js 自动滚动，诊断用 animate 指令不作为自动阅读验收。
+    val autoRead = remember(scope) {
+        AutoReadController(scope, object : AutoReadController.Host {
+            override fun isPaged() = latestConfig.pageMode != PageMode.SCROLL
+            override fun pageIntervalSeconds() = AutoReadSpeed.clamp(latestConfig.autoPageSeconds)
+            override fun scrollSecondsPerScreen() = AutoReadSpeed.clamp(latestConfig.autoScrollSecondsPerScreen)
+            private suspend fun nextChapter(): Boolean {
+                if (chapter >= chapters.lastIndex) return false
+                loadChapter(chapter + 1)
+                return withTimeoutOrNull(5000) { while (!ready) delay(20); true } == true
+            }
+            override suspend fun turnPageForAuto(): AutoTurnResult {
+                if (!ready) return AutoTurnResult.LOAD_FAILED
+                if (page >= pages - 1) {
+                    if (chapter >= chapters.lastIndex) return AutoTurnResult.BOOK_END
+                    return if (nextChapter()) AutoTurnResult.TURNED else AutoTurnResult.LOAD_FAILED
+                }
+                val before = page
+                evaluate("MiradReader.nextPage();")
+                return if (withTimeoutOrNull(5000) { while (page == before) delay(20); true } == true)
+                    AutoTurnResult.TURNED else AutoTurnResult.LOAD_FAILED
+            }
+            override suspend fun advanceScrollChapter(): AutoAdvanceResult {
+                if (chapter >= chapters.lastIndex) return AutoAdvanceResult.BOOK_END
+                return if (nextChapter()) AutoAdvanceResult.ADVANCED else AutoAdvanceResult.LOAD_FAILED
+            }
+            override fun startAutoScroll(secondsPerScreen: Int) { evaluate("MiradReader.setAutoScroll(true,$secondsPerScreen);") }
+            override fun stopAutoScroll() { evaluate("if(window.MiradReader)MiradReader.setAutoScroll(false,0);") }
+            override fun notify(message: String) { Log.i("ImmersionPreview", message) }
+        })
+    }
+    val autoState by autoRead.state.collectAsState()
+    var previewTtsActive by remember { mutableStateOf(activity.intent.getBooleanExtra("ttsActive", false)) }
+    var ttsPauseCount by remember { mutableIntStateOf(0) }
+    // 与产品相同：响应主动打开的控件；菜单注销时的延迟 modalVisible 不得暂停刚启动的任务。
+    LaunchedEffect(chrome, settings, dialog) {
+        if (chrome || settings || dialog) autoRead.pause()
+    }
+    val orientation = androidx.compose.ui.platform.LocalConfiguration.current.orientation
+    LaunchedEffect(orientation, config.pageMode) { autoRead.pause() }
+    LaunchedEffect(config.autoPageSeconds, config.autoScrollSecondsPerScreen) { autoRead.onSpeedChanged() }
     fun closePanel() {
         panel = "none"; noteDetails = false; deleteConfirm = false; notesTarget = null
         if (settings) onDismissSettings()
@@ -243,12 +286,19 @@ internal fun HardwareReaderPreview(
         require(name in setOf("none", "toc", "progress", "search", "note", "notes", "autoread", "settings"))
         stopAnimation()
         if (name == "none") { closePanel(); return }
+        autoRead.pause()
         noteDetails = false; deleteConfirm = false; notesTarget = null
         if (name == "note") noteDraft = ""
         panel = name
         if (name == "settings") onSettings()
         else if (settings) onDismissSettings()
         if (name != "note" && dialog) onDialog(false)
+    }
+    fun beginAutoRead() {
+        ReaderAutoReadActions.start(previewTtsActive, { previewTtsActive = false; ttsPauseCount++ }, {
+            closePanel()
+            onChrome(false)
+        }, { if (ready) autoRead.start() })
     }
 
     val latestTap by rememberUpdatedState<(Float, Float) -> Unit>({ _, _ ->
@@ -283,6 +333,9 @@ internal fun HardwareReaderPreview(
                 .put("noteDetails", noteDetails).put("deleteConfirm", deleteConfirm).put("noteSaveCount", noteSaveCount)
                 .put("noteDraft", noteDraft).put("query", query).put("currentChapter", chapter)
                 .put("animationRunning", animationRunning).put("animationToken", animationToken)
+                .put("autoReadState", autoState.name).put("autoReadController", "production")
+                .put("autoPageSeconds", config.autoPageSeconds).put("autoScrollSecondsPerScreen", config.autoScrollSecondsPerScreen)
+                .put("ttsActive", previewTtsActive).put("ttsPauseCount", ttsPauseCount)
                 .put("tapCount", tapCount).put("volumeTurns", volumeTurns).put("imeVisible", imeVisible)
                 .put("hostWindowMatchesActivity", presentation != null && presentation.host.windowToken != null &&
                     presentation.host.windowToken == activity.window.decorView.windowToken)
@@ -311,11 +364,11 @@ internal fun HardwareReaderPreview(
             }
         }
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP) { stopAnimation(); hideCover() }
+            if (event == Lifecycle.Event.ON_STOP) { autoRead.pause(); stopAnimation(); hideCover() }
         }
         lifecycle.addObserver(observer)
         onDispose {
-            stopAnimation(); hideCover()
+            autoRead.release(); stopAnimation(); hideCover()
             lifecycle.removeObserver(observer)
             ReaderKeys.pager = oldPager
             ReaderKeys.blockedByOverlay = false
@@ -345,7 +398,7 @@ internal fun HardwareReaderPreview(
                     web.settings.allowContentAccess = false
                     web.setBackgroundColor(android.graphics.Color.TRANSPARENT)
                     web.onTap = { x, y -> latestTap(x, y) }
-                    web.onTouchDown = { if (animationRunning) stopAnimation() }
+                    web.onTouchDown = { autoRead.pause(); if (animationRunning) stopAnimation() }
                     web.onSelectionAction = { action -> when (action) {
                         SelectionAction.NOTE -> openPanel("note")
                         SelectionAction.SEARCH -> openPanel("search")
@@ -357,7 +410,8 @@ internal fun HardwareReaderPreview(
                         onSelection = { _, _, text -> selectedText = text },
                         onMetrics = { left, _ -> insetLeft = left },
                         onChapterChanged = { chapter = it.coerceIn(chapters.indices) },
-                        onVisualChanged = web::notifyBackdropContentChanged
+                        onVisualChanged = web::notifyBackdropContentChanged,
+                        onAutoScrollEnd = { autoRead.onScrollChapterEnd() }
                     ), "MiradBridge")
                     val assets = WebViewAssetLoader.Builder()
                         .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(ctx)).build()
@@ -405,14 +459,17 @@ internal fun HardwareReaderPreview(
                     Box(Modifier.fillMaxSize()) {
                         if (chrome) {
                             Box(Modifier.align(Alignment.TopCenter)) {
-                                ReaderTopBar(chapters[chapter].title, "风雪归人", false, false,
+                                ReaderTopBar(
+                                    chapters[chapter].title.repeat(if (activity.intent.getBooleanExtra("longTitle", false)) 6 else 1),
+                                    if (activity.intent.getBooleanExtra("blankSubtitle", false)) "" else
+                                        "风雪归人".repeat(if (activity.intent.getBooleanExtra("longTitle", false)) 6 else 1), false, false,
                                     onBack, {}, { openPanel("notes") }, { openPanel("search") }, { openPanel("toc") },
-                                    { openPanel("autoread") }, { openPanel("settings") }, { openPanel("autoread") })
+                                    { beginAutoRead() }, { openPanel("settings") }, { openPanel("autoread") })
                             }
                             Box(Modifier.align(Alignment.BottomCenter)) {
                                 ReaderBottomBar(percent, page, pages, chapter, chapters.size,
                                     { openPanel("toc") }, { openPanel("progress") }, { openPanel("settings") },
-                                    { openPanel("notes") }, { openPanel("search") }, { openPanel("autoread") }, false,
+                                    { openPanel("notes") }, { openPanel("search") }, { beginAutoRead() }, autoState == AutoReadState.RUNNING,
                                     { value -> hideCover(); evaluate("MiradReader.gotoOffset((MiradReader.getText().length*$value)|0,false);") })
                             }
                         }
@@ -438,8 +495,8 @@ internal fun HardwareReaderPreview(
                                 { value -> hideCover(); evaluate("MiradReader.gotoOffset((MiradReader.getText().length*$value)|0,false);") },
                                 { loadChapter(it) }, ::closePanel)
                             "autoread" -> AutoReadSheet(config, autoState, onChange,
-                                { panel = "none"; onChrome(false); startAnimation(30000); autoState = AutoReadState.RUNNING },
-                                { stopAnimation(false); autoState = AutoReadState.OFF }, ::closePanel)
+                                { beginAutoRead() },
+                                { autoRead.stop() }, ::closePanel)
                             "search" -> SheetScaffold("全书搜索", ::closePanel, fillHeight = true,
                                 actions = { SheetActionButton("搜索", {
                                     probe.view?.evaluateJavascript("MiradReader.getText().indexOf(${JSONObject.quote(query)})") {

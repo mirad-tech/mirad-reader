@@ -2,7 +2,7 @@ package com.mirad.reader.ui.shelf
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -89,7 +89,7 @@ fun ChapterPreviewSheet(
                 style = MaterialTheme.typography.labelLarge,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
             )
-            LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
+            BouncingLazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 16.dp)) {
                 itemsIndexed(candidate.slices) { index, chapter ->
                     ListItem(
                         headlineContent = { Text(chapter.title) },

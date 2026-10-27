@@ -23,7 +23,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
@@ -31,7 +31,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.heightIn
 import com.mirad.reader.ui.common.glassBackdropSource
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import com.mirad.reader.ui.common.BouncingLazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -1009,6 +1009,7 @@ internal fun ShelfContent(
     val onOpenBook = actions.onOpenBook
     var sortMenu by remember { mutableStateOf(false) }
     var importMenu by remember { mutableStateOf(false) }
+    com.mirad.reader.ui.common.ResetEdgeBounceOnOverlay(importMenu || sortMenu)
     val gridState = rememberLazyGridState(initialScrollIndex, initialScrollOffset)
     val listState = rememberLazyListState(initialScrollIndex, initialScrollOffset)
     // Search moved into the scroll content; opening it must still expose the field.
@@ -1212,7 +1213,7 @@ internal fun ShelfContent(
                 bottom = padding.calculateBottomPadding() + 96.dp
             )
             if (layout == ShelfLayout.GRID) {
-                LazyVerticalGrid(
+                BouncingLazyVerticalGrid(
                     columns = GridCells.Adaptive(minSize = 112.dp),
                     state = gridState, contentPadding = contentPadding,
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -1247,7 +1248,7 @@ internal fun ShelfContent(
                     }
                 }
             } else {
-                LazyColumn(
+                BouncingLazyColumn(
                     state = listState, contentPadding = contentPadding,
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth().weight(1f)

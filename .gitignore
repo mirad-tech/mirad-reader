@@ -38,6 +38,7 @@ Thumbs.db
 
 # Agent session state (machine-local)
 /.zcode/
+/.workbuddy/
 *.pem
 /.env
 /.env.*

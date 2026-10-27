@@ -37,18 +37,18 @@ internal object GlassEdgeProfile {
     }
 
     /** 磨砂时暗轮廓更实，清晰时让窄镜面线承担更多锐度。 */
-    fun contourAlpha(clarity: Int): Float = .30f + (.18f - .30f) * clarityRatio(clarity)
+    fun contourAlpha(clarity: Int): Float = ((.30f + (.18f - .30f) * clarityRatio(clarity)) * 1.15f).coerceIn(0f, 1f)
 
     /** 六条方向散射带在磨砂档更柔和、稍强；清晰档减弱宽带存在感。 */
     fun scatteringIntensity(clarity: Int, darkSurface: Boolean): Float {
         val matte = 1f - clarityRatio(clarity)
-        return if (darkSurface) .68f + .24f * matte else .72f + .28f * matte
+        return (if (darkSurface) .68f + .24f * matte else .72f + .28f * matte) * 1.10f
     }
 
     /** 窄镜面高光随清晰度增强，深色底能承载更亮的反光。 */
     fun specularIntensity(clarity: Int, darkSurface: Boolean): Float {
         val ratio = clarityRatio(clarity)
-        return if (darkSurface) .22f + .78f * ratio else .18f + .56f * ratio
+        return (if (darkSurface) .22f + .78f * ratio else .18f + .56f * ratio) * 1.20f
     }
 
     fun broadBandScale(index: Int): Float = broadBandScales[index]

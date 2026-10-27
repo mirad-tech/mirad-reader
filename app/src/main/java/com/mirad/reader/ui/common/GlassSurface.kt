@@ -725,136 +725,27 @@ fun Modifier.glassBackground(
         )
     }
 
-    // R2 & T1 保护时序：当需要增强对比度保护时立即生效，不迟滞；
-    // 仅当保护释放或微小抖动时应用迟滞与 180ms 平滑。
-    var stableTargetOpacity by remember { mutableFloatStateOf(rawParams.opacity) }
-    var stableTargetAmbientOpacity by remember { mutableFloatStateOf(rawParams.ambientOpacity) }
-    var stableTargetBlur by remember { mutableStateOf(rawParams.blurRadius) }
-
-    val boostingProtection =
-        rawParams.opacity > stableTargetOpacity + 0.001f ||
-            rawParams.ambientOpacity > stableTargetAmbientOpacity + 0.001f ||
-            percent <= 0 || !canBlur
-    if (
-        boostingProtection ||
-        !shouldApplyHysteresis(
-            stableTargetAmbientOpacity,
-            rawParams.ambientOpacity,
-            stableTargetBlur,
-            rawParams.blurRadius
-        )
-    ) {
-        stableTargetOpacity = rawParams.opacity
-        stableTargetAmbientOpacity = rawParams.ambientOpacity
-        stableTargetBlur = rawParams.blurRadius
-    }
-
-    val animatedPeakOpacity by animateFloatAsState(
-        targetValue = if (legacy) 1f else stableTargetOpacity,
-        animationSpec = if (boostingProtection) snap() else tween(180),
-        label = "glassOpacity"
-    )
-    val animatedAmbientOpacity by animateFloatAsState(
-        targetValue = if (legacy) 1f else stableTargetAmbientOpacity,
-        animationSpec = if (boostingProtection) snap() else tween(180),
-        label = "glassAmbientOpacity"
+    // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色。
+    val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur)
+    val animatedOpacity by animateFloatAsState(
+        targetValue = targetOpacity,
+        animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
+        label = "glassUniformTint"
     )
     val animatedBlur by animateDpAsState(
-        targetValue = if (legacy) 0.dp else stableTargetBlur,
-        animationSpec = if (percent <= 0 || !canBlur) snap() else tween(180),
+        targetValue = if (legacy || !appearance.enabled || !canBlur) 0.dp else rawParams.blurRadius,
+        animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
         label = "glassBlur"
     )
-
-    // R2 & T1：确保实际生效的主体与峰值不透明度绝不低于安全目标下限
-    val effectivePeakOpacity = if (legacy) 1f else maxOf(stableTargetOpacity, animatedPeakOpacity)
-    val effectiveAmbientOpacity = if (legacy) 1f else maxOf(stableTargetAmbientOpacity, animatedAmbientOpacity)
-
-    val sourceCells = rawParams.rawCellOpacities ?: rawParams.cellProtectedOpacities
-    val minCell = sourceCells?.minOrNull() ?: effectiveAmbientOpacity
-    val maxCell = sourceCells?.maxOrNull() ?: effectivePeakOpacity
-    val hasLocalVariation = !legacy && sourceCells != null &&
-        rawParams.cellCols > 0 && rawParams.cellRows > 0 &&
-        maxCell - minCell > 0.015f &&
-        effectivePeakOpacity > effectiveAmbientOpacity + 0.005f
-
-    val continuousField = remember(sourceCells, rawParams.cellCols, rawParams.cellRows, rawParams.ambientOpacity, hasLocalVariation) {
-        if (hasLocalVariation) {
-            buildContinuousProtectionField(
-                rawCellOpacities = sourceCells!!,
-                cols = rawParams.cellCols,
-                rows = rawParams.cellRows,
-                ambientOpacity = rawParams.ambientOpacity
-            )
-        } else {
-            null
+    SideEffect {
+        source?.apply {
+            lastComputedAmbientOpacity = targetOpacity
+            lastComputedPeakOpacity = targetOpacity
+            lastComputedBlurDp = rawParams.blurRadius.value
+            lastComputedHighlightAlpha = 0f
+            lastProtectedCellCount = 0
         }
     }
-
-    val protectionMaskImage = remember(continuousField, stableTargetAmbientOpacity, stableTargetOpacity, color, hasLocalVariation) {
-        if (!hasLocalVariation || continuousField == null) {
-            null
-        } else {
-            val rInt = (color.red * 255f + 0.5f).toInt().coerceIn(0, 255)
-            val gInt = (color.green * 255f + 0.5f).toInt().coerceIn(0, 255)
-            val bInt = (color.blue * 255f + 0.5f).toInt().coerceIn(0, 255)
-            val rawMin = rawParams.ambientOpacity
-            // 归一化上限取保护场实际峰值与目标 peak 的较大者：cell 级精确求解所需的
-            // 保护强度可能超过 peak 启发值，钳回 peak 会把该处对比度压到承诺以下。
-            val rawTop = maxOf(rawParams.opacity, continuousField.maxOrNull() ?: rawParams.opacity)
-            val rawSpan = (rawTop - rawMin).coerceAtLeast(0.001f)
-            val pixels = IntArray(continuousField.size)
-            for (i in continuousField.indices) {
-                val norm = ((continuousField[i] - rawMin) / rawSpan).coerceIn(0f, 1f)
-                // 端点用稳定目标值：mask 是静态位图，用动画值做 key/内容会在
-                // 保护释放的 180ms 内每帧重建一张 64×64 Bitmap。
-                val alphaF = (stableTargetAmbientOpacity + norm * (stableTargetOpacity - stableTargetAmbientOpacity))
-                    .coerceIn(stableTargetAmbientOpacity, 1f)
-                val aInt = ceil(alphaF * 255f).toInt().coerceIn(0, 255)
-                pixels[i] = (aInt shl 24) or (rInt shl 16) or (gInt shl 8) or bInt
-            }
-            Bitmap.createBitmap(
-                pixels,
-                PROTECTION_FIELD_SIZE,
-                PROTECTION_FIELD_SIZE,
-                Bitmap.Config.ARGB_8888
-            ).asImageBitmap()
-        }
-    }
-
-    LaunchedEffect(
-        percent,
-        style,
-        dark,
-        stableTargetAmbientOpacity,
-        stableTargetOpacity,
-        rawParams.blurRadius,
-        rawParams.highlightAlpha,
-        rawParams.cellProtectedOpacities
-    ) {
-        if (source != null) {
-            val protectedCells = (rawParams.rawCellOpacities ?: rawParams.cellProtectedOpacities)
-                ?.count { it > stableTargetAmbientOpacity + 0.015f } ?: 0
-            source.lastComputedAmbientOpacity = stableTargetAmbientOpacity
-            source.lastComputedPeakOpacity = stableTargetOpacity
-            source.lastComputedBlurDp = rawParams.blurRadius.value
-            source.lastComputedHighlightAlpha = rawParams.highlightAlpha
-            source.lastProtectedCellCount = protectedCells
-            if (com.mirad.reader.BuildConfig.DEBUG) {
-                runCatching {
-                    android.util.Log.i(
-                        "GlassPreview",
-                        "glassParams style=$style percent=$percent dark=$dark " +
-                            "ambientOpacity=${"%.3f".format(java.util.Locale.US, stableTargetAmbientOpacity)} " +
-                            "peakOpacity=${"%.3f".format(java.util.Locale.US, stableTargetOpacity)} " +
-                            "protectedCells=$protectedCells " +
-                            "blurDp=${"%.1f".format(java.util.Locale.US, rawParams.blurRadius.value)} " +
-                            "highlightAlpha=${"%.3f".format(java.util.Locale.US, rawParams.highlightAlpha)}"
-                    )
-                }
-            }
-        }
-    }
-
     this.shadow(if (legacy) 0.dp else if (style == GlassStyle.Panel) 8.dp else 6.dp, shape, clip = false)
         .onGloballyPositioned { coordinates ->
             val newOrigin = coordinates.positionOnScreen()
@@ -867,12 +758,12 @@ fun Modifier.glassBackground(
             val bitmap = if (separateWindow) (source?.image ?: source?.sharedSnapshot) else source?.image
             val live = source?.layer?.takeIf { !separateWindow && source.sampleLayerReady }
             val blurPx = animatedBlur.toPx()
-            val shouldBlur = canBlur && blurPx > 0f && (bitmap != null || live != null)
+            val hasBackdrop = canBlur && (bitmap != null || live != null)
 
-            if (shouldBlur && source.size.width > 0 && source.size.height > 0) {
+            if (hasBackdrop && source.size.width > 0 && source.size.height > 0) {
                 val padding = ceil(blurPx * 2).toInt()
                 val delta = origin - source.origin
-                background.renderEffect = BlurEffect(blurPx, blurPx, TileMode.Clamp)
+                background.renderEffect = if (blurPx > 0f) BlurEffect(blurPx, blurPx, TileMode.Clamp) else null
                 background.record(size = IntSize(size.width.toInt() + padding * 2, size.height.toInt() + padding * 2)) {
                     translate(padding - delta.x, padding - delta.y) {
                         if (bitmap != null) {
@@ -885,53 +776,19 @@ fun Modifier.glassBackground(
                 translate(-padding.toFloat(), -padding.toFloat()) { drawLayer(background) }
             }
 
-            // T1 & T1.1 & T1.2：
-            // - 无局部实心差异时（如普通文本/卡片页面或同色背景），直接单次 drawRect 绘制均匀玻璃底色，彻底杜绝网格或条带；
-            // - 存在混色差异时（如白底蓝块），通过单张连续平滑的 Box SDF + 高斯保护场位图单次 drawImage 合成，
-            //   在受保护区域内部及边界保持 100% 平坦达标，在外围无痕平滑过渡，消除径向衰减凹陷与矩形裁切重叠伪影。
-            if (protectionMaskImage != null) {
-                drawImage(
-                    image = protectionMaskImage,
-                    dstOffset = IntOffset.Zero,
-                    dstSize = IntSize(
-                        ceil(size.width).toInt().coerceAtLeast(1),
-                        ceil(size.height).toInt().coerceAtLeast(1)
-                    ),
-                    filterQuality = FilterQuality.Medium
-                )
-            } else {
-                val uniformOpacity = if (legacy) 1f else maxOf(effectiveAmbientOpacity, effectivePeakOpacity).coerceIn(0f, 1f)
-                drawRect(color.copy(alpha = uniformOpacity))
-            }
-
-            // T1：将高光收敛到顶部边缘渐变，避免在整块面板表面铺上白雾
-            if (!legacy && percent > 0 && rawParams.highlightAlpha > 0f) {
-                drawRect(
-                    Brush.verticalGradient(
-                        colorStops = arrayOf(
-                            0.0f to Color.White.copy(alpha = rawParams.highlightAlpha),
-                            0.28f to Color.White.copy(alpha = rawParams.highlightAlpha * 0.18f),
-                            0.55f to Color.Transparent,
-                            1.0f to Color.Transparent
-                        )
-                    )
-                )
-            }
-
-            drawContent()
-
-            // 边缘质感：方向性高光 + 内侧衰减带（见 GlassEdgeTexture），
-            // 与 GPU 路径共用同一份实现，两条路径的边界观感保持一致。
-            // 顶部柔光由上面的 highlightAlpha 负责，这里不再重复叠加。
-            if (!legacy && edgeTexture) {
+            val opacity = if (hasBackdrop) animatedOpacity else if (!appearance.enabled || legacy) 1f else .94f
+            drawRect(color.copy(alpha = opacity))
+            if (!legacy && edgeTexture && appearance.enabled) {
                 drawGlassEdgeTexture(
                     outline = shape.createOutline(size, layoutDirection, this),
                     surface = color,
                     clarity = clarity,
-                    tintAlpha = 1f,
-                    topSheen = false
+                    tintAlpha = opacity,
+                    topSheen = true
                 )
             }
+            // 所有材质、边缘均在前景之前完成，文字和图标不被染色。
+            drawContent()
         }
 }
 
@@ -961,6 +818,7 @@ fun GlassDropdownMenu(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    ResetEdgeBounceOnOverlay(expanded)
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,

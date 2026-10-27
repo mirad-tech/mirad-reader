@@ -17,9 +17,9 @@ class LiquidGlassPolicyTest {
     @Test fun highTransparencyRemainsThinAndMonotonicallyDecreases() {
         assertEquals(1f, liquidBaseOpacity(0), .0001f)
         assertEquals(1f, liquidBaseOpacity(-3), .0001f)
-        assertEquals(.02f, liquidBaseOpacity(100), .0001f)
-        assertTrue(liquidBaseOpacity(100) <= .04f)
-        assertEquals(.02f, liquidBaseOpacity(105), .0001f)
+        assertEquals(.08f, liquidBaseOpacity(100), .0001f)
+        assertEquals(.10f, liquidBaseOpacity(100, isDark = true), .0001f)
+        assertEquals(.08f, liquidBaseOpacity(105), .0001f)
         for (percent in 1..100) assertTrue(liquidBaseOpacity(percent) < liquidBaseOpacity(percent - 1))
         assertTrue(liquidBaseOpacity(60) - liquidBaseOpacity(100) > .1f)
     }
@@ -49,7 +49,26 @@ class LiquidGlassPolicyTest {
         assertTrue(strong > relaxed)
         assertTrue(strong in .12f.. .98f)
         assertEquals(.12f, relaxed, .001f)
-        assertEquals(.02f, base, .0001f)
+        assertEquals(.08f, base, .0001f)
+    }
+
+    @Test fun uniformTintDependsOnlyOnClarityThemeAndAvailability() {
+        val clear = GlassAppearance(enabled = true, clarityPercent = 100)
+        assertEquals(.08f, uniformGlassOpacity(clear, false, true), .0001f)
+        assertEquals(.10f, uniformGlassOpacity(clear, true, true), .0001f)
+        assertEquals(.94f, uniformGlassOpacity(clear, false, false), .0001f)
+        assertEquals(1f, uniformGlassOpacity(clear.copy(enabled = false), false, true), 0f)
+        assertEquals(.31f, liquidBaseOpacity(50), .0001f)
+    }
+
+    @Test fun zeroBlurKeepsEnoughPaddingForIndependentRefraction() {
+        assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
+        assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
+        assertEquals(8, liquidMaterialPaddingPx(0f, true, 2f))
+        assertEquals(0, liquidMaterialPaddingPx(0f, false, 2f))
+        assertEquals(40, liquidMaterialPaddingPx(20f, true, 2f))
+        assertEquals(9.6f, liquidRefractionRimDp(48f), .001f)
+        assertEquals(13f, liquidRefractionRimDp(100f), .001f)
     }
 
     @Test fun nightProtectionAlsoAdaptsToBrightContentAndUnknownContentIsConservative() {

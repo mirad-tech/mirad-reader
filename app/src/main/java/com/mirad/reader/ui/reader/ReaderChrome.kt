@@ -109,8 +109,8 @@ fun ReaderTopBar(
                 }
                 Column(
                     modifier = Modifier.weight(1f),
-                    // 标题与章节信息之间留 2dp，行高本身不再额外撑开。
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                    // 两行信息之间留 6dp，空副标题仍不占位。
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
                         text = title,

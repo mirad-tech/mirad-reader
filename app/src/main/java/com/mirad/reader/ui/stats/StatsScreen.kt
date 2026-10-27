@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.mirad.reader.ui.common.bouncingVerticalScroll
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -71,15 +72,25 @@ fun StatsScreen(container: AppContainer, onBack: () -> Unit) {
                     CircularProgressIndicator()
                 }
             } else if (current.sessionCount == 0) {
-                EmptyState(
-                    title = "还没有阅读记录",
-                    badge = "时",
-                    description = "阅读满 5 秒就会开始统计，读一读就有数据了",
-                    modifier = Modifier.fillMaxSize().padding(padding)
-                )
+                StatsEmptyContent(padding)
             } else {
                 StatsContent(current, padding)
             }
+        }
+    }
+}
+
+/** 与隔离预览共用空页，实际数据仍由 StatsScreen 读取。 */
+@Composable
+internal fun StatsEmptyContent(contentPadding: PaddingValues) {
+    BouncingLazyColumn(Modifier.fillMaxSize(), contentPadding = contentPadding) {
+        item {
+            EmptyState(
+                title = "还没有阅读记录",
+                badge = "时",
+                description = "阅读满 5 秒就会开始统计，读一读就有数据了",
+                modifier = Modifier.fillParentMaxSize()
+            )
         }
     }
 }
@@ -89,7 +100,7 @@ private fun StatsContent(stats: ReadingStats, contentPadding: PaddingValues) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
+            .bouncingVerticalScroll(rememberScrollState())
             .padding(contentPadding)
             .padding(horizontal = Spacing.lg)
     ) {

@@ -4,7 +4,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -23,14 +23,18 @@ fun MiradDialog(
     text: (@Composable () -> Unit)? = null,
     icon: (@Composable () -> Unit)? = null
 ) {
+    ResetEdgeBounceOnOverlay()
     val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
     if (readerHost != null) {
+        CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
         com.mirad.reader.ui.reader.ReaderInWindowDialog(
             readerHost, onDismissRequest, confirmButton, modifier, dismissButton, title, text, icon
         )
+        }
         return
     }
     val maxBodyHeight = LocalConfiguration.current.screenHeightDp.dp * .55f
+    CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = { ApplyReaderDialogWindowPolicy(); confirmButton() },
@@ -41,9 +45,10 @@ fun MiradDialog(
         tonalElevation = 0.dp,
         text = text?.let { body ->
             { Column(Modifier.fillMaxWidth().heightIn(max = maxBodyHeight)
-                .verticalScroll(rememberScrollState()).animateContentSize(tween(180))) { body() } }
+                .bouncingVerticalScroll(rememberScrollState()).animateContentSize(tween(180))) { body() } }
         }
     )
+    }
 }
 
 internal fun publicError(message: String): String = message

@@ -3,7 +3,7 @@ package com.mirad.reader.ui.shelf
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -41,6 +41,24 @@ fun GroupManagerSheet(
     val scope = rememberCoroutineScope()
     val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
     val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    GroupManagerContent(
+        groups = groups,
+        bookCounts = groups.associate { group -> group.id to shelf.count { it.book.groupId == group.id } },
+        onRename = { group, name -> scope.launch { container.groups.rename(group, name) } },
+        onDelete = { group -> scope.launch { container.groups.delete(group) } },
+        onDismiss = onDismiss
+    )
+}
+
+/** 生产页与隔离预览共用展示、弹窗和滚动行为；数据写入仍由原入口持有。 */
+@Composable
+internal fun GroupManagerContent(
+    groups: List<GroupEntity>,
+    bookCounts: Map<Long, Int>,
+    onRename: (GroupEntity, String) -> Unit,
+    onDelete: (GroupEntity) -> Unit,
+    onDismiss: () -> Unit
+) {
     var renameTarget by remember { mutableStateOf<GroupEntity?>(null) }
     var renameDraft by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<GroupEntity?>(null) }
@@ -51,23 +69,27 @@ fun GroupManagerSheet(
         onDismiss = onDismiss,
         fillHeight = true
     ) {
+        BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
         if (groups.isEmpty()) {
-            EmptyState(
+            item {
+                EmptyState(
                 title = "还没有分组",
                 badge = "组",
                 description = "在书架上长按选中的书，选「移入分组」即可新建分组",
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillParentMaxWidth()
             )
+            }
         } else {
+            item {
             Text(
                 text = "重命名或删除分组。删除分组不会删书，组内书籍会回到「未分组」。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = Spacing.xl)
             )
-            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            }
                 items(groups, key = { it.id }) { group ->
-                    val count = shelf.count { it.book.groupId == group.id }
+                    val count = bookCounts[group.id] ?: 0
                     ListRow(
                         title = group.name,
                         meta = "$count 本",
@@ -83,7 +105,7 @@ fun GroupManagerSheet(
                     )
                     RowDivider()
                 }
-            }
+        }
         }
     }
 
@@ -104,7 +126,7 @@ fun GroupManagerSheet(
                     val name = renameDraft.trim()
                     renameTarget = null
                     if (name.isNotEmpty() && name != target.name) {
-                        scope.launch { container.groups.rename(target, name) }
+                        onRename(target, name)
                     }
                 }) { Text("保存") }
             },
@@ -113,7 +135,7 @@ fun GroupManagerSheet(
     }
 
     deleteTarget?.let { target ->
-        val count = shelf.count { it.book.groupId == target.id }
+        val count = bookCounts[target.id] ?: 0
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("删除分组「${target.name}」") },
@@ -126,7 +148,7 @@ fun GroupManagerSheet(
             confirmButton = {
                 MiradTextButton(danger = true, onClick = {
                     deleteTarget = null
-                    scope.launch { container.groups.delete(target) }
+                    onDelete(target)
                 }) { Text("删除") }
             },
             dismissButton = { MiradTextButton(onClick = { deleteTarget = null }) { Text("取消") } }

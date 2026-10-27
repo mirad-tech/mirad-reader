@@ -8,6 +8,9 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
+import com.mirad.reader.ui.common.EdgeBounceCoordinator
+import com.mirad.reader.ui.common.LocalEdgeBounceCoordinator
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.design.DarkMiradColors
 import com.mirad.reader.ui.design.LightMiradColors
@@ -106,7 +109,8 @@ fun MiradTheme(
     content: @Composable () -> Unit
 ) {
     val miradColors = if (darkTheme) DarkMiradColors else LightMiradColors
-    CompositionLocalProvider(LocalMiradColors provides miradColors) {
+    val bounceCoordinator = remember { EdgeBounceCoordinator() }
+    CompositionLocalProvider(LocalMiradColors provides miradColors, LocalEdgeBounceCoordinator provides bounceCoordinator) {
         MaterialTheme(
             colorScheme = if (darkTheme) DarkScheme else LightScheme,
             typography = MiradTypography,

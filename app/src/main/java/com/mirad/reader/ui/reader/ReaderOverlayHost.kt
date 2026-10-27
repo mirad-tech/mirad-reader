@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
-import androidx.compose.foundation.verticalScroll
+import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -210,7 +210,11 @@ internal class ReaderOverlayState internal constructor() {
                                     .pointerInput(active) {
                                         if (active) awaitPointerEventScope {
                                             while (true) {
-                                                awaitPointerEvent(PointerEventPass.Final).changes.forEach { if (!it.isConsumed) it.consume() }
+                                                awaitPointerEvent(PointerEventPass.Final).changes.forEach {
+                                                    // 保留按下/抬起的模态隔离。移动事件留给子列表越过 touch slop，
+                                                    // 否则 Final 阶段提前消费移动会取消滚动与边界回弹。
+                                                    if (!it.isConsumed && it.previousPressed != it.pressed) it.consume()
+                                                }
                                             }
                                         }
                                     }) {
@@ -319,6 +323,9 @@ internal fun ReaderInWindowSheet(
                 containerColor = androidx.compose.ui.graphics.Color.Transparent,
                 snackbarHost = {},
                 sheetContent = {
+                    CompositionLocalProvider(com.mirad.reader.ui.common.LocalEdgeBounceAllowed provides { delta ->
+                        delta < 0f && state.currentValue == SheetValue.Expanded && state.targetValue == SheetValue.Expanded && !closing
+                    }) {
                     Column(Modifier.fillMaxWidth().onSizeChanged { contentHeight = it.height }
                         .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)
                         .semantics { paneTitle = title; isTraversalGroup = true }) {
@@ -342,10 +349,11 @@ internal fun ReaderInWindowSheet(
                                 actions()
                             }
                             Column(Modifier.fillMaxWidth().weight(1f, fill = fillHeight)
-                                .then(if (fillHeight) Modifier else Modifier.verticalScroll(rememberScrollState())),
+                                .then(if (fillHeight) Modifier else Modifier.bouncingVerticalScroll(rememberScrollState())),
                                 verticalArrangement = Arrangement.spacedBy(Spacing.sm), content = content)
                             Spacer(Modifier.height(Spacing.md))
                         }
+                    }
                     }
                 }
             ) {
@@ -409,16 +417,21 @@ internal fun ReaderInWindowDialog(
                 shape = MaterialTheme.shapes.extraLarge) {
                 // One scroll container owns caret visibility in a short IME viewport.
                 // Keep the body call at the same composition position while insets change.
-                Column(Modifier.padding(innerPadding).verticalScroll(outerScroll),
+                Column(Modifier.padding(innerPadding).bouncingVerticalScroll(outerScroll),
                     verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 16.dp)) {
                     icon?.let { Box(Modifier.align(Alignment.CenterHorizontally)) { it() } }
                     title?.let { ProvideTextStyle(MaterialTheme.typography.headlineSmall, it) }
                     text?.let { body ->
-                        CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant) {
+                        CompositionLocalProvider(
+                            LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
+                            com.mirad.reader.ui.common.LocalEdgeBounceAllowed provides { delta ->
+                                if (delta < 0f) !outerScroll.canScrollForward else !outerScroll.canScrollBackward
+                            }
+                        ) {
                             ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
                                 Column(Modifier.fillMaxWidth().then(
                                     if (compact) Modifier
-                                    else Modifier.heightIn(max = bodyLimit).verticalScroll(bodyScroll)
+                                    else Modifier.heightIn(max = bodyLimit).bouncingVerticalScroll(bodyScroll)
                                 ).bringIntoViewRequester(bodyBringIntoView)
                                     .onFocusedBoundsChanged { focusedCoordinates = it }
                                     .onGloballyPositioned { bodyCoordinates = it }) { body() }
@@ -444,6 +457,7 @@ internal fun ReaderDropdownMenu(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    com.mirad.reader.ui.common.ResetEdgeBounceOnOverlay(expanded)
     val host = LocalReaderOverlayHost.current
     if (host == null) {
         GlassDropdownMenu(expanded, onDismissRequest, modifier, content)
@@ -470,7 +484,7 @@ internal fun ReaderDropdownMenu(
                 .semantics { paneTitle = "更多"; isTraversalGroup = true },
                 color = androidx.compose.ui.graphics.Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = MaterialTheme.shapes.large) {
-                Column(Modifier.padding(vertical = 8.dp).verticalScroll(rememberScrollState()), content = content)
+                Column(Modifier.padding(vertical = 8.dp).bouncingVerticalScroll(rememberScrollState()), content = content)
             }
         }) { measurables, constraints ->
             val safe = IntRect(left, top, max(left, constraints.maxWidth - right), max(top, constraints.maxHeight - bottom))

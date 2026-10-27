@@ -130,7 +130,7 @@ npm --prefix tools/browser-checks test
 
 JVM 测试应实际执行，构建缓存命中如实说明。禁止自动安装依赖或下载浏览器；必要环境不可用就列出具体缺口。浏览器检查不能代替 Android 渲染、窗口、真实字体缩放或保存反馈的原生交互验证。
 
-隔离原生流程见 [预览说明](../../tools/glass-preview/README.md)。新的 RunId 必须贯穿 Create/Start/Status/Install/Adb/Capture/Stop，启动和清理遵守 S5；使用隐藏后台进程，失败先读日志，不反复启动或误停其他实例。结束后确认本次进程与端口已释放，保留证据。
+隔离原生流程见 [预览说明](../../../tools/glass-preview/README.md)。新的 RunId 必须贯穿 Create/Start/Status/Install/Adb/Capture/Stop，启动和清理遵守 S5；使用隐藏后台进程，失败先读日志，不反复启动或误停其他实例。结束后确认本次进程与端口已释放，保留证据。
 
 ## 7 交付与独立验收
 

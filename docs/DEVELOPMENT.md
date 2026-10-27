@@ -45,6 +45,8 @@ npm --prefix tools/browser-checks test
 - 锚点回归覆盖常用字号往返、12/60 字号及零间距的列边界、延迟图片触发的真实重排，以及字号调整与连续滚动裁剪、前插章节交错。定时用例使用 Playwright 时钟执行生产回调，并检查补偿后正常导航仍会更新锚点。
 - 上述浏览器检查不是 Compose、Android WebView、Room 迁移或真实触摸手势的设备测试。
 
+`fixtures/theme-14.css`、`theme-30.css` 是当前字体夹具；`fixtures/baseline/` 下的同名文件保留历史 CSS 的提前闭合括号。`font-browser.cjs` 分别读取两组作字体变更对照，它们不是重复副本，不应合并。
+
 ## 正式 APK 签名
 
 正式 APK 必须沿用历史发行证书。签名文件和密码文件都放在仓库外，不上传到 Git 或日志。
@@ -78,3 +80,11 @@ PKCS12 使用与密钥库相同的密钥密码时，不要把同一个单行密�
 - `app/build/outputs/` 是 Gradle 固定输出；验证目录中与截图、日志绑定的 APK 原位保留。2026-10-26 的整理清单与前后路径、SHA-256 记录见本机 `artifacts/apk/organization-20261026.json`。
 - 发布前检查实际差异、单测、Lint 与签名；发布后核对远端提交、标签、Release 状态，并下载 APK 比对 SHA-256。
 - 用户设备安装、生产数据操作及额外发布行为需要明确授权。验证记录须区分源码、JVM、Chromium 和 Android 设备证据。
+
+## 文档收尾
+
+- 常规修复的结果、验证范围和保留限制写入 `docs/releases/<版本>.md`，不默认每轮新增计划和报告。确有跨阶段协作需要时才保留独立计划。
+- 一轮工作随版本收尾后，将对应计划、实施报告和审查记录按原文件名移入 `docs/archive/{plans,reports,reviews}/`。归档表示保留当时记录，不表示未完成事项已关闭；版本说明必须保留实际限制。
+- `docs/README.md` 对历史文档只保留一个归档入口；详细目录维护在 `docs/archive/README.md`。不为删除模型名而单独重命名历史文件。
+- 移动时保留正文内容，同步调整索引及相对链接。只在本机存在的 `build/verification/`、APK、日志和忽略文件以纯文本路径记录，不生成克隆后必坏的文件链接。
+- 移动后运行 `python tools/check-doc-links.py`（Python 3.9+）；检查仓库内相对文件链接是否纳入 Git，外链和页内锚点不在此检查范围内。

@@ -2,15 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前构建版本：1.1.2（versionCode 21）**
+**当前构建版本：1.1.3（versionCode 22）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.2.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.3.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-当前 1.1.2 按本地正式签名包交付，尚未上传 GitHub Release；内容与验证边界见 [1.1.2 更新说明](docs/releases/1.1.2.md)。
-
-已公开发布的版本：[墨读 1.1.1 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/mirad-reader-1.1.1-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.1/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.1)。
+正式安装包：[墨读 1.1.3 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.3/mirad-reader-1.1.3-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.3/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.3)。内容与验证边界见 [1.1.3 更新说明](docs/releases/1.1.3.md)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
@@ -25,7 +23,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
 - **统一外观**：全应用共享跟随系统、日间、夜间模式；日夜分别记忆阅读配色、背景图片和图片不透明度，阅读弹层与当前模式一致。
-- **玻璃外观**：独立的磨砂玻璃开关与 0–100% 清晰度控制，默认清晰度 60%；日夜主题共用边缘散射与高光绘制。高清晰度下仍有背景文字干扰前景的限制，详见[本次更新](docs/releases/1.1.2.md)。
+- **玻璃外观**：独立的磨砂玻璃开关与 0–100% 清晰度控制，默认清晰度 60%；100% 保持零模糊，日夜主题共用边缘散射与高光绘制。高清晰度下仍有背景文字干扰前景的限制，详见[本次更新](docs/releases/1.1.3.md)。
 
 ### 阅读设置的作用范围
 
@@ -66,10 +64,8 @@ app/src/main/assets/reader/   WebView 阅读引擎
 app/src/test/                JVM 单元测试
 app/schemas/                 Room schema 历史
 tools/                       素材工具、浏览器检查与打包脚本
-docs/plans/                  设计与修复计划
-docs/reviews/                审查记录
-docs/reports/                实施与验证报告
 docs/releases/               版本说明
+docs/archive/                历史计划、审查与验证记录
 artifacts/apk/               本机安装包与配套校验文件（不入 Git）
 ```
 

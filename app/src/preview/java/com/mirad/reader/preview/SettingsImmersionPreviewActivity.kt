@@ -82,6 +82,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
         val transparency = intent.getIntExtra("transparency", 60)
         // 新增：磨砂玻璃开关的预览开关（仅预览包），默认开启。
         val glassEnabled = intent.getBooleanExtra("glassEnabled", true)
+        val initialGlass = GlassAppearance(glassEnabled, transparency).normalized()
         val initialConfig = ReaderConfig.DEFAULT.copy(
             theme = intent.getStringExtra("theme") ?: ThemeKey.PAPER,
             pageMode = intent.getStringExtra("pageMode") ?: PageMode.SCROLL,
@@ -95,13 +96,16 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
             epubLayoutMode = intent.getStringExtra("epubLayout") ?: EpubLayoutMode.UNIFIED,
             backgroundType = if (intent.hasExtra("background")) BackgroundType.IMAGE else BackgroundType.COLOR,
             backgroundImageUri = intent.getStringExtra("background")?.let { BuiltinBackgrounds.SCHEME + it },
-            backgroundImageAlpha = intent.getFloatExtra("imageAlpha", 1f)
+            backgroundImageAlpha = intent.getFloatExtra("imageAlpha", 1f),
+            autoPageSeconds = intent.getIntExtra("autoPageSeconds", ReaderConfig.DEFAULT.autoPageSeconds),
+            autoScrollSecondsPerScreen = intent.getIntExtra("autoScrollSecondsPerScreen", ReaderConfig.DEFAULT.autoScrollSecondsPerScreen)
         )
         val initialChrome = intent.getBooleanExtra("chrome", false)
         setContent {
             val systemDark = isSystemInDarkTheme()
             val scope = rememberCoroutineScope()
-            val dao = remember { PreviewInMemoryPreferenceDao(transparency) }
+            val bounceProbe = remember { PreviewBounceDiagnostics() }
+            val dao = remember { PreviewInMemoryPreferenceDao(initialGlass) }
             var repositoryGeneration by remember { mutableIntStateOf(0) }
             val repo = remember(dao, repositoryGeneration) { SettingsRepository(dao, scope) }
             var initialized by remember { mutableStateOf(false) }
@@ -122,7 +126,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
             val savedConfig by dao.observe(SettingsRepository.KEY_GLOBAL).collectAsState(null)
             val savedAppearance by dao.observe(SettingsRepository.KEY_APP_APPEARANCE).collectAsState(null)
             val appearanceSaveFailed by repo.appAppearanceSaveFailed.collectAsState(false)
-            val glass by repo.glassAppearance.collectAsState(GlassAppearance(enabled = glassEnabled, clarityPercent = transparency))
+            val glass by repo.glassAppearance.collectAsState(initialGlass)
             var scene by remember { mutableStateOf(initialEntry) }
             var category by remember { mutableStateOf(initialRoute) }
             var navigationGeneration by remember { mutableIntStateOf(0) }
@@ -185,6 +189,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                     LocalGlassAppearance provides glass,
                     LocalGlassForceFallback provides intent.getBooleanExtra("fallback", false),
                     LocalGlassEdgeTexture provides edgeTexture,
+                    LocalEdgeBounceObserver provides bounceProbe::record,
                     LocalGlassAppearanceController provides glassController,
                     LocalSettingsCommit provides { if (unifiedAppearance) appearanceController.commitReadingConfig() else repo.flushGlobalConfig(scope) }
                 ) {
@@ -246,8 +251,10 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                                         cutoutRects.put(org.json.JSONArray(listOf(rect.left, rect.top, rect.right, rect.bottom)))
                                     }
                                     val state = JSONObject().put("label", command.getStringExtra("label"))
+                                         .put("glass", JSONObject().put("enabled", glass.enabled).put("clarityPercent", glass.clarityPercent))
                                          .put("requestId", command.getStringExtra("requestId"))
                                          .put("hardwarePreview", hardwarePreview).put("chrome", chrome)
+                                         .put("bounce", bounceProbe.snapshot())
                                          .put("imeVisible", insets.isVisible(WindowInsetsCompat.Type.ime()))
                                          .put("imeBottom", insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
                                          .put("statusInsetTop", insets.getInsets(WindowInsetsCompat.Type.statusBars()).top)

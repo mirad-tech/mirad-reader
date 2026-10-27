@@ -474,10 +474,10 @@ private fun ReaderContent(
      * 朗读正在占用阅读位置时先暂停朗读；两者都不会自动恢复对方。
      */
     fun beginAutoRead() {
-        if (ttsState.active) tts.pause()
-        showAutoRead = false
-        chromeVisible = false
-        session.startAutoRead()
+        ReaderAutoReadActions.start(ttsState.active, tts::pause, {
+            showAutoRead = false
+            chromeVisible = false
+        }, session::startAutoRead)
     }
 
     suspend fun performTurn(delta: Int, auto: Boolean = false): Boolean {
@@ -737,11 +737,7 @@ private fun ReaderContent(
                 onNotes = { showNotes = true },
                 onSearch = { showSearch = true },
                 onToc = { showToc = true },
-                onAutoRead = {
-                    // 打开面板即暂停：调速时保持暂停，继续时再用新速度启动。
-                    session.pauseAutoRead()
-                    showAutoRead = true
-                },
+                onAutoRead = { beginAutoRead() },
                 onSettings = { showSettings = true },
                 onToggleTts = {
                     ReaderTtsActions.onToolbarClick(
@@ -771,11 +767,7 @@ private fun ReaderContent(
                 onSettings = { showSettings = true },
                 onNotes = { showNotes = true },
                 onSearch = { showSearch = true },
-                onAutoRead = {
-                    // 打开面板即暂停：调速时保持暂停，继续时再用新速度启动。
-                    session.pauseAutoRead()
-                    showAutoRead = true
-                },
+                onAutoRead = { beginAutoRead() },
                 autoReading = autoReadState == AutoReadState.RUNNING,
                 onSliderChange = {
                     if (ttsState.active) tts.stop()

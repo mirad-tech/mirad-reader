@@ -63,11 +63,17 @@ import org.json.JSONObject
 import java.io.IOException
 
 internal class PreviewInMemoryPreferenceDao(
-    initialTransparency: Int,
+    initialGlass: GlassAppearance,
     @Volatile var failWrites: Boolean = false
 ) : PreferenceDao {
     private val store = MutableStateFlow(
-        mapOf(SettingsRepository.KEY_GLASS_TRANSPARENCY to initialTransparency.coerceIn(0, 100).toString())
+        // 在首次订阅前建立新事实源，避免旧键迁移覆盖独立开关和 0% 清晰度。
+        initialGlass.normalized().let { appearance ->
+            mapOf(
+                SettingsRepository.KEY_GLASS_APPEARANCE to GlassAppearanceJson.encode(appearance),
+                SettingsRepository.KEY_GLASS_TRANSPARENCY to appearance.transparencyPercent.toString()
+            )
+        }
     )
     val savedGlassFlow: Flow<String?> = store.map { it[SettingsRepository.KEY_GLASS_TRANSPARENCY] }
 
@@ -117,6 +123,9 @@ class GlassPreviewActivity : ComponentActivity() {
         val rtl = intent.getBooleanExtra("rtl", false)
         val readerDark = intent.getBooleanExtra("readerDark", dark)
         val initialTransparency = intent.getIntExtra("transparency", GlassAppearance.DEFAULT_PERCENT)
+        val initialGlass = GlassAppearance(
+            enabled = intent.getBooleanExtra("glassEnabled", true), clarityPercent = initialTransparency
+        ).normalized()
         val simulateSaveFailure = intent.getBooleanExtra("simulateSaveFailure", false)
         val initialCategoryName = intent.getStringExtra("category")
         val backdropColorHex = intent.getStringExtra("backdropColor") ?: "#0000FF"
@@ -128,6 +137,7 @@ class GlassPreviewActivity : ComponentActivity() {
         val blockHeightFrac = intent.getFloatExtra("blockHeightFrac", 3f / 8f)
         val textOffsetXDp = intent.getFloatExtra("textOffsetX", 162f)
         val textOffsetYDp = intent.getFloatExtra("textOffsetY", 150f)
+        val groupCount = intent.getIntExtra("groupCount", 3).coerceIn(0, 100)
         setContent {
             MiradTheme(darkTheme = dark) {
                 val density = LocalDensity.current
@@ -135,7 +145,7 @@ class GlassPreviewActivity : ComponentActivity() {
                 val repoScope = rememberCoroutineScope()
                 val inMemoryDao = remember {
                     PreviewInMemoryPreferenceDao(
-                        initialTransparency = initialTransparency,
+                        initialGlass = initialGlass,
                         failWrites = simulateSaveFailure
                     )
                 }
@@ -143,10 +153,12 @@ class GlassPreviewActivity : ComponentActivity() {
                     SettingsRepository(dao = inMemoryDao, repositoryScope = repoScope)
                 }
                 val glassAppearance by previewSettingsRepo.glassAppearance.collectAsState(
-                    initial = GlassAppearance(clarityPercent = initialTransparency)
+                    initial = initialGlass
                 )
                 val glassSaveFailed by previewSettingsRepo.glassSaveFailed.collectAsState(initial = false)
-                val savedRaw by inMemoryDao.savedGlassFlow.collectAsState(initial = initialTransparency.toString())
+                val savedRaw by inMemoryDao.savedGlassFlow.collectAsState(initial = initialGlass.transparencyPercent.toString())
+                val bounceProbe = remember { PreviewBounceDiagnostics() }
+                var edgeEnabled by remember { mutableStateOf(intent.getBooleanExtra("edge", true)) }
 
                 val controller = remember(previewSettingsRepo, repoScope) {
                     object : GlassAppearanceController {
@@ -186,11 +198,15 @@ class GlassPreviewActivity : ComponentActivity() {
                     LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                     LocalGlassAppearance provides glassAppearance,
                     LocalGlassAppearanceController provides controller,
-                    LocalGlassSaveFailed provides glassSaveFailed
+                    LocalGlassSaveFailed provides glassSaveFailed,
+                    LocalGlassEdgeTexture provides edgeEnabled,
+                    LocalEdgeBounceObserver provides bounceProbe::record
                 ) {
                     GlassBackdropHost {
                         PreviewDiagnosticsReceiver(
                             controller = controller,
+                            bounceProbe = bounceProbe,
+                            onSetEdge = { edgeEnabled = it },
                             onSetSaveFailMode = { fail ->
                                 inMemoryDao.failWrites = fail
                                 Log.i("GlassPreview", "previewSaveFailMode=$fail")
@@ -212,7 +228,8 @@ class GlassPreviewActivity : ComponentActivity() {
                             blockWidthFrac = blockWidthFrac,
                             blockHeightFrac = blockHeightFrac,
                             textOffsetXDp = textOffsetXDp,
-                            textOffsetYDp = textOffsetYDp
+                            textOffsetYDp = textOffsetYDp,
+                            groupCount = groupCount
                         )
                     }
                 }
@@ -225,6 +242,8 @@ class GlassPreviewActivity : ComponentActivity() {
 @Composable
 private fun PreviewDiagnosticsReceiver(
     controller: GlassAppearanceController,
+    bounceProbe: PreviewBounceDiagnostics,
+    onSetEdge: (Boolean) -> Unit,
     onSetSaveFailMode: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -232,6 +251,8 @@ private fun PreviewDiagnosticsReceiver(
     val appearance = LocalGlassAppearance.current
     val saveFailed = LocalGlassSaveFailed.current
     val currentPercent by rememberUpdatedState(appearance.transparencyPercent)
+    val currentAppearance by rememberUpdatedState(appearance)
+    val currentSetEdge by rememberUpdatedState(onSetEdge)
     val currentSaveFailed by rememberUpdatedState(saveFailed)
     DisposableEffect(context, backdrop, controller) {
         val receiver = object : android.content.BroadcastReceiver() {
@@ -243,12 +264,18 @@ private fun PreviewDiagnosticsReceiver(
                             "GlassPreview",
                             "glassStatsDump label=$label transparency=$currentPercent saveFailed=$currentSaveFailed ${backdrop?.statsSummary() ?: "none"}"
                         )
+                        java.io.File(requireNotNull(context.getExternalFilesDir(null)), "polish-ui-state.json")
+                            .writeText(JSONObject().put("label", label).put("clarity", currentAppearance.clarityPercent)
+                                .put("enabled", currentAppearance.enabled).put("glassStats", backdrop?.statsSummary())
+                                .put("bounce", bounceProbe.snapshot()).toString())
                     }
                     "com.mirad.reader.preview.ACTION_SET_TRANSPARENCY" -> {
                         val pct = intent.getIntExtra("percent", GlassAppearance.DEFAULT_PERCENT).coerceIn(0, 100)
-                        controller.update(GlassAppearance(clarityPercent = pct))
+                        controller.update(GlassAppearance(enabled = intent.getBooleanExtra("enabled", true), clarityPercent = pct))
                         controller.commit()
                     }
+                    "com.mirad.reader.preview.ACTION_SET_EDGE" -> currentSetEdge(intent.getBooleanExtra("enabled", true))
+                    "com.mirad.reader.preview.ACTION_RESET_BOUNCE" -> bounceProbe.resetPeaks()
                     "com.mirad.reader.preview.ACTION_SET_SAVE_FAIL_MODE" -> {
                         val fail = intent.getBooleanExtra("fail", false)
                         onSetSaveFailMode(fail)
@@ -264,6 +291,8 @@ private fun PreviewDiagnosticsReceiver(
             addAction("com.mirad.reader.preview.ACTION_SET_TRANSPARENCY")
             addAction("com.mirad.reader.preview.ACTION_SET_SAVE_FAIL_MODE")
             addAction("com.mirad.reader.preview.ACTION_RETRY_SAVE")
+            addAction("com.mirad.reader.preview.ACTION_SET_EDGE")
+            addAction("com.mirad.reader.preview.ACTION_RESET_BOUNCE")
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             context.registerReceiver(receiver, filter, android.content.Context.RECEIVER_EXPORTED)
@@ -291,7 +320,8 @@ private fun PreviewContent(
     blockWidthFrac: Float = 3f / 8f,
     blockHeightFrac: Float = 3f / 8f,
     textOffsetXDp: Float = 162f,
-    textOffsetYDp: Float = 150f
+    textOffsetYDp: Float = 150f,
+    groupCount: Int = 3
 ) {
     val activity = LocalContext.current as Activity
     var scene by remember { mutableStateOf(initialScene) }
@@ -303,10 +333,22 @@ private fun PreviewContent(
     var query by remember { mutableStateOf("") }
     var search by remember { mutableStateOf(false) }
     var layout by remember { mutableStateOf(ShelfLayout.GRID) }
+    var showGroups by remember { mutableStateOf(false) }
+    val groups = remember(groupCount) { mutableStateListOf<com.mirad.reader.data.db.entity.GroupEntity>().apply {
+        addAll(List(groupCount) { com.mirad.reader.data.db.entity.GroupEntity((it + 1).toLong(), "分组 ${it + 1}") })
+    } }
     val books = remember { sampleBooks() }
     BackHandler(scene != "shelf") { scene = "shelf"; Log.i("GlassPreview", "backToShelf") }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when (scene) {
+            "stats-empty" -> androidx.compose.material3.Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
+                topBar = { ScreenHeader(title = "阅读统计", onBack = { scene = "shelf" }) }
+            ) { padding ->
+                Box(Modifier.fillMaxSize().glassBackdropSource()) {
+                    com.mirad.reader.ui.stats.StatsEmptyContent(padding)
+                }
+            }
             "mixed-pattern" -> MixedPatternPreview(
                 baseBgColorHex = baseBgColorHex,
                 blockColorHex = blockColorHex,
@@ -335,7 +377,8 @@ private fun PreviewContent(
             )
             "settings" -> SettingsContent(
                 route = category, onBack = { if (category != null) category = null else scene = "shelf" },
-                onOpenRoute = { category = it }, initialScrollPx = if (scrolled) 120 else 0
+                onOpenRoute = { category = it }, initialScrollPx = if (scrolled) 120 else 0,
+                groupCount = groups.size, onManageGroups = { showGroups = true }
             )
             else -> ShelfContent(
                 state = ShelfContentState(
@@ -347,12 +390,15 @@ private fun PreviewContent(
                     onOpenBook = { scene = "reader" }, onSettings = { scene = "settings" },
                     onToggleSearch = { search = !search }, onQueryChange = { query = it },
                     onLayoutChange = { layout = it }, onBookAction = { dialog = true },
-                    onImportFile = { dialog = true }
+                    onImportFile = { dialog = true }, onManageGroups = { showGroups = true }
                 ),
                 initialScrollIndex = if (scrolled) 3 else 0,
                 initialScrollOffset = if (scrolled) 80 else 0
             )
         }
+        if (showGroups) GroupManagerContent(groups, groups.associate { it.id to 0 },
+            onRename = { target, name -> val index = groups.indexOfFirst { it.id == target.id }; if (index >= 0) groups[index] = target.copy(name = name) },
+            onDelete = { target -> groups.removeAll { it.id == target.id } }, onDismiss = { showGroups = false })
         if (dialog) MiradDialog(
             onDismissRequest = { dialog = false; Log.i("GlassPreview", "dialogDismiss") },
             title = { Text("删除书籍") },

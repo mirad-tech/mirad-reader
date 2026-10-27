@@ -19,7 +19,7 @@
 
 ## P1 重新识别编码的临时文件与发布安全
 
-定位：[BookMaintenance.kt](../../app/src/main/java/com/mirad/reader/data/repo/BookMaintenance.kt)，`redetect`，本轮重点约 196–203 行；关联数据库事务、`ContentReplacer.publish()` 和异常清理。
+定位：[BookMaintenance.kt](../../../app/src/main/java/com/mirad/reader/data/repo/BookMaintenance.kt)，`redetect`，本轮重点约 196–203 行；关联数据库事务、`ContentReplacer.publish()` 和异常清理。
 
 初次审查发现共用 `content.utf8.txt.tmp` 会导致取消后重试的任务串扰。独占临时文件和同书互斥现已实现，这部分应保留。
 
@@ -46,7 +46,7 @@
 
 ## P2 背景图片必须在配置成功落盘后清理
 
-定位：[SettingsRepository.kt](../../app/src/main/java/com/mirad/reader/data/repo/SettingsRepository.kt)，本轮重点约 268–269 行的清理通知；关联 `persistAppearanceSnapshotLocked`、旧兼容配置的异步保存及 [AppContainer.kt](../../app/src/main/java/com/mirad/reader/AppContainer.kt) 的实际文件清理。
+定位：[SettingsRepository.kt](../../../app/src/main/java/com/mirad/reader/data/repo/SettingsRepository.kt)，本轮重点约 268–269 行的清理通知；关联 `persistAppearanceSnapshotLocked`、旧兼容配置的异步保存及 [AppContainer.kt](../../../app/src/main/java/com/mirad/reader/AppContainer.kt) 的实际文件清理。
 
 初次审查指出 `onApplied` 只证明内存配置更新，不能触发旧图片删除。首轮修复已把清理移到新外观记录成功持久化后的差集回调，改善了这一问题，应保留该方向。
 
@@ -76,7 +76,7 @@
 
 **状态：已通过本轮复核，以下原始要求保留作背景，本次不要重新实施。** 现有证据确认 StartupOnly 7/7、完整外观流程 67/67、theme 26/26、layout 48/48；两份脚本及 Preview APK 哈希与记录匹配。除非两项数据安全补丁直接影响这些流程，不重复运行整套模拟器矩阵。
 
-定位：[Test-AppAppearance.ps1](../../tools/glass-preview/Test-AppAppearance.ps1)，首次捕获断言约第 93 行、启动入口约第 121–122 行；同时检查 [Test-ImmersionSettings.ps1](../../tools/glass-preview/Test-ImmersionSettings.ps1) 中同类旧入口。
+定位：[Test-AppAppearance.ps1](../../../tools/glass-preview/Test-AppAppearance.ps1)，首次捕获断言约第 93 行、启动入口约第 121–122 行；同时检查 [Test-ImmersionSettings.ps1](../../../tools/glass-preview/Test-ImmersionSettings.ps1) 中同类旧入口。
 
 初次审查时，脚本进入 `THEME` 后立即要求找到“跟随系统”，后续还直接点击“夜间”“日间”；应用模式控件已经位于 `APPEARANCE`，`THEME` 显示的是“日间样式／夜间样式”，导致普通运行和 `-StartupOnly` 在首次捕获失败。首轮修复已使导航与断言匹配当前 UI。
 

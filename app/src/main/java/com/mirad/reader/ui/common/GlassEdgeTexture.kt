@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * 边缘质感开关：仅为预览对照保留“临时禁用边缘”的观测能力，生产环境恒为 true。
- * 只影响边缘绘制，不参与模糊、布局或阅读位置计算。
+ * 只影响边缘绘制与折射，不参与模糊、布局或阅读位置计算。
  */
 val LocalGlassEdgeTexture = staticCompositionLocalOf { true }
 
@@ -140,17 +140,17 @@ private object EdgeBrushCache {
     private fun scatteringBrush(height: Float, dark: Boolean, intensity: Float): Brush =
         Brush.linearGradient(
             colorStops = if (dark) arrayOf(
-                0.00f to Color.White.copy(alpha = .36f * intensity),
-                0.26f to Color.White.copy(alpha = .18f * intensity),
+                0.00f to Color.White.copy(alpha = (.36f * intensity).coerceIn(0f, 1f)),
+                0.26f to Color.White.copy(alpha = (.18f * intensity).coerceIn(0f, 1f)),
                 0.52f to Color.Transparent,
-                0.80f to Color.Black.copy(alpha = .08f * intensity),
-                1.00f to Color.Black.copy(alpha = .22f * intensity)
+                0.80f to Color.Black.copy(alpha = (.08f * intensity).coerceIn(0f, 1f)),
+                1.00f to Color.Black.copy(alpha = (.22f * intensity).coerceIn(0f, 1f))
             ) else arrayOf(
-                0.00f to Color.White.copy(alpha = .24f * intensity),
-                0.26f to Color.White.copy(alpha = .12f * intensity),
+                0.00f to Color.White.copy(alpha = (.24f * intensity).coerceIn(0f, 1f)),
+                0.26f to Color.White.copy(alpha = (.12f * intensity).coerceIn(0f, 1f)),
                 0.52f to Color.Transparent,
-                0.80f to Color.Black.copy(alpha = .12f * intensity),
-                1.00f to Color.Black.copy(alpha = .28f * intensity)
+                0.80f to Color.Black.copy(alpha = (.12f * intensity).coerceIn(0f, 1f)),
+                1.00f to Color.Black.copy(alpha = (.28f * intensity).coerceIn(0f, 1f))
             ),
             start = Offset.Zero,
             end = Offset(0f, height)
@@ -159,15 +159,15 @@ private object EdgeBrushCache {
     private fun specularBrush(height: Float, dark: Boolean, intensity: Float): Brush =
         Brush.linearGradient(
             colorStops = if (dark) arrayOf(
-                0.00f to Color.White.copy(alpha = .76f * intensity),
-                0.24f to Color.White.copy(alpha = .38f * intensity),
-                0.52f to Color.White.copy(alpha = .05f * intensity),
+                0.00f to Color.White.copy(alpha = (.76f * intensity).coerceIn(0f, 1f)),
+                0.24f to Color.White.copy(alpha = (.38f * intensity).coerceIn(0f, 1f)),
+                0.52f to Color.White.copy(alpha = (.05f * intensity).coerceIn(0f, 1f)),
                 0.80f to Color.Transparent,
                 1.00f to Color.Transparent
             ) else arrayOf(
-                0.00f to Color.White.copy(alpha = .48f * intensity),
-                0.24f to Color.White.copy(alpha = .22f * intensity),
-                0.52f to Color.White.copy(alpha = .03f * intensity),
+                0.00f to Color.White.copy(alpha = (.48f * intensity).coerceIn(0f, 1f)),
+                0.24f to Color.White.copy(alpha = (.22f * intensity).coerceIn(0f, 1f)),
+                0.52f to Color.White.copy(alpha = (.03f * intensity).coerceIn(0f, 1f)),
                 0.80f to Color.Transparent,
                 1.00f to Color.Transparent
             ),

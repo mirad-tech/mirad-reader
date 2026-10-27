@@ -141,7 +141,7 @@ try {
     if($Suite -ne 'fallback') {
     Check ((Metric $initial 'hardware') -eq 'true' -and (Metric $initial 'gpuActive') -eq 'true') 'the reader uses an active hardware content node'
     # 语义已改为"清晰度"：100% 是"最清晰"，按计划必须走显式的无 blur 分支（blur=0、薄底、不是 fallback）。
-    Check ([double](Metric $initial 'baseOpacity') -le .04 -and [double](Metric $initial 'blurDp') -eq 0) 'at 100% clarity the first toolbar frame uses the explicit no-blur branch with a thin tint'
+    Check ([Math]::Abs([double](Metric $initial 'baseOpacity') - .08) -lt .001 -and [double](Metric $initial 'blurDp') -eq 0) 'at 100% clarity the first toolbar frame uses zero blur and the 8% day tint'
     $midLaunch=Device @('shell','am','start','-S','-W','-n',$component,'--es','scene','appearance','--es','entry','reader','--ez','hardware','true','--es','mode','DAY','--ez','chrome','true','--ei','transparency','50','--ez','fullScreen','false','--ez','showClock','false','--ez','fallback','false')
     Start-Sleep -Milliseconds 900
     $mid=Capture 'clarity-50'
@@ -174,10 +174,14 @@ try {
         CheckPosition $before $expanded 'dragging a sheet'
         Check ((Metric $expanded 'fallbackMaterials') -eq '0') 'dragged material keeps its hardware background'
         [void](Device @('shell','input','keyevent','KEYCODE_BACK'))
+        $contentTree=Ui
+        $contentNode=$contentTree.SelectNodes('//node') | Where-Object {$_.GetAttribute('class') -eq 'android.webkit.WebView'} | Select-Object -First 1
+        if($null -eq $contentNode) {throw 'No visible reader content before opening the menu.'}
+        $contentBounds=Bounds $contentNode
         Tap '更多'
         $menu=Capture 'menu'
         Check ($menu.hardware.modalVisible) 'reader dropdown is a same-window modal'
-        [void](Device @('shell','input','tap','30','1200'))
+        [void](Device @('shell','input','tap',"$($contentBounds.X)","$([int]($contentBounds.Top + ($contentBounds.Bottom-$contentBounds.Top)*.75))"))
         $outside=Dump
         Check (-not $outside.hardware.modalVisible -and $outside.chrome) 'tapping outside dismisses only the menu'
         CheckPosition $before $outside 'dismissing the menu outside'

@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
@@ -62,6 +62,7 @@ fun SheetScaffold(
     maxHeightFraction: Float = Sizes.sheetMaxHeightFraction,
     content: @Composable ColumnScope.() -> Unit
 ) {
+    ResetEdgeBounceOnOverlay()
     val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
     if (readerHost != null) {
         com.mirad.reader.ui.reader.ReaderInWindowSheet(
@@ -87,6 +88,9 @@ fun SheetScaffold(
         contentWindowInsets = { WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout) }
     ) {
         ApplyReaderDialogWindowPolicy()
+        androidx.compose.runtime.CompositionLocalProvider(LocalEdgeBounceAllowed provides { delta ->
+            delta < 0f && sheetState.currentValue == SheetValue.Expanded && sheetState.targetValue == SheetValue.Expanded
+        }) {
         // The public ModalBottomSheet modifier precedes its internal offset. Paint
         // inside its content so the background and clip move with the sheet.
         Column(Modifier.fillMaxWidth().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)) {
@@ -147,13 +151,14 @@ fun SheetScaffold(
                     // 否则尾部的操作会被裁掉、永远点不到。
                     .then(
                         if (fillHeight) Modifier
-                        else Modifier.verticalScroll(rememberScrollState())
+                        else Modifier.bouncingVerticalScroll(rememberScrollState())
                     ),
                 verticalArrangement = Arrangement.spacedBy(Spacing.sm)
             ) {
                 content()
             }
             Spacer(modifier = Modifier.height(Spacing.md))
+        }
         }
         }
     }
@@ -166,6 +171,13 @@ fun SheetActionButton(text: String, onClick: () -> Unit, enabled: Boolean = true
 }
 
 /** 弹层里的空状态占位（统一样式，避免每个弹层自己写一段灰字）。 */
+@Composable
+internal fun ColumnScope.BouncingSheetEmpty(text: String) {
+    BouncingLazyColumn(Modifier.fillMaxWidth().weight(1f)) {
+        item { SheetEmpty(text) }
+    }
+}
+
 @Composable
 fun SheetEmpty(text: String) {
     Box(

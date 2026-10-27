@@ -3,6 +3,7 @@ package com.mirad.reader.ui.common
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.ceil
 
 internal const val LIQUID_ANALYSIS_INTERVAL_NANOS = 500_000_000L
 internal const val LIQUID_ANALYSIS_MAX_EDGE = 64
@@ -14,10 +15,23 @@ internal fun liquidAnalysisDimensions(width: Int, height: Int): Pair<Int, Int>? 
     return max(1, (width * scale).roundToInt()) to max(1, (height * scale).roundToInt())
 }
 
-internal fun liquidBaseOpacity(percent: Int): Float {
+/** 一个玻璃容器只有一层连续底色，不按文字或局部背景另铺色块。 */
+internal fun liquidBaseOpacity(percent: Int, isDark: Boolean = false): Float {
     val remaining = 1f - percent.coerceIn(0, 100) / 100f
-    return .02f + .98f * remaining * remaining
+    val floor = if (isDark) .10f else .08f
+    return floor + (1f - floor) * remaining * remaining
 }
+
+internal fun uniformGlassOpacity(appearance: GlassAppearance, isDark: Boolean, available: Boolean): Float =
+    if (!appearance.enabled) 1f else if (!available) .94f else liquidBaseOpacity(appearance.clarityPercent, isDark)
+
+internal const val LIQUID_REFRACTION_STRENGTH_DP = 3.2f
+internal fun liquidRefractionRimDp(shortSideDp: Float): Float = min(13f, shortSideDp.coerceAtLeast(0f) * .2f)
+
+/** 零模糊也必须给折射保留采样区；额外 1px 保护边界插值。 */
+internal fun liquidMaterialPaddingPx(blurRadiusPx: Float, refraction: Boolean, density: Float): Int =
+    ceil(max(blurRadiusPx.coerceAtLeast(0f) * 2f,
+        if (refraction) LIQUID_REFRACTION_STRENGTH_DP * density + 1f else 0f)).toInt()
 
 /**
  * GPU 路径的模糊半径。

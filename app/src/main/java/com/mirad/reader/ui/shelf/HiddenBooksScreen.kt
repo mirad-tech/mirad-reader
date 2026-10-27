@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
+import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -58,17 +58,19 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
         }
     ) { padding ->
         if (hidden.isEmpty()) {
+            BouncingLazyColumn(Modifier.fillMaxSize().glassBackdropSource(), contentPadding = padding) {
+            item {
             EmptyState(
                 title = "没有被隐藏的书",
                 badge = "空",
                 description = "在书架上长按一本书，选择「在书架隐藏」后会出现在这里",
                 modifier = Modifier
-                    .fillMaxSize()
-                    .glassBackdropSource()
-                    .padding(padding)
+                    .fillParentMaxSize()
             )
+            }
+            }
         } else {
-            LazyColumn(
+            BouncingLazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .glassBackdropSource(),
