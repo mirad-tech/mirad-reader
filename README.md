@@ -2,15 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前构建版本：1.1.4（versionCode 23）**
+**当前版本：1.1.5（versionCode 24）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.4.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.5.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-1.1.4 为本地 Release 安装包交付，归档在 `artifacts/apk/release/1.1.4/<批次>/`，校验和与签名验证记录随包保存；尚未创建该版本的公开下载页面。
-
-已发布的 1.1.3 安装包：[墨读 1.1.3 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.3/mirad-reader-1.1.3-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.3/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.3)。内容与验证边界见 [1.1.3 更新说明](docs/releases/1.1.3.md)。
+[墨读 1.1.5 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.5/mirad-reader-1.1.5-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.5/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.5)。内容与验证边界见 [1.1.5 更新说明](docs/releases/1.1.5.md)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
@@ -21,6 +19,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 ## 功能
 
 - **导入与书架**：TXT / EPUB 文件、多文件及目录导入，接收其他应用分享，输入 HTTP/HTTPS 文件直链或网页长文；支持封面、搜索、排序、分组、置顶、隐藏和批量操作，网格/列表布局会被记住。
+- **书源与离线下载**：保存阅读类 JSON 书源 URL，跨源搜索并按完整目录章数比较；支持后台整本下载、暂停、继续、取消和重试，完成后作为 EPUB 加入书架。兼容范围见[书源说明](docs/BOOK_SOURCES.md)。
 - **阅读**：左右分页、上下滚动、目录跳转、进度记忆、可关闭的音量键翻页、自动阅读，以及字体、字号、行距、字间距、背景和主题设置。
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
@@ -35,7 +34,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 
 无需注册或登录。书籍、阅读进度、书签、笔记和统计保存在设备的应用私有目录与本地数据库，卸载应用会清除这些数据。应用关闭了系统备份及设备迁移。
 
-输入网址导入时会访问对应网站；系统 TTS 引擎也可能使用在线语音服务。本地阅读不要求在线书城或云账号。应用目前不提供云同步、WebDAV、PDF、MOBI 或 AZW3 支持。
+网址及书源导入、在线搜书和章节下载会访问对应网站；系统 TTS 引擎也可能使用在线语音服务。本地阅读不要求在线书城或云账号。应用目前不提供云同步、WebDAV、PDF、MOBI 或 AZW3 支持。
 
 ## 开发
 

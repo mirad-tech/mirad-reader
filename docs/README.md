@@ -12,6 +12,7 @@
 
 ## 版本说明
 
+- [1.1.5](releases/1.1.5.md)
 - [1.1.4](releases/1.1.4.md)
 - [1.1.3](releases/1.1.3.md)
 - [1.1.2](releases/1.1.2.md)
