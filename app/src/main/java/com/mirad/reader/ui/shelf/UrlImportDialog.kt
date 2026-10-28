@@ -37,7 +37,7 @@ import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
 
 /**
- * 输入书源/网络网址导入书籍对话框。
+ * 输入网络网址导入书籍对话框。
  *
  * 支持：
  * 1. 电子书文件直链（.txt / .epub）；
@@ -77,7 +77,7 @@ fun UrlImportDialog(
         onDismissRequest = { cancelAndDismiss() },
         title = {
             Text(
-                text = "输入网址导入书籍",
+                text = "网址导入",
                 style = MaterialTheme.typography.titleLarge
             )
         },

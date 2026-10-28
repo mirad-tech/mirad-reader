@@ -12,6 +12,8 @@ class MiradApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // 规则服务使用独立 UID，没有应用私有文件权限，也不应初始化数据库或网络任务。
+        if (android.os.Process.myUid() != applicationInfo.uid) return
         container = AppContainer(this)
     }
 }

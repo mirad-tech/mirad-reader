@@ -2,8 +2,41 @@ package com.mirad.reader.data.imports
 
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.coroutines.launch
 
 class ImportBatchQueueTest {
+    @Test fun cancellationWhileWaitingForTheImportLockStillCompletesItsBatch() = kotlinx.coroutines.runBlocking {
+        val queue = ImportBatchQueue()
+        val batch = queue.enqueue(listOf(ImportItem("waiting", "后台下载")))
+        val lock = kotlinx.coroutines.sync.Mutex(locked = true)
+        val waiting = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val job = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            BatchCompletionGuard(
+                abort = { queue.abort(batch, it) }, complete = { queue.complete(batch) }
+            ).run {
+                waiting.complete(Unit)
+                lock.lock()
+                lock.unlock()
+            }
+        }
+        waiting.await()
+        job.cancel()
+        job.join()
+        assertFalse(queue.state.value.running)
+        assertTrue(queue.state.value.items.isEmpty())
+        assertEquals(1, queue.summary.value!!.failed)
+        lock.unlock()
+    }
+
+    @Test fun returnsBookIdsOnlyForSuccessfulAndDuplicateImports() {
+        val queue = ImportBatchQueue()
+        val batch = queue.enqueue(listOf(ImportItem("a", "新书"), ImportItem("b", "已有书"), ImportItem("c", "失败")))
+        queue.update("a") { it.copy(stage = ImportStage.DONE, bookId = 41) }
+        queue.update("b") { it.copy(stage = ImportStage.SKIPPED, bookId = 42) }
+        queue.update("c") { it.copy(stage = ImportStage.FAILED, bookId = 99) }
+        assertEquals(listOf(41L, 42L), queue.complete(batch).bookIds)
+    }
+
     @Test fun isolatesBatchesAndKeepsUnreadResultsInOrder() {
         val queue = ImportBatchQueue()
         val first = queue.enqueue(listOf(ImportItem("a", "第一本"), ImportItem("b", "损坏文件")))

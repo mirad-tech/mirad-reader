@@ -4,8 +4,11 @@
 
     <!-- WebViewAssetLoader 使用虚拟 https 源加载本地书籍资源；TTS 引擎可能使用在线语音包。 -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.RUN_USER_INITIATED_JOBS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
@@ -61,6 +64,20 @@
             android:name=".tts.TtsService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name=".data.sources.sandbox.SourceRuleService"
+            android:process=":source_rules"
+            android:isolatedProcess="true"
+            android:exported="false" />
+        <service
+            android:name=".data.downloads.BookDownloadJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE"
+            android:exported="false" />
+        <service
+            android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync"
+            tools:node="merge" />
+        <receiver android:name=".data.downloads.BookDownloadActionReceiver" android:exported="false" />
     </application>
 
 </manifest>

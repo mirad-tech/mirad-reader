@@ -3,6 +3,7 @@
 ## 当前说明
 
 - [开发、构建与验证](DEVELOPMENT.md)
+- [书源管理、全源搜索与离线下载](BOOK_SOURCES.md)
 - [精简重构测试计划](plans/simplify-and-split-test-plan.md)
 - [代码精简报告](reports/simplify-and-split-report.md)
 - [阅读玻璃与统一外观](reader-liquid-glass.md)

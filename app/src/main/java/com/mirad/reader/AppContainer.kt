@@ -18,6 +18,19 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableStateFlow
+import com.mirad.reader.core.sources.BookDownloads
+import com.mirad.reader.core.sources.SourceRepository
+import com.mirad.reader.core.sources.SourceSearch
+import com.mirad.reader.data.downloads.BookDownloadManager
+import com.mirad.reader.data.downloads.BookDownloadScheduler
+import com.mirad.reader.data.imports.DownloadImportReceipts
+import com.mirad.reader.data.sources.BookSourceRepository
+import com.mirad.reader.data.sources.DefaultBookSourceEngine
+import com.mirad.reader.data.sources.SourceHttpClient
+import com.mirad.reader.data.sources.SourceSearchCoordinator
+import com.mirad.reader.data.sources.sandbox.SandboxRuleExecutor
+import java.io.File
 
 /**
  * 手动依赖注入容器：数据库、仓库、导入管线与全局协程作用域。
@@ -96,4 +109,19 @@ class AppContainer(app: Application) {
         )
 
     val context: Application get() = application
+
+    val openDownloads = MutableStateFlow(false)
+    private val sourceHttp = SourceHttpClient()
+    private val sourceEngine = DefaultBookSourceEngine(sourceHttp, SandboxRuleExecutor(app))
+    val sources: SourceRepository = BookSourceRepository(File(app.filesDir, "book-sources"), sourceHttp, appScope)
+    val sourceSearch: SourceSearch = SourceSearchCoordinator(sources, sourceEngine, appScope)
+    val downloadScheduler by lazy { BookDownloadScheduler(app) { downloadManager.hasPendingTasks() } }
+    private val downloadReceipts = DownloadImportReceipts(database.preferenceDao()) { books.getBook(it) != null }
+    val downloadManager: BookDownloadManager = BookDownloadManager(
+        root = File(app.filesDir, "book-downloads"), engine = sourceEngine, importer = importer, scope = appScope,
+        findImported = downloadReceipts::find,
+        scheduleRun = { downloadScheduler.schedule() }, cancelRun = { downloadScheduler.cancelIfIdle() },
+        networkAvailable = { BookDownloadScheduler.isNetworkAvailable(app) }
+    )
+    val bookDownloads: BookDownloads get() = downloadManager
 }

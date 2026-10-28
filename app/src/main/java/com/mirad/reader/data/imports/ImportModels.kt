@@ -9,7 +9,11 @@ sealed interface ImportSource {
 
     data class FromUri(val uri: Uri, override val displayName: String) : ImportSource
 
-    data class FromFile(val file: File) : ImportSource {
+    data class FromFile(
+        val file: File,
+        val originUrl: String? = null,
+        val downloadTaskId: String? = null
+    ) : ImportSource {
         override val displayName: String get() = file.name
     }
 }
@@ -51,5 +55,6 @@ data class ImportSummary(
     val failed: Int,
     val skipped: Int,
     val messages: List<String>,
-    val batchId: String = ""
+    val batchId: String = "",
+    val bookIds: List<Long> = emptyList()
 )

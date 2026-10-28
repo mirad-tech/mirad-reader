@@ -54,6 +54,9 @@ class ImportPipeline(
     val state: StateFlow<ImportState> = batches.state
     val lastSummary: StateFlow<ImportSummary?> = batches.summary
     private val mutex = Mutex()
+    private val downloadReceipts = appDatabase?.let {
+        DownloadImportReceipts(it.preferenceDao()) { bookId -> books.getBook(bookId) != null }
+    }
 
     fun clearSummary(batchId: String? = lastSummary.value?.batchId) {
         batches.acknowledge(batchId)
@@ -76,16 +79,18 @@ class ImportPipeline(
 
     private suspend fun runBatch(
         batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean
-    ): ImportSummary = mutex.withLock {
+    ): ImportSummary {
         var summary: ImportSummary? = null
         // 收敛逻辑见 BatchCompletionGuard：取消/异常也要把批次收成终态，否则 running 永远为 true。
         BatchCompletionGuard(
             abort = { reason -> batches.abort(batch, reason) },
             complete = { summary = batches.complete(batch) }
         ).run {
-            for (index in sources.indices) importOne(sources[index], items[index].id, force)
+            mutex.withLock {
+                for (index in sources.indices) importOne(sources[index], items[index].id, force)
+            }
         }
-        checkNotNull(summary)
+        return checkNotNull(summary)
     }
 
     // ------------------------------------------------------------------ 单个文件
@@ -99,8 +104,16 @@ class ImportPipeline(
 
     private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean) {
         val token = UUID.randomUUID().toString()
-        var insertedBookId: Long? = null
+        val downloadTaskId = (source as? ImportSource.FromFile)?.downloadTaskId
+        var committedBookId: Long? = null
         try {
+            downloadTaskId?.let { taskId ->
+                downloadReceipts?.find(taskId)?.let { id ->
+                    updateItem(itemId) { it.copy(stage = ImportStage.SKIPPED, progress = 1f,
+                        bookId = id, message = "下载书籍已加入书架") }
+                    return
+                }
+            }
             updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
             val extension = guessExtension(source)
             val target = paths.originalFile(token, extension)
@@ -130,9 +143,13 @@ class ImportPipeline(
                 // 否则"同名同长度的不同书"会被静默跳过，用户以为导入失败。
                 if (duplicate != null && sameContent(target, duplicate)) {
                     paths.deleteBookFiles(token, null)
+                    downloadTaskId?.let { taskId ->
+                        withContext(NonCancellable + Dispatchers.IO) { downloadReceipts?.record(taskId, duplicate.id) }
+                    }
                     updateItem(itemId) {
                         it.copy(
                             stage = ImportStage.SKIPPED,
+                            bookId = duplicate.id,
                             message = "书架中已有同一本书《${duplicate.title}》",
                             progress = 1f
                         )
@@ -146,7 +163,7 @@ class ImportPipeline(
                 else prepareTxt(source, token, target, displayTitle, size)
             }
 
-            val bookId = run {
+            withContext(NonCancellable + Dispatchers.IO) {
                 // 入库三步同事务：中途崩溃不会留下"有书行但章节为空"的半本书。
                 val block: suspend () -> Long = {
                     val id = books.insertBook(prepared.book)
@@ -159,25 +176,26 @@ class ImportPipeline(
                         regex = prepared.regex,
                         encoding = prepared.encoding
                     )
+                    downloadTaskId?.let { taskId -> downloadReceipts?.record(taskId, id) }
                     id
                 }
                 val db = appDatabase
-                if (db != null) db.withTransaction { block() } else block()
-            }
-            insertedBookId = bookId
-
-            updateItem(itemId) {
-                it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId)
+                val bookId = if (db != null) db.withTransaction { block() } else block()
+                committedBookId = bookId
+                updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId) }
             }
         } catch (t: Throwable) {
+            // 事务成功后不能因恢复协程时的取消删除正文；恢复任务从同事务的凭据找回书籍。
+            if (committedBookId != null) {
+                updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = committedBookId) }
+                if (t is kotlinx.coroutines.CancellationException) throw t
+                return
+            }
             // 清理必须包 NonCancellable：协程已取消时，裸的 withContext 会立刻抛
             // CancellationException，文件/DB 补偿一步都不会执行。
             withContext(NonCancellable + Dispatchers.IO) {
-                insertedBookId?.let { id -> books.getBook(id)?.let { books.deleteBook(it) } }
                 // 封面写在 coversDir（不在书籍目录下），补偿必须显式带上，否则孤儿 jpg 会累积。
-                if (insertedBookId == null) {
-                    paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
-                }
+                paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
             }
             // 取消不是"导入失败"：往上抛，由 runBatch 统一把批次收敛成"已取消"。
             if (t is kotlinx.coroutines.CancellationException) throw t
@@ -352,7 +370,7 @@ class ImportPipeline(
 
     private fun sourceUriOf(source: ImportSource): String = when (source) {
         is ImportSource.FromUri -> source.uri.toString()
-        is ImportSource.FromFile -> source.file.absolutePath
+        is ImportSource.FromFile -> source.originUrl ?: source.file.absolutePath
     }
 
     private fun guessExtension(source: ImportSource): String {

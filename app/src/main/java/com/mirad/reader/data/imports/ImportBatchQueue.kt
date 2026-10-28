@@ -57,7 +57,9 @@ internal class ImportBatchQueue {
             skipped = items.count { it.stage == ImportStage.SKIPPED },
             messages = items.filter { it.stage != ImportStage.DONE }
                 .map { "${it.displayName}：${it.message.orEmpty()}" },
-            batchId = batch.id
+            batchId = batch.id,
+            bookIds = items.filter { it.stage == ImportStage.DONE || it.stage == ImportStage.SKIPPED }
+                .mapNotNull { it.bookId }.distinct()
         )
         val remaining = _state.value.items.filterNot { it.id in batch.itemIds }
         _state.value = ImportState(remaining, running = remaining.isNotEmpty())

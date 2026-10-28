@@ -13,6 +13,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -51,6 +52,9 @@ import com.mirad.reader.ui.reader.ReaderScreen
 import com.mirad.reader.ui.settings.SettingsScreen
 import com.mirad.reader.ui.shelf.HiddenBooksScreen
 import com.mirad.reader.ui.shelf.ShelfScreen
+import com.mirad.reader.ui.sources.BookDownloadsScreen
+import com.mirad.reader.ui.sources.SourceManagerScreen
+import com.mirad.reader.ui.sources.SourceSearchScreen
 import com.mirad.reader.ui.stats.StatsScreen
 import com.mirad.reader.ui.theme.MiradTheme
 import kotlinx.coroutines.CancellationException
@@ -65,6 +69,9 @@ sealed interface Screen {
     data class SettingsDetail(val route: com.mirad.reader.ui.settings.SettingsRoute) : Screen
     data object Notes : Screen
     data object HiddenBooks : Screen
+    data object SourceManager : Screen
+    data object OnlineSearch : Screen
+    data object Downloads : Screen
 }
 
 /**
@@ -75,6 +82,7 @@ sealed interface Screen {
 fun AppRoot(container: AppContainer, systemDark: Boolean) {
     val backStack = remember { mutableStateListOf<Screen>(Screen.Shelf) }
     val current = backStack.last()
+    val openDownloads by container.openDownloads.collectAsState()
 
     var loadGeneration by remember { mutableIntStateOf(0) }
     var loadFailed by remember { mutableStateOf(false) }
@@ -158,6 +166,20 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
     }
 
+    fun openSourcePage(screen: Screen) {
+        val existing = backStack.indexOfLast { it == screen }
+        if (existing >= 0) {
+            while (backStack.lastIndex > existing) backStack.removeAt(backStack.lastIndex)
+        } else navigate(screen)
+    }
+
+    LaunchedEffect(container, openDownloads) {
+        if (openDownloads) {
+            openSourcePage(Screen.Downloads)
+            container.openDownloads.value = false
+        }
+    }
+
     BackHandler(enabled = backStack.size > 1) { goBack() }
 
     val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
@@ -202,7 +224,9 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         onOpenStats = { navigate(Screen.Stats) },
                         onOpenSettings = { navigate(Screen.Settings) },
                         onOpenNotes = { navigate(Screen.Notes) },
-                        onOpenHidden = { navigate(Screen.HiddenBooks) }
+                        onOpenHidden = { navigate(Screen.HiddenBooks) },
+                        onOnlineSearch = { openSourcePage(Screen.OnlineSearch) },
+                        onSourceManager = { openSourcePage(Screen.SourceManager) }
                     )
                     is Screen.Reader -> ReaderScreen(
                         container = container,
@@ -228,6 +252,27 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) }
                     )
                     Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
+                    Screen.SourceManager -> SourceManagerScreen(
+                        repository = container.sources,
+                        onBack = { goBack() },
+                        onSearch = { openSourcePage(Screen.OnlineSearch) }
+                    )
+                    Screen.OnlineSearch -> SourceSearchScreen(
+                        repository = container.sources,
+                        search = container.sourceSearch,
+                        downloads = container.bookDownloads,
+                        actionScope = container.appScope,
+                        onBack = { goBack() },
+                        onSources = { openSourcePage(Screen.SourceManager) },
+                        onDownloads = { openSourcePage(Screen.Downloads) }
+                    )
+                    Screen.Downloads -> BookDownloadsScreen(
+                        downloads = container.bookDownloads,
+                        actionScope = container.appScope,
+                        onBack = { goBack() },
+                        onSearch = { openSourcePage(Screen.OnlineSearch) },
+                        onOpenBook = { navigate(Screen.Reader(it)) }
+                    )
                 }
             }
         }

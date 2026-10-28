@@ -61,7 +61,9 @@ fun ShelfScreen(
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenNotes: () -> Unit = {},
-    onOpenHidden: () -> Unit = {}
+    onOpenHidden: () -> Unit = {},
+    onOnlineSearch: () -> Unit = {},
+    onSourceManager: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -140,6 +142,7 @@ fun ShelfScreen(
         actions = ShelfContentActions(
             onOpenBook = onOpenBook, onStats = onOpenStats, onSettings = onOpenSettings,
             onNotes = onOpenNotes, onHidden = onOpenHidden,
+            onOnlineSearch = onOnlineSearch, onSourceManager = onSourceManager,
             onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
             onQueryChange = { query = it }, onSortChange = { sort = it },
             onLayoutChange = { container.settings.queueShelfLayout(it == ShelfLayout.GRID, container.appScope) },

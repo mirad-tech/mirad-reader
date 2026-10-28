@@ -46,7 +46,9 @@ class MainActivity : ComponentActivity() {
         val container = (application as MiradApp).container
         // 只在冷启动消费外部 Intent。配置变更/进程重建时 savedInstanceState != null，
         // 跳过以免同一次分享被重复入队；用户再次分享是新 Intent，走 onNewIntent，不受影响。
-        if (savedInstanceState == null) importFromExternalIntent(intent, container)
+        if (savedInstanceState == null || intent?.action == com.mirad.reader.data.downloads.BookDownloadNotifications.ACTION_OPEN) {
+            importFromExternalIntent(intent, container)
+        }
         setContent {
             val systemDark = isSystemInDarkTheme()
             AppRoot(container = container, systemDark = systemDark)
@@ -58,6 +60,15 @@ class MainActivity : ComponentActivity() {
         if (intent == null) return
         setIntent(intent)
         importFromExternalIntent(intent, (application as MiradApp).container)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val container = (application as MiradApp).container
+        externalImportScope.launch {
+            try { container.downloadManager.restoreScheduling() }
+            catch (error: Exception) { container.downloadManager.reportRunnerFailure(error) }
+        }
     }
 
     override fun onDestroy() {
@@ -75,6 +86,11 @@ class MainActivity : ComponentActivity() {
     private fun importFromExternalIntent(intent: Intent?, container: AppContainer) {
         if (intent == null) return
         val action = intent.action
+        if (action == com.mirad.reader.data.downloads.BookDownloadNotifications.ACTION_OPEN) {
+            container.openDownloads.value = true
+            intent.action = Intent.ACTION_MAIN
+            return
+        }
         if (action != ExternalImportUris.ACTION_VIEW && action != ExternalImportUris.ACTION_SEND) return
 
         val clipUris = intent.clipData?.let { clip ->

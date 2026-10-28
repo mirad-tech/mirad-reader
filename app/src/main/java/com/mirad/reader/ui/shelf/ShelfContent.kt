@@ -278,6 +278,8 @@ internal data class ShelfContentActions(
     val onImportFile: () -> Unit = {},
     val onImportFolder: () -> Unit = {},
     val onImportUrl: () -> Unit = {},
+    val onOnlineSearch: () -> Unit = {},
+    val onSourceManager: () -> Unit = {},
     val onImportSamples: () -> Unit = {}
 )
 
@@ -487,8 +489,12 @@ internal fun ShelfContent(
                             onClick = { importMenu = false; actions.onImportFile() })
                         DropdownMenuItem(text = { Text("导入文件夹") },
                             onClick = { importMenu = false; actions.onImportFolder() })
-                        DropdownMenuItem(text = { Text("输入书源网址导入") },
+                        DropdownMenuItem(text = { Text("网址导入") },
                             onClick = { importMenu = false; actions.onImportUrl() })
+                        DropdownMenuItem(text = { Text("在线搜书") },
+                            onClick = { importMenu = false; actions.onOnlineSearch() })
+                        DropdownMenuItem(text = { Text("书源管理") },
+                            onClick = { importMenu = false; actions.onSourceManager() })
                         if (BuildConfig.DEBUG) {
                             DropdownMenuItem(text = { Text("导入调试样书（samples 目录）") },
                                 onClick = { importMenu = false; actions.onImportSamples() })
