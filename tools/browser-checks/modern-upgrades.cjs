@@ -9,7 +9,7 @@ const assert = require('assert');
 const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
-const readerJs = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8');
+const readerJs = require('./reader-source.cjs')();
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 
 const themeCss = `

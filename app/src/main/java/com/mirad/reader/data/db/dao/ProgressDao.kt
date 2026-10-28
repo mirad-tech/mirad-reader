@@ -16,9 +16,6 @@ interface ProgressDao {
     @Query("SELECT * FROM progress WHERE bookId = :bookId")
     suspend fun get(bookId: Long): ProgressEntity?
 
-    @Query("SELECT * FROM progress WHERE bookId = :bookId")
-    fun observe(bookId: Long): Flow<ProgressEntity?>
-
     @Query("SELECT * FROM progress")
     fun observeAll(): Flow<List<ProgressEntity>>
 

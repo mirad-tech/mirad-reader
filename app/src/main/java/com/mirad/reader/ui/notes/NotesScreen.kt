@@ -1,16 +1,11 @@
 package com.mirad.reader.ui.notes
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.runtime.key
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
@@ -29,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.mirad.reader.AppContainer
-import com.mirad.reader.core.model.NoteExporter
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.ui.common.glassBackdropSource
@@ -43,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.mirad.reader.ui.common.rememberMarkdownExporter
 
 /**
  * 全部书籍的划线与书签（跨书浏览 + 一次性导出）。
@@ -61,7 +56,6 @@ fun NotesScreen(
     var titles by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
     var chapterTotals by remember { mutableStateOf<Map<Long, Int>>(emptyMap()) }
     var chapterLengths by remember { mutableStateOf<Map<Long, List<Int>>>(emptyMap()) }
-    var pendingExport by remember { mutableStateOf<String?>(null) }
     var pendingDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("notes")
     var message by feedback
@@ -93,24 +87,8 @@ fun NotesScreen(
 
     LaunchedEffect(Unit) { reload() }
 
-    val exporter = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/markdown")
-    ) { uri ->
-        val content = pendingExport
-        pendingExport = null
-        if (uri != null && content != null) {
-            scope.launch {
-                val ok = withContext(Dispatchers.IO) {
-                    runCatching {
-                        // 旧写法在 openOutputStream 返回 null 时也返回 true → 提示"已导出"但什么都没写
-                        val out = context.contentResolver.openOutputStream(uri) ?: return@runCatching false
-                        out.use { it.write(content.toByteArray()) }
-                        true
-                    }.getOrDefault(false)
-                }
-                message = if (ok) "已导出" else "导出失败"
-            }
-        }
+    val exporter = rememberMarkdownExporter { ok ->
+        message = if (ok) "已导出" else "导出失败"
     }
 
     Scaffold(
@@ -132,8 +110,7 @@ fun NotesScreen(
                                 val full = withContext(Dispatchers.IO) {
                                     buildFullExport(highlights, bookmarks, titles)
                                 }
-                                pendingExport = full
-                                exporter.launch("墨读-全部读书笔记.md")
+                                exporter("墨读-全部读书笔记.md", full)
                             }
                         },
                         enabled = highlights.isNotEmpty() || bookmarks.isNotEmpty()

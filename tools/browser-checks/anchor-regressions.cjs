@@ -5,7 +5,7 @@ const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
 const outDir = path.resolve(root, process.env.MIRAD_ANCHOR_EVIDENCE_DIR || 'build/verification/anchor-regressions');
-const readerJs = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8');
+const readerJs = require('./reader-source.cjs')();
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 const theme14 = fs.readFileSync(path.join(__dirname, 'fixtures/theme-14.css'), 'utf8');
 const theme = size => theme14.replace('font-size:14.0px', 'font-size:' + size + 'px');

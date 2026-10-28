@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -64,6 +63,12 @@ import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.core.model.ThemePaletteResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.mirad.reader.AppContainer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.rememberUpdatedState
 
 /** 内置背景缩略图缓存。 */
 private object BackgroundThumbs {
@@ -518,4 +523,50 @@ private fun BackgroundPresetTile(
             modifier = Modifier.padding(top = 3.dp)
         )
     }
+}
+
+
+/** 两个设置入口共用字体导入、列表刷新和删除；配置加载期间仍只预取列表。 */
+internal class ReadingFontActions(
+    val fonts: List<ReadingFont>,
+    val importFont: () -> Unit = {},
+    val deleteFont: (ReadingFont) -> Unit = {}
+)
+
+@Composable
+internal fun rememberReadingFonts(
+    container: AppContainer,
+    scope: CoroutineScope,
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    ready: Boolean = true
+): ReadingFontActions {
+    var fonts by remember { mutableStateOf(emptyList<ReadingFont>()) }
+    LaunchedEffect(Unit) {
+        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+    }
+    if (!ready) return ReadingFontActions(fonts)
+    val latestChange by rememberUpdatedState(onChange)
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
+            if (imported != null) {
+                fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+                latestChange {
+                    it.copy(
+                        fontFamily = FontFamilyKey.CUSTOM,
+                        customFontAsset = null,
+                        customFontPath = imported.filePath
+                    )
+                }
+            }
+        }
+    }
+    return ReadingFontActions(
+        fonts = fonts,
+        importFont = { picker.launch(arrayOf("*/*")) },
+        deleteFont = { font -> scope.launch {
+            withContext(Dispatchers.IO) { container.fonts.delete(font) }
+            fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+        } }
+    )
 }

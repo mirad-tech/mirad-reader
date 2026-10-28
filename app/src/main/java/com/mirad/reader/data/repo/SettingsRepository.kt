@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -28,7 +27,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 阅读配置仓库：全书通用阅读配置。
@@ -98,10 +96,6 @@ class SettingsRepository @JvmOverloads constructor(
         dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(config), System.currentTimeMillis()))
         lastPersistedGlobal = config
         maybeNotifyBackgroundCleanup()
-    }
-
-    suspend fun updateGlobal(transform: (ReaderConfig) -> ReaderConfig) {
-        saveGlobal(transform(currentGlobal()))
     }
 
     private data class AppearanceSnapshot(val generation: Long, val value: AppAppearance)

@@ -51,13 +51,9 @@ class BookRepository(
         }
     }
 
-    fun observeBook(id: Long): Flow<BookEntity?> = bookDao.observeById(id)
-
     suspend fun getBook(id: Long): BookEntity? = bookDao.getById(id)
 
     suspend fun getChapters(bookId: Long): List<ChapterEntity> = chapterDao.getForBook(bookId)
-
-    fun observeChapters(bookId: Long): Flow<List<ChapterEntity>> = chapterDao.observeForBook(bookId)
 
     suspend fun getChapter(bookId: Long, index: Int): ChapterEntity? = chapterDao.getChapter(bookId, index)
 
@@ -102,8 +98,6 @@ class BookRepository(
     ) = bookDao.updateIndexInfo(bookId, chapters, chars, ruleId, regex, encoding)
 
     suspend fun getProgress(bookId: Long): ProgressEntity? = progressDao.get(bookId)
-
-    fun observeProgress(bookId: Long): Flow<ProgressEntity?> = progressDao.observe(bookId)
 
     suspend fun saveProgress(progress: ProgressEntity) = progressDao.upsert(progress)
 

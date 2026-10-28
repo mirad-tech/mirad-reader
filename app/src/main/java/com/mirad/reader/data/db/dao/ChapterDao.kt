@@ -17,9 +17,6 @@ interface ChapterDao {
     @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY `index` ASC")
     suspend fun getForBook(bookId: Long): List<ChapterEntity>
 
-    @Query("SELECT * FROM chapters WHERE bookId = :bookId ORDER BY `index` ASC")
-    fun observeForBook(bookId: Long): kotlinx.coroutines.flow.Flow<List<ChapterEntity>>
-
     @Query("SELECT * FROM chapters WHERE bookId = :bookId AND `index` = :index LIMIT 1")
     suspend fun getChapter(bookId: Long, index: Int): ChapterEntity?
 

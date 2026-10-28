@@ -31,6 +31,10 @@ macOS / Linux 将 `.\gradlew.bat` 换成 `./gradlew`。
 
 Node.js 20 或更新版本；Playwright 版本由 `tools/browser-checks/package-lock.json` 固定。
 
+阅读引擎源码位于 `app/src/main/reader/`。其中 `reader.js` 是固定顺序的拼接入口，`// @include` 对应同目录的职责文件；所有片段仍在同一个闭包中执行。Gradle 为 Debug、Preview、Release 分别生成 `app/build/generated/readerAssets/<构建类型>/reader/reader.js`，APK 中的加载路径仍为 `/reader/reader.js`。修改源码片段后必须运行本节回归，不直接编辑生成文件。
+
+浏览器脚本通过 `reader-source.cjs` 读取同一个入口并拼接源码，不需要先构建 Android；普通 Gradle 构建也不依赖 Node.js。
+
 ```powershell
 npm ci --prefix tools/browser-checks
 npm --prefix tools/browser-checks exec -- playwright install chromium

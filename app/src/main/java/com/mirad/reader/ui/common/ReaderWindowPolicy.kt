@@ -15,6 +15,21 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.DialogWindowProvider
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.app.Activity
+import android.view.WindowManager
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.only
+import com.mirad.reader.ui.common.LocalReaderWindowPolicy
+import com.mirad.reader.ui.common.ReaderWindowPolicy
+import com.mirad.reader.ui.common.ApplyReaderWindowPolicy
+import com.mirad.reader.ui.common.ReaderSystemBarProtection
+import androidx.compose.ui.platform.LocalContext
+import com.mirad.reader.core.model.OrientationKey
+import com.mirad.reader.core.model.ReaderConfig
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.systemBars
 
 internal data class ReaderWindowPolicy(val fullScreen: Boolean, val darkTheme: Boolean)
 internal val LocalReaderWindowPolicy = staticCompositionLocalOf<ReaderWindowPolicy?> { null }
@@ -105,5 +120,42 @@ internal fun ReaderSystemBarProtection(background: Color) {
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().windowInsetsBottomHeight(insets).background(background))
         Box(Modifier.align(Alignment.CenterStart).fillMaxHeight().windowInsetsStartWidth(insets).background(background))
         Box(Modifier.align(Alignment.CenterEnd).fillMaxHeight().windowInsetsEndWidth(insets).background(background))
+    }
+}
+
+/** 亮度 / 常亮 / 方向 / 全屏。 */
+@Composable
+internal fun ApplyReaderWindowSettings(config: ReaderConfig, darkTheme: Boolean) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    ApplyReaderWindowPolicy(activity?.window, ReaderWindowPolicy(config.fullScreen, darkTheme))
+    DisposableEffect(activity, config.brightness, config.keepScreenOn, config.orientation) {
+        val window = activity?.window
+        if (window != null) {
+            val params = window.attributes
+            params.screenBrightness = if (config.brightness < 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            else config.brightness.coerceIn(0.01f, 1f)
+            window.attributes = params
+            if (config.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            activity.requestedOrientation = when (config.orientation) {
+                OrientationKey.PORTRAIT -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                OrientationKey.LANDSCAPE -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                else -> android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+        onDispose { }
+    }
+    DisposableEffect(activity) {
+        onDispose {
+            val w = activity?.window ?: return@onDispose
+            w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            val params = w.attributes
+            params.screenBrightness = WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            w.attributes = params
+            val controller = WindowInsetsControllerCompat(w, w.decorView)
+            controller.show(WindowInsetsCompat.Type.systemBars())
+            activity.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        }
     }
 }

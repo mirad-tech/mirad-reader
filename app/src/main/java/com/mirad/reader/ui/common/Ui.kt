@@ -96,17 +96,7 @@ fun MiradButton(
         ),
         contentPadding = contentPadding
     ) {
-        ProvideTextStyle(MiradButtonTextStyle) {
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor
-                )
-            } else {
-                content()
-            }
-        }
+        MiradButtonContent(loading, contentColor, content)
     }
 }
 
@@ -138,17 +128,7 @@ fun MiradOutlinedButton(
         ),
         contentPadding = contentPadding
     ) {
-        ProvideTextStyle(MiradButtonTextStyle) {
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor
-                )
-            } else {
-                content()
-            }
-        }
+        MiradButtonContent(loading, contentColor, content)
     }
 }
 
@@ -176,16 +156,25 @@ fun MiradTextButton(
         ),
         contentPadding = contentPadding
     ) {
-        ProvideTextStyle(MiradButtonTextStyle) {
-            if (loading) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(18.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor
-                )
-            } else {
-                content()
-            }
+        MiradButtonContent(loading, contentColor, content)
+    }
+}
+
+@Composable
+private fun RowScope.MiradButtonContent(
+    loading: Boolean,
+    contentColor: Color,
+    content: @Composable RowScope.() -> Unit
+) {
+    ProvideTextStyle(MiradButtonTextStyle) {
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp,
+                color = contentColor
+            )
+        } else {
+            content()
         }
     }
 }
@@ -240,17 +229,6 @@ fun SettingCard(
         }
         Spacer(modifier = Modifier.height(24.dp))
     }
-}
-
-/** 设置项标题（卡片内部的小标题）。 */
-@Composable
-fun ItemLabel(text: String, modifier: Modifier = Modifier) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodyMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier
-    )
 }
 
 @Composable
@@ -485,31 +463,5 @@ fun ColorDotRow(
                 }
             }
         }
-    }
-}
-
-/** 设置项一行：左侧标题（可带副标题），右侧开关。 */
-@Composable
-fun SwitchRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    subtitle: String? = null
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(text = label, style = MaterialTheme.typography.bodyMedium)
-            if (subtitle != null) {
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        androidx.compose.material3.Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }

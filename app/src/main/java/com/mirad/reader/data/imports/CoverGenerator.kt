@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
-import android.graphics.Rect
 import android.graphics.Shader
 import android.graphics.Typeface
 import java.io.File
@@ -116,6 +115,4 @@ object CoverGenerator {
         return result.ifEmpty { listOf(text.take(20)) }
     }
 
-    /** 生成"标题 + 序号"的图片占位（调试或封面缺失时使用）。 */
-    fun measureArea(width: Int, height: Int): Rect = Rect(0, 0, width, height)
 }

@@ -14,6 +14,21 @@ class StreamingTxtProcessorTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun streamingAndInMemoryKeepIdenticalChapterRanges() {
+        val chapters = (1..6).joinToString("\n") { "第${it}章 山路\n中文与 emoji 🌲，以及 English。\n" }
+        listOf(chapters, "标题之前的正文。\n$chapters", "第一卷 山中\n$chapters\n第二卷 海边\n$chapters")
+            .forEach { text ->
+                val source = tempFolder.newFile().apply { writeText(text) }
+                val normalized = tempFolder.newFile()
+                val streamed = StreamingTxtProcessor.process(source, normalized, "UTF-8")
+                val content = normalized.readText()
+                val detection = ChapterDetector.detect(content)
+                assertTrue("夹具必须命中标题识别路径", detection.marks.isNotEmpty())
+                assertEquals(ChapterSplitter.split(content, detection), streamed.slices)
+            }
+    }
+
+    @Test
     fun testChineseRepeated5000Times90000BytesUtf8Integrity() {
         // F01 P1: "中文内容测试" 重复 5000 次的 90000 字节无 BOM UTF-8，
         // 采样截断发生在 64 KiB 边界（byte 65535 恰为第 6 个字符的第 1 个字节），

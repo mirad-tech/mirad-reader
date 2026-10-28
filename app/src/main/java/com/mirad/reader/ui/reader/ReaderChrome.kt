@@ -1,19 +1,15 @@
 package com.mirad.reader.ui.reader
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -24,7 +20,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PlayArrow
@@ -33,14 +28,12 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import com.mirad.reader.ui.common.MiradSlider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -58,6 +51,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import kotlin.math.ceil
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
+import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.model.ThemePalette
+import kotlinx.coroutines.delay
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 
 /** Same safe area for controls and text, including transient bars in immersive mode. */
 @Composable
@@ -286,3 +291,103 @@ private fun BarAction(
         )
     }
 }
+
+/** 页眉页脚：章节名 / 时间 / 电量 / 页码 / 进度。 */
+@Composable
+internal fun HeaderFooter(
+    config: ReaderConfig,
+    palette: ThemePalette,
+    chapterTitle: String,
+    page: Int,
+    pages: Int,
+    percent: Float,
+    insetLeftDp: Int = -1
+) {
+    val clock = rememberClock(config.showClock)
+    val battery = rememberBattery(config.showBattery)
+    val textColor = Color(palette.secondaryText)
+    // 正文列居中后，页眉页脚要跟着列左边缘走，否则会贴在屏幕边上与正文错位。
+    val horizontal = if (insetLeftDp >= 0) (insetLeftDp + 4).dp else (config.horizontalPaddingDp + 4).dp
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+            .padding(horizontal = horizontal, vertical = 4.dp),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        if (config.showHeader) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = chapterTitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = textColor,
+                    maxLines = 1
+                )
+                Row {
+                    if (config.showBattery) {
+                        Text("$battery%  ", style = MaterialTheme.typography.labelSmall, color = textColor)
+                    }
+                    if (config.showClock) {
+                        Text(clock, style = MaterialTheme.typography.labelSmall, color = textColor)
+                    }
+                }
+            }
+        }
+        if (config.showFooter) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = String.format(java.util.Locale.US, "%.1f%%", percent * 100f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = textColor
+                )
+                if (config.showPageNumber) {
+                    Text(
+                        text = "${page + 1} / ${pages}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = textColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun rememberClock(enabled: Boolean): String {
+    var time by remember { mutableStateOf(currentTime()) }
+    LaunchedEffect(enabled) {
+        while (enabled) {
+            time = currentTime()
+            delay(20_000)
+        }
+    }
+    return time
+}
+
+private fun currentTime(): String = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+
+@Composable
+private fun rememberBattery(enabled: Boolean): Int {
+    val context = LocalContext.current
+    var level by remember { mutableStateOf(readBattery(context)) }
+    LaunchedEffect(enabled) {
+        while (enabled) {
+            level = readBattery(context)
+            delay(60_000)
+        }
+    }
+    return level
+}
+
+private fun readBattery(context: Context): Int = runCatching {
+    val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+    val level = intent?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
+    val scale = intent?.getIntExtra(BatteryManager.EXTRA_SCALE, -1) ?: -1
+    if (level >= 0 && scale > 0) level * 100 / scale else -1
+}.getOrDefault(-1)

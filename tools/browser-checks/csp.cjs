@@ -21,7 +21,7 @@ const providerPath = path.join(
   root,
   'app/src/main/java/com/mirad/reader/reader/ReaderResourceProvider.kt'
 );
-const readerJs = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8');
+const readerJs = require('./reader-source.cjs')();
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 
 /** 从生产源码解析出指令列表（保持顺序与内容），只替换 $ORIGIN 占位。 */

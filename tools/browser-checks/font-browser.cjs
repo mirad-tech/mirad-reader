@@ -6,7 +6,7 @@ const { chromium } = require('playwright');
 const root = path.resolve(__dirname, '../..');
 const dir = path.join(root, 'build/verification/font-browser');
 const fixtureDir = path.join(__dirname, 'fixtures');
-const js = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8');
+const js = require('./reader-source.cjs')();
 const structural = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 const css = (size, baseline) => fs.readFileSync(
   path.join(fixtureDir, baseline ? 'baseline' : '', 'theme-' + size + '.css'), 'utf8');

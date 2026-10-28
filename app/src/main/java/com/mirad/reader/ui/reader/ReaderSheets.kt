@@ -1,7 +1,5 @@
 package com.mirad.reader.ui.reader
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -12,78 +10,36 @@ import androidx.compose.foundation.layout.padding
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import com.mirad.reader.ui.common.bouncingVerticalScroll
 import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
 import com.mirad.reader.ui.common.MiradOutlinedButton
-import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.OutlinedTextField
 import com.mirad.reader.ui.common.MiradSlider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
-import com.mirad.reader.core.model.AutoReadSpeed
-import com.mirad.reader.core.model.EpubLayoutMode
-import com.mirad.reader.core.model.NoteAnchor
-import com.mirad.reader.core.model.NoteExporter
-import com.mirad.reader.core.model.OrientationKey
-import com.mirad.reader.core.model.PageAnim
-import com.mirad.reader.core.model.PageMode
-import com.mirad.reader.core.model.ReaderConfig
-import com.mirad.reader.core.model.TapZoneKey
-import com.mirad.reader.core.model.TextAlignKey
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.repo.SearchHit
 import com.mirad.reader.data.repo.SearchOptions
 import com.mirad.reader.data.repo.SearchProgress
 import com.mirad.reader.reader.ReaderSession
-import com.mirad.reader.reader.AutoReadState
-import com.mirad.reader.tts.TtsBus
-import com.mirad.reader.tts.TtsController
 import com.mirad.reader.ui.common.*
-import com.mirad.reader.ui.settings.ReadingSettingsPage
-import com.mirad.reader.ui.settings.canEditReaderTypography
-import com.mirad.reader.ui.settings.reading.AppModeQuickRow
-import com.mirad.reader.ui.settings.reading.AutoReadSpeedControls
-import com.mirad.reader.ui.settings.reading.FontSizeControl
-import com.mirad.reader.ui.settings.reading.QuickThemeSwatches
-import com.mirad.reader.ui.settings.reading.ReadingSettingsHost
-import com.mirad.reader.ui.settings.readingSettingsPages
-import com.mirad.reader.ui.common.BackgroundSection
 import com.mirad.reader.ui.common.CardDivider
-import com.mirad.reader.ui.common.ChoiceRow
-import com.mirad.reader.ui.common.FontSection
-import com.mirad.reader.ui.common.LabeledSlider
 import com.mirad.reader.ui.common.ListRow
-import com.mirad.reader.ui.common.SegmentedRow
 import com.mirad.reader.ui.common.SettingCard
-import com.mirad.reader.ui.common.SettingSwitchRow
 import com.mirad.reader.ui.common.SheetActionButton
 import com.mirad.reader.ui.common.BouncingSheetEmpty
 import com.mirad.reader.ui.common.SheetScaffold
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Spacing
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlin.math.roundToInt
 
 // ---------------------------------------------------------------- 目录
 
@@ -230,299 +186,6 @@ fun ProgressSheet(
     }
 }
 
-// ---------------------------------------------------------------- 阅读设置
-
-@Composable
-fun ReaderSettingsSheet(
-    container: AppContainer,
-    bookId: Long,
-    isEpub: Boolean = false,
-    config: ReaderConfig,
-    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onOpenAutoRead: () -> Unit,
-    onResetGlobal: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    // 初始为空、面板打开后到 IO 线程刷新：available() 要列 assets 与字体目录，不能在主线程组合期执行。
-    var fonts by remember { mutableStateOf(listOf<com.mirad.reader.core.model.ReadingFont>()) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-    }
-    val latestChange by rememberUpdatedState(onChange)
-    val appearanceController = LocalAppAppearanceController.current
-
-    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
-                if (imported != null) {
-                    fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    latestChange {
-                        it.copy(
-                            fontFamily = com.mirad.reader.core.model.FontFamilyKey.CUSTOM,
-                            customFontAsset = null,
-                            customFontPath = imported.filePath
-                        )
-                    }
-                }
-            }
-        }
-    }
-    val pickImage = rememberReadingBackgroundPicker(container)
-
-    DisposableEffect(appearanceController) {
-        onDispose { appearanceController?.commitReadingConfig() }
-    }
-    CompositionLocalProvider(LocalSettingsCommit provides { appearanceController?.commitReadingConfig() }) {
-        ReaderSettingsPanel(
-            config = config, fonts = fonts, isEpub = isEpub,
-            onChange = onChange, onOpenAutoRead = onOpenAutoRead,
-            onResetGlobal = onResetGlobal, onDismiss = onDismiss,
-            onImportFont = { fontPicker.launch(arrayOf("*/*")) },
-            onDeleteFont = { font -> scope.launch {
-                withContext(Dispatchers.IO) { container.fonts.delete(font) }
-                fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-            } },
-            onPickImage = pickImage
-        )
-    }
-}
-
-/** The same settings panel can be rendered with memory-only state in the native preview. */
-@Composable
-internal fun ReaderSettingsPanel(
-    config: ReaderConfig,
-    fonts: List<com.mirad.reader.core.model.ReadingFont> = emptyList(),
-    isEpub: Boolean = false,
-    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onOpenAutoRead: () -> Unit,
-    onResetGlobal: () -> Unit,
-    onDismiss: () -> Unit,
-    onImportFont: () -> Unit = {},
-    onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
-    onPickImage: (dark: Boolean) -> Unit = {},
-    initialPage: ReadingSettingsPage? = null
-) {
-    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialPage) }
-    val scrollStates = ReadingSettingsPage.entries.associateWith { rememberScrollState() }
-    val homeScroll = rememberScrollState()
-    androidx.activity.compose.BackHandler(page != null) { page = null }
-    SheetScaffold(
-        title = page?.title ?: "阅读设置",
-        subtitle = "全书通用",
-        onDismiss = onDismiss,
-        fillHeight = true,
-        maxHeightFraction = 0.62f,
-        actions = { if (page != null) SheetActionButton("返回", { page = null }) }
-    ) {
-        Column(Modifier.fillMaxWidth().bouncingVerticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
-            val selected = page
-            if (selected == null) {
-                // 快捷调节卡放最前：窄屏大字体下面板高度受限时，日夜模式与主题色块仍要一眼可达。
-                SettingCard {
-                    AppModeQuickRow()
-                    QuickThemeSwatches(config, onChange)
-                    CardDivider()
-                    SegmentedRow(
-                        options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
-                        selected = config.pageMode,
-                        onSelect = { mode -> onChange { it.copy(pageMode = mode) } }
-                    )
-                }
-                if (canEditReaderTypography(config, isEpub)) {
-                    SettingCard { FontSizeControl(config, onChange) }
-                }
-                SettingCard {
-                    SettingNavRow(
-                        label = "自动阅读",
-                        value = AutoReadSpeed.summary(config),
-                        subtitle = if (config.pageMode == PageMode.SCROLL) "匀速下滑，章末停留后接下一章" else "定时翻页，章末按间隔进入下一章",
-                        onClick = onOpenAutoRead
-                    )
-                    CardDivider()
-                    readingSettingsPages(isEpub)
-                        .forEach { item -> SettingNavRow(item.title, onClick = { page = item }) }
-                }
-                MiradOutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复阅读默认设置") }
-            } else {
-                ReadingSettingsHost(page = selected, config = config, onChange = onChange, fonts = fonts,
-                    onImportFont = onImportFont,
-                    onDeleteFont = onDeleteFont,
-                    onPickImage = onPickImage,
-                    isEpub = isEpub,
-                    onOpenPage = { page = it })
-            }
-            Spacer(Modifier.height(Spacing.lg))
-        }
-    }
-}
-
-// ---------------------------------------------------------------- 笔记与书签
-
-@Composable
-fun NotesSheet(
-    container: AppContainer,
-    session: ReaderSession,
-    book: BookEntity,
-    onDismiss: () -> Unit,
-    onJump: (chapterIndex: Int, offset: Int) -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val highlights by container.notes.observeHighlights(book.id).collectAsState(initial = emptyList())
-    val bookmarks by container.notes.observeBookmarks(book.id).collectAsState(initial = emptyList())
-    var tab by remember { mutableStateOf(0) }
-    var pendingExport by remember { mutableStateOf<String?>(null) }
-    var message by remember { mutableStateOf<String?>(null) }
-    // 删除划线/书签是破坏性操作，先确认再执行（保留动作供确认后调用）
-    var pendingDelete by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
-    // 章节长度：用于判断划线/书签是否已失效（重新识别编码或重新分章后章节会变）
-    val chapterCharCounts = remember(session.chapters) {
-        session.chapters.map { it.charCount.toInt() }
-    }
-
-    val exporter = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/markdown")
-    ) { uri ->
-        val content = pendingExport
-        pendingExport = null
-        if (uri != null && content != null) {
-            scope.launch {
-                val ok = withContext(Dispatchers.IO) {
-                    runCatching {
-                        // 旧写法在 openOutputStream 返回 null 时也返回 true → 提示"已导出"但什么都没写
-                        val out = context.contentResolver.openOutputStream(uri) ?: return@runCatching false
-                        out.use { it.write(content.toByteArray()) }
-                        true
-                    }.getOrDefault(false)
-                }
-                message = if (ok) "已导出到所选文件" else "导出失败"
-            }
-        }
-    }
-
-    fun startExport() {
-        scope.launch {
-            val markdown = withContext(Dispatchers.IO) {
-                val chapters = session.chapters
-                val titleOf = { index: Int -> chapters.firstOrNull { it.index == index }?.title.orEmpty() }
-                NoteExporter.toMarkdown(
-                    bookTitle = book.title,
-                    author = book.author,
-                    highlights = container.notes.allHighlights(book.id).map {
-                        NoteExporter.ExportHighlight(it.chapterIndex, titleOf(it.chapterIndex), it.startOffset, it.text, it.note)
-                    },
-                    bookmarks = container.notes.allBookmarks().filter { it.bookId == book.id }.map {
-                        NoteExporter.ExportBookmark(it.chapterIndex, titleOf(it.chapterIndex).ifBlank { it.chapterTitle }, it.charOffset, it.snippet)
-                    }
-                )
-            }
-            if (markdown.isEmpty()) {
-                message = "还没有可导出的划线或书签"
-            } else {
-                pendingExport = markdown
-                exporter.launch("${book.title}-读书笔记.md")
-            }
-        }
-    }
-
-    pendingDelete?.let { pending ->
-        com.mirad.reader.ui.common.MiradDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("删除${pending.first}") },
-            text = { Text("删除后无法恢复，确定要删除吗？") },
-            confirmButton = {
-                MiradTextButton(danger = true, onClick = {
-                    val action = pending.second
-                    pendingDelete = null
-                    action()
-                }) { Text("删除") }
-            },
-            dismissButton = {
-                MiradTextButton(onClick = { pendingDelete = null }) { Text("取消") }
-            }
-        )
-    }
-
-    SheetScaffold(
-        title = "笔记与书签",
-        subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}" + (message?.let { " · $it" } ?: ""),
-        onDismiss = onDismiss,
-        fillHeight = true,
-        actions = {
-            SheetActionButton("导出", onClick = { startExport() }, enabled = highlights.isNotEmpty() || bookmarks.isNotEmpty())
-        }
-    ) {
-        Column(modifier = Modifier.padding(horizontal = Spacing.xl)) {
-            SegmentedRow(
-                options = listOf(0 to "划线 ${highlights.size}", 1 to "书签 ${bookmarks.size}"),
-                selected = tab,
-                onSelect = { tab = it }
-            )
-        }
-        when (tab) {
-            0 -> if (highlights.isEmpty()) {
-                BouncingSheetEmpty("还没有划线或笔记。\n长按选中文字后点工具条上的「划线」或「笔记」。")
-            } else {
-                BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    items(highlights, key = { it.id }) { highlight ->
-                        val stale = NoteAnchor.isStale(
-                            highlight.chapterIndex,
-                            highlight.startOffset,
-                            chapterCharCounts
-                        )
-                        ListRow(
-                            title = highlight.text,
-                            subtitle = highlight.note,
-                            meta = if (stale) {
-                                "第 ${highlight.chapterIndex + 1} 章 · ${NoteAnchor.STALE_HINT}"
-                            } else {
-                                "第 ${highlight.chapterIndex + 1} 章"
-                            },
-                            trailing = {
-                                SheetActionButton("删除", onClick = {
-                                    pendingDelete = "划线" to { scope.launch { session.deleteHighlight(highlight) } }
-                                })
-                            },
-                            onClick = if (stale) null else ({ onJump(highlight.chapterIndex, highlight.startOffset) })
-                        )
-                    }
-                }
-            }
-            else -> if (bookmarks.isEmpty()) {
-                BouncingSheetEmpty("还没有书签。\n点顶栏的星标即可把当前位置加入书签。")
-            } else {
-                BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    items(bookmarks, key = { it.id }) { bookmark ->
-                        val stale = NoteAnchor.isStale(
-                            bookmark.chapterIndex,
-                            bookmark.charOffset,
-                            chapterCharCounts
-                        )
-                        ListRow(
-                            title = bookmark.chapterTitle,
-                            subtitle = bookmark.snippet,
-                            meta = if (stale) NoteAnchor.STALE_HINT else null,
-                            trailing = {
-                                SheetActionButton(
-                                    "删除",
-                                    onClick = {
-                                        pendingDelete = "书签" to {
-                                            scope.launch { container.notes.deleteBookmark(bookmark) }
-                                        }
-                                    }
-                                )
-                            },
-                            onClick = if (stale) null else ({ onJump(bookmark.chapterIndex, bookmark.charOffset) })
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------- 全文搜索
 
 @Composable
@@ -622,152 +285,6 @@ fun SearchSheet(
                     )
                 }
             }
-        }
-    }
-}
-
-// ---------------------------------------------------------------- 朗读
-
-/** 跳到系统 TTS 设置；老机型没有该页面时退回应用详情页。 */
-fun openTtsSettings(context: android.content.Context) {
-    val candidates = listOf(
-        android.content.Intent("com.android.settings.TTS_SETTINGS"),
-        android.content.Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS),
-        android.content.Intent(
-            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-            android.net.Uri.fromParts("package", context.packageName, null)
-        )
-    )
-    for (intent in candidates) {
-        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (runCatching { context.startActivity(intent) }.isSuccess) return
-    }
-}
-
-@Composable
-fun TtsSheet(
-    tts: TtsController,
-    config: ReaderConfig,
-    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onStart: (resume: Boolean, fromBeginning: Boolean) -> Unit,
-    onClose: () -> Unit
-) {
-    val state by TtsBus.state.collectAsState()
-    SheetScaffold(
-        title = "朗读",
-        subtitle = when {
-            state.error != null -> state.error
-            state.active -> "第 ${state.index + 1}/${state.total} 句"
-            else -> "使用系统语音朗读当前章节"
-        },
-        onDismiss = onClose
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.xl),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                MiradOutlinedButton(onClick = { tts.previous() }, modifier = Modifier.weight(1f)) { Text("上一句") }
-                MiradOutlinedButton(
-                    onClick = { if (state.active && state.playing) tts.pause() else onStart(state.active, false) },
-                    modifier = Modifier.weight(1f)
-                ) { Text(if (state.playing) "暂停" else "播放") }
-                MiradOutlinedButton(onClick = { tts.next() }, modifier = Modifier.weight(1f)) { Text("下一句") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                MiradOutlinedButton(onClick = { onStart(false, true) }, modifier = Modifier.weight(1f)) { Text("从本章开头") }
-                MiradOutlinedButton(
-                    onClick = { tts.stop(); onClose() },
-                    modifier = Modifier.weight(1f)
-                ) { Text("停止朗读") }
-            }
-            if (state.active) {
-                MiradLinearProgress(
-                    progress = { if (state.total <= 0) 0f else (state.index + 1).toFloat() / state.total },
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-            ReadingSettingsHost(ReadingSettingsPage.TTS, config, onChange)
-            Spacer(modifier = Modifier.height(Spacing.sm))
-        }
-    }
-}
-
-// ---------------------------------------------------------------- 自动阅读
-
-/**
- * 自动阅读设置弹层：「更多」菜单与阅读设置首页共用这一个入口。
- *
- * 只保存速度，不保存运行状态；打开面板本身会暂停自动阅读，调速后需要手动「继续」。
- */
-@Composable
-fun AutoReadSheet(
-    config: ReaderConfig,
-    state: AutoReadState,
-    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onStart: () -> Unit,
-    onStop: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    val paged = config.pageMode != PageMode.SCROLL
-    val active = state != AutoReadState.OFF
-    SheetScaffold(
-        title = "自动阅读",
-        subtitle = if (paged) "左右翻页 · 定时翻到下一页" else "上下滚动 · 按真实时间匀速下滑",
-        onDismiss = onDismiss
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = Spacing.xl),
-            verticalArrangement = Arrangement.spacedBy(Spacing.sm)
-        ) {
-            SettingCard {
-                SettingSwitchRow(
-                    label = "自动阅读",
-                    subtitle = when (state) {
-                        AutoReadState.RUNNING -> "正在运行"
-                        AutoReadState.PAUSED -> "已暂停，需要手动继续"
-                        AutoReadState.OFF -> "关闭"
-                    },
-                    checked = active,
-                    onCheckedChange = { enabled ->
-                        // 关闭开关立即取消；开启会在关闭弹层与工具栏后开始。
-                        if (enabled) onStart() else onStop()
-                    }
-                )
-                AutoReadSpeedControls(config, onChange)
-                if (!paged) {
-                    Text(
-                        text = "一屏按扣除正文上下安全留白后的可读高度计算。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                CardDivider()
-                Text(
-                    text = if (paged) {
-                        "到章末后按同一间隔进入下一章；章节加载完成后重新计时。"
-                    } else {
-                        "到章末后停留一个「翻页间隔」，再进入下一章。"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            if (state == AutoReadState.PAUSED) {
-                MiradOutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
-                    Text("继续自动阅读")
-                }
-            }
-            Text(
-                text = "触摸正文、打开菜单或切到后台会暂停；暂停后不会自动继续。速度设置全书通用。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(Spacing.sm))
         }
     }
 }

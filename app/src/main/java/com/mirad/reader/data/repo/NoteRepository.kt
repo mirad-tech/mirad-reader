@@ -23,15 +23,9 @@ class NoteRepository(
 
     suspend fun addHighlight(highlight: HighlightEntity): Long = highlightDao.insert(highlight)
 
-    suspend fun updateHighlight(highlight: HighlightEntity) = highlightDao.update(highlight)
-
     suspend fun deleteHighlight(highlight: HighlightEntity) = highlightDao.delete(highlight)
 
-    suspend fun deleteHighlightsForBook(bookId: Long) = highlightDao.deleteForBook(bookId)
-
     suspend fun addBookmark(bookmark: BookmarkEntity): Long = bookmarkDao.insert(bookmark)
-
-    suspend fun updateBookmark(bookmark: BookmarkEntity) = bookmarkDao.update(bookmark)
 
     suspend fun deleteBookmark(bookmark: BookmarkEntity) = bookmarkDao.delete(bookmark)
 

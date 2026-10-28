@@ -46,9 +46,6 @@ open class ChapterTextProvider(private val paths: AppPaths? = null) {
     }
 
     /** EPUB：读取 zip 内 XHTML 并转成纯文本。 */
-    fun readEpubText(book: BookEntity, chapter: ChapterEntity): String =
-        readEpubTextOrNull(book, chapter).orEmpty()
-
     fun readEpubTextOrNull(book: BookEntity, chapter: ChapterEntity): String? {
         val href = chapter.href ?: return null
         val file = File(book.filePath)

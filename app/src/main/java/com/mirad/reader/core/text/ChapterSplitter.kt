@@ -40,13 +40,15 @@ object ChapterSplitter {
     fun split(text: String, detection: ChapterDetection, fallbackChunkChars: Int = FALLBACK_CHUNK_CHARS): List<ChapterSlice> {
         if (text.isEmpty()) return emptyList()
         val marks = detection.marks
-        val byteIdx = TextNormalizer.utf8Length(text)
         if (marks.isEmpty()) {
             return fallbackChunks(text, fallbackChunkChars)
         }
+        return slicesFromMarks(marks, text.length, TextNormalizer.utf8Length(text))
+    }
 
+    /** 普通读取与流式读取共用已确认标题的区间划分，字符和字节偏移保持同源。 */
+    internal fun slicesFromMarks(marks: List<ChapterMark>, totalChars: Int, totalBytes: Long): List<ChapterSlice> {
         val slices = ArrayList<ChapterSlice>(marks.size + 1)
-        val totalBytes = byteIdx
 
         // 第一个标题之前的内容作为"前言"独立成章。
         if (marks.first().startChar > 0) {
@@ -66,7 +68,7 @@ object ChapterSplitter {
         for (i in marks.indices) {
             val mark = marks[i]
             val next = marks.getOrNull(i + 1)
-            val endChar = next?.startChar ?: text.length
+            val endChar = next?.startChar ?: totalChars
             val endByte = next?.startByte ?: totalBytes
             if (endChar <= mark.startChar) continue
             slices.add(

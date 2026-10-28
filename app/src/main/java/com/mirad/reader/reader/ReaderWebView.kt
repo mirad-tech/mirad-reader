@@ -8,6 +8,13 @@ import android.view.Menu
 import android.view.MenuItem
 import android.view.MotionEvent
 import android.webkit.WebView
+import android.annotation.SuppressLint
+import android.graphics.Color
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
+import android.webkit.WebViewClient
 
 /** 原生选区工具条上的自定义动作。 */
 enum class SelectionAction { HIGHLIGHT, NOTE, SEARCH }
@@ -150,5 +157,72 @@ class ReaderWebView(context: Context) : WebView(context) {
         private const val MENU_HIGHLIGHT = 0x4D01
         private const val MENU_NOTE = 0x4D02
         private const val MENU_SEARCH = 0x4D03
+    }
+}
+
+
+/** 统一阅读文档的 WebView 配置、虚拟源隔离与就绪回报。 */
+@SuppressLint("SetJavaScriptEnabled")
+internal fun ReaderWebView.bindReader(
+    resources: ReaderResourceProvider,
+    bridge: ReaderJsBridge,
+    currentChapterUrl: () -> String,
+    onRendered: () -> Unit
+) {
+    val view = this
+    view.settings.apply {
+        javaScriptEnabled = true
+        domStorageEnabled = false
+        allowFileAccess = false
+        allowContentAccess = false
+        loadsImagesAutomatically = true
+        blockNetworkImage = false
+        builtInZoomControls = false
+        displayZoomControls = false
+        setSupportZoom(false)
+        textZoom = 100
+        cacheMode = WebSettings.LOAD_NO_CACHE
+        mediaPlaybackRequiresUserGesture = true
+    }
+    view.setBackgroundColor(Color.TRANSPARENT)
+    view.isVerticalScrollBarEnabled = false
+    view.isHorizontalScrollBarEnabled = false
+    view.addJavascriptInterface(bridge, "MiradBridge")
+    view.webViewClient = object : WebViewClient() {
+        override fun shouldInterceptRequest(
+            view: WebView,
+            request: WebResourceRequest
+        ): WebResourceResponse? {
+            val uri = request.url
+            if (uri.host == ReaderResourceProvider.HOST) {
+                return resources.intercept(uri)
+            }
+            // 阻断一切外部网络请求（EPUB 中的外链图片/脚本也不会联网）
+            return WebResourceResponse("text/plain", "UTF-8", java.io.ByteArrayInputStream(ByteArray(0)))
+        }
+
+        override fun shouldOverrideUrlLoading(
+            view: WebView,
+            request: WebResourceRequest
+        ): Boolean = true
+
+        override fun onPageFinished(view: WebView, url: String) {
+            // about:blank 等中间页面会先触发回调，必须按 URL 过滤；
+            // 同时忽略已被新一次 loadUrl 取代的旧章节，避免旧页面的回调把新章标成就绪。
+            val expected = currentChapterUrl()
+            val normalized = url.substringBefore('#').substringBefore('?').trimEnd('/')
+            if (normalized == expected) {
+                onRendered()
+            }
+        }
+    }
+    view.webChromeClient = object : WebChromeClient() {
+        override fun onConsoleMessage(message: android.webkit.ConsoleMessage): Boolean {
+            android.util.Log.i(
+                "MiradWebView",
+                "${message.message()} @${message.sourceId()}:${message.lineNumber()}"
+            )
+            return true
+        }
     }
 }

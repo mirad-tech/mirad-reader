@@ -1,7 +1,7 @@
 /**
  * 自动阅读 / 上下滚动的真实浏览器验证。
  *
- * 使用当前 app/src/main/assets/reader/reader.js 与 reader.css，在 Chromium 里铺真实章节 HTML：
+ * 使用 app/src/main/reader/ 的拼接脚本与 reader.css，在 Chromium 里铺真实章节 HTML：
  *  - 手动驱动 requestAnimationFrame 的虚拟时间，检查不同帧率下的位移、长帧钳制；
  *  - 触摸后自动下滑/点按滚动动画立即停止；
  *  - 滚动位置回报的 200ms 节流与停止后最终补报；
@@ -17,7 +17,7 @@ const assert = require('assert')
 const { chromium } = require('playwright')
 
 const root = path.resolve(__dirname, '../..')
-const readerJs = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.js'), 'utf8')
+const readerJs = require('./reader-source.cjs')()
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8')
 const outDir = path.join(root, 'build/verification/auto-read')
 fs.mkdirSync(outDir, { recursive: true })

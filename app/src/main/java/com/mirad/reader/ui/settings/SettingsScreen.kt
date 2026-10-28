@@ -1,7 +1,5 @@
 package com.mirad.reader.ui.settings
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
@@ -18,19 +16,16 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.mirad.reader.AppContainer
 import com.mirad.reader.BuildConfig
-import com.mirad.reader.core.model.FontFamilyKey
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.FeedbackHost
@@ -49,9 +44,7 @@ import com.mirad.reader.ui.common.rememberReadingBackgroundPicker
 import com.mirad.reader.ui.design.Spacing
 import com.mirad.reader.ui.settings.reading.ReadingSettingsHost
 import com.mirad.reader.ui.shelf.GroupManagerSheet
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import com.mirad.reader.ui.common.rememberReadingFonts
 
 /**
  * 全书通用阅读设置与应用设置。
@@ -72,61 +65,36 @@ fun SettingsScreen(
     val systemDark = LocalAppSystemDark.current
     val isDark = LocalAppDarkTheme.current ?: systemDark
     val config = baseConfig?.let { appearance?.resolveReaderConfig(it, systemDark) ?: it }
-    // 初始为空、进入组合后到 IO 线程刷新：available() 要列 assets 与字体目录，不能在主线程组合期执行。
-    var fonts by remember { mutableStateOf(listOf<com.mirad.reader.core.model.ReadingFont>()) }
     val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
     val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
     var showGroupManager by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     val feedback = rememberFeedbackState("settings")
 
-    LaunchedEffect(Unit) {
-        fonts = withContext(Dispatchers.IO) { container.fonts.available() }
+    val update: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
+        appearanceController?.updateReadingConfig(isDark, transform)
     }
+
+    val fontActions = rememberReadingFonts(container, scope, update, ready = config != null)
 
     if (config == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
         return
     }
 
-    val update: ((ReaderConfig) -> ReaderConfig) -> Unit = { transform ->
-        appearanceController?.updateReadingConfig(isDark, transform)
-    }
-    val latestUpdate by rememberUpdatedState(update)
-
     DisposableEffect(appearanceController) {
         onDispose { appearanceController?.commitReadingConfig() }
     }
 
-    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
-                if (imported != null) {
-                    fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                    latestUpdate {
-                        it.copy(
-                            fontFamily = FontFamilyKey.CUSTOM,
-                            customFontAsset = null,
-                            customFontPath = imported.filePath
-                        )
-                    }
-                }
-            }
-        }
-    }
     val pickImage = rememberReadingBackgroundPicker(container)
 
     CompositionLocalProvider(LocalSettingsCommit provides { appearanceController?.commitReadingConfig() }) {
     SettingsContent(
-        config = config, fonts = fonts, shelf = shelf,
+        config = config, fonts = fontActions.fonts, shelf = shelf,
         route = route, onBack = onBack, onOpenRoute = onOpenRoute,
         onOpenHidden = onOpenHidden, onChange = { update(it) },
-        onImportFont = { fontPicker.launch(arrayOf("*/*")) },
-        onDeleteFont = { font -> scope.launch {
-            withContext(Dispatchers.IO) { container.fonts.delete(font) }
-            fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-        } },
+        onImportFont = fontActions.importFont,
+        onDeleteFont = fontActions.deleteFont,
         onPickImage = pickImage,
         groupCount = groups.size,
         onManageGroups = { showGroupManager = true },

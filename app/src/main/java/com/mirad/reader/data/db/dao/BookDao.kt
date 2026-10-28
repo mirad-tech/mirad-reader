@@ -23,14 +23,8 @@ interface BookDao {
     @Query("SELECT * FROM books WHERE id = :id")
     suspend fun getById(id: Long): BookEntity?
 
-    @Query("SELECT * FROM books WHERE id = :id")
-    fun observeById(id: Long): Flow<BookEntity?>
-
     @Query("SELECT * FROM books ORDER BY isPinned DESC, lastReadAt DESC, addedAt DESC")
     fun observeAll(): Flow<List<BookEntity>>
-
-    @Query("SELECT * FROM books ORDER BY title COLLATE NOCASE ASC")
-    suspend fun getAllSortedByTitle(): List<BookEntity>
 
     @Query("SELECT * FROM books WHERE fileSize = :fileSize AND title = :title LIMIT 1")
     suspend fun findDuplicate(title: String, fileSize: Long): BookEntity?

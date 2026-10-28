@@ -1,8 +1,45 @@
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.OutputDirectory
+import org.gradle.api.tasks.PathSensitive
+import org.gradle.api.tasks.PathSensitivity
+import org.gradle.api.tasks.TaskAction
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.ksp)
+}
+
+/** 保留一个脚本、一个闭包；按源码入口的固定顺序拼接，不增加运行时加载步骤。 */
+abstract class ReaderAssetsTask : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val sourceDirectory: DirectoryProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun bundle() {
+        val source = sourceDirectory.get().asFile
+        fun read(name: String) = source.resolve(name).readText().replace("\r\n", "\n")
+        val script = Regex("(?m)^    // @include (\\S+)\n")
+            .replace(read("reader.js")) { read(it.groupValues[1]) }
+        outputDirectory.file("reader/reader.js").get().asFile.apply {
+            parentFile.mkdirs()
+            writeText(script)
+        }
+    }
+}
+
+androidComponents.onVariants { variant ->
+    val bundle = tasks.register<ReaderAssetsTask>("bundle${variant.name.replaceFirstChar { it.uppercaseChar() }}Reader") {
+        sourceDirectory.set(layout.projectDirectory.dir("src/main/reader"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/readerAssets/${variant.name}"))
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(bundle, ReaderAssetsTask::outputDirectory)
 }
 
 ksp {
@@ -21,8 +58,8 @@ android {
         applicationId = "com.mirad.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 22
-        versionName = "1.1.3"
+        versionCode = 23
+        versionName = "1.1.4"
     }
 
     buildTypes {

@@ -29,8 +29,7 @@ object StreamingTxtProcessor {
     private const val SAMPLE_BYTES = 64 * 1024
     private const val SAMPLE_CHARS = 64 * 1024
     private const val MAX_LINE_CHARS = 8192
-    private const val PREFACE_TITLE = "前言"
-    private const val FALLBACK_CHUNK_CHARS = 3000
+    private const val FALLBACK_CHUNK_CHARS = ChapterSplitter.FALLBACK_CHUNK_CHARS
 
     private data class SplitPoint(val charOffset: Int, val byteOffset: Long)
 
@@ -273,7 +272,7 @@ object StreamingTxtProcessor {
         // 否则同一本书导入与重新分章会给出两套不同的章节划分。
         val marksTrusted = titleMarks.isNotEmpty() && marksAreTrustworthy(titleMarks)
         val slices = if (marksTrusted) {
-            buildSlicesFromMarks(titleMarks, totalChars.toInt(), totalBytes)
+            ChapterSplitter.slicesFromMarks(titleMarks, totalChars.toInt(), totalBytes)
         } else {
             buildFallbackSlicesFromPoints(fallbackPoints, totalChars.toInt(), totalBytes)
         }
@@ -296,47 +295,6 @@ object StreamingTxtProcessor {
             else ChapterDetector.chapterNumber(mark.title)?.let { groups.last().add(it) }
         }
         return groups.none { !ChapterDetector.isMonotonic(it) }
-    }
-
-    private fun buildSlicesFromMarks(
-        marks: List<ChapterMark>,
-        totalChars: Int,
-        totalBytes: Long
-    ): List<ChapterSlice> {
-        val slices = ArrayList<ChapterSlice>(marks.size + 1)
-        if (marks.first().startChar > 0) {
-            slices.add(
-                ChapterSlice(
-                    title = PREFACE_TITLE,
-                    titleLineChars = 0,
-                    startChar = 0,
-                    endChar = marks.first().startChar,
-                    startByte = 0L,
-                    endByte = marks.first().startByte,
-                    isVolume = false
-                )
-            )
-        }
-
-        for (i in marks.indices) {
-            val mark = marks[i]
-            val next = marks.getOrNull(i + 1)
-            val endChar = next?.startChar ?: totalChars
-            val endByte = next?.startByte ?: totalBytes
-            if (endChar <= mark.startChar) continue
-            slices.add(
-                ChapterSlice(
-                    title = mark.title,
-                    titleLineChars = mark.titleLineChars,
-                    startChar = mark.startChar,
-                    endChar = endChar,
-                    startByte = mark.startByte,
-                    endByte = endByte,
-                    isVolume = mark.isVolume
-                )
-            )
-        }
-        return slices
     }
 
     private fun buildFallbackSlicesFromPoints(

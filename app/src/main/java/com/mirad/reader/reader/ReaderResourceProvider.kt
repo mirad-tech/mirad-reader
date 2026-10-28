@@ -150,7 +150,6 @@ class ReaderResourceProvider(
         }
         fun backgroundUrl(bookId: Long) = "$ORIGIN/book/$bookId/bg"
         fun fontUrl(bookId: Long) = "$ORIGIN/book/$bookId/font"
-        fun coverUrl(bookId: Long) = "$ORIGIN/book/$bookId/cover"
     }
 
     fun intercept(uri: Uri): WebResourceResponse? {
