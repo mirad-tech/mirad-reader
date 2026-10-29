@@ -58,8 +58,8 @@ android {
         applicationId = "com.mirad.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 24
-        versionName = "1.1.5"
+        versionCode = 25
+        versionName = "1.2.0"
     }
 
     buildTypes {

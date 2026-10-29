@@ -22,11 +22,21 @@ internal fun liquidBaseOpacity(percent: Int, isDark: Boolean = false): Float {
     return floor + (1f - floor) * remaining * remaining
 }
 
-internal fun uniformGlassOpacity(appearance: GlassAppearance, isDark: Boolean, available: Boolean): Float =
-    if (!appearance.enabled) 1f else if (!available) .94f else liquidBaseOpacity(appearance.clarityPercent, isDark)
+/** 高档清晰度不模糊底图，面板以一层均匀底色保护长文案；工具栏仍保持轻薄。 */
+internal fun liquidMaterialOpacity(clarity: Int, isDark: Boolean, style: GlassStyle): Float {
+    val base = liquidBaseOpacity(clarity, isDark)
+    if (style != GlassStyle.Panel) return base
+    val clear = ((clarity.coerceIn(0, 100) - 60) / 40f).coerceIn(0f, 1f)
+    val readable = if (isDark) .88f else .92f
+    return base + (max(base, readable) - base) * clear * clear
+}
 
-internal const val LIQUID_REFRACTION_STRENGTH_DP = 3.2f
-internal fun liquidRefractionRimDp(shortSideDp: Float): Float = min(13f, shortSideDp.coerceAtLeast(0f) * .2f)
+internal fun uniformGlassOpacity(appearance: GlassAppearance, isDark: Boolean, available: Boolean,
+    style: GlassStyle = GlassStyle.Toolbar): Float =
+    if (!appearance.enabled) 1f else if (!available) .94f else liquidMaterialOpacity(appearance.clarityPercent, isDark, style)
+
+internal const val LIQUID_REFRACTION_STRENGTH_DP = 2.1f
+internal fun liquidRefractionRimDp(shortSideDp: Float): Float = min(6f, shortSideDp.coerceAtLeast(0f) * .12f)
 
 /** 零模糊也必须给折射保留采样区；额外 1px 保护边界插值。 */
 internal fun liquidMaterialPaddingPx(blurRadiusPx: Float, refraction: Boolean, density: Float): Int =

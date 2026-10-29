@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.sources
 
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
@@ -112,7 +113,8 @@ fun SourceSearchScreen(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { FeedbackHost(feedback) },
         topBar = {
-            ScreenHeader(if (comparing) "比较书源" else "在线搜书", onBack = back, actions = {
+            ScreenHeader(if (comparing) "比较书源" else "搜书", onBack = back,
+                root = !comparing && LocalAppRootPage.current, actions = {
                 Box {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "更多操作") }
                     GlassDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {

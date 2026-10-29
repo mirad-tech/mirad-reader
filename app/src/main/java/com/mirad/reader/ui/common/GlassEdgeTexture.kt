@@ -20,7 +20,7 @@ val LocalGlassEdgeTexture = staticCompositionLocalOf { true }
 
 /**
  * 方向性散射宽带 + 暗轮廓 + 窄镜面高光。它是 Compose 渐变描边，不是物理折射模型。
- * 六条宽带覆盖磨砂过渡，最后两条细线把边缘重新收锐。所有描边都裁在面板内，
+ * 一条窄散射过渡和细亮边限定轮廓。所有描边都裁在面板内，
  * 不创建离屏层、不做模糊；渐变 Brush 按尺寸、明暗和清晰度缓存。
  */
 internal fun DrawScope.drawGlassEdgeTexture(
@@ -118,7 +118,7 @@ private object EdgeBrushCache {
         shade?.let { if (shadeKey == key) return it }
         val brush = Brush.verticalGradient(
             0.88f to Color.Transparent,
-            1.00f to Color.Black.copy(alpha = if (dark) .14f else .07f)
+            1.00f to Color.Black.copy(alpha = if (dark) .025f else .015f)
         )
         shadeKey = key
         shade = brush
@@ -129,7 +129,7 @@ private object EdgeBrushCache {
         val key = if (dark) 1 else 0
         sheen?.let { if (sheenKey == key) return it }
         val brush = Brush.verticalGradient(
-            0.00f to Color.White.copy(alpha = if (dark) .05f else .08f),
+            0.00f to Color.White.copy(alpha = if (dark) .035f else .04f),
             0.20f to Color.Transparent
         )
         sheenKey = key

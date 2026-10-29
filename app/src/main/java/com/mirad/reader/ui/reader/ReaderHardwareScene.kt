@@ -1,5 +1,7 @@
 package com.mirad.reader.ui.reader
 
+import com.mirad.reader.ui.common.*
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RenderNode
@@ -41,7 +43,7 @@ internal class ReaderHardwareSceneController {
 
     fun statsSummary(): String = presentation?.let {
         val hardwareStats = if (Build.VERSION.SDK_INT >= 31) {
-            val hardware = it.host as? ReaderBackdropHost
+            val hardware = it.host as? GlassBackdropView
             "hardware=${hardware?.lastHardwareCanvas == true} records=${hardware?.contentRecords ?: 0} " +
                 (it.source?.statsSummary() ?: "fallback=true")
         } else "hardware=false records=0 fallback=true"
@@ -110,11 +112,11 @@ internal fun ReaderHardwareScene(
                     setContent { currentOverlays.value() }
                 }
                 document.addView(contentView, FrameLayout.LayoutParams(-1, -1))
-                val host = if (Build.VERSION.SDK_INT >= 31) ReaderBackdropHost(context) else ReaderPlaneHost(context)
+                val host = if (Build.VERSION.SDK_INT >= 31) GlassBackdropView(context) else GlassPlaneView(context)
                 host.setPlanes(document, overlayView)
                 val presentation = ReaderNativePresentation(host, document, contentView, overlayView, source)
                 controller.presentation = presentation
-                if (Build.VERSION.SDK_INT >= 31 && host is ReaderBackdropHost && source != null) {
+                if (Build.VERSION.SDK_INT >= 31 && host is GlassBackdropView && source != null) {
                     host.onContentRecorded = { source.contentChanged("record") }
                     presentation.observeDocument { source.contentChanged("web") }
                     source.attach(host, host.contentLayer)
@@ -124,7 +126,7 @@ internal fun ReaderHardwareScene(
             update = { host ->
                 val presentation = controller.presentation ?: return@AndroidView
                 presentation.document.backdropColor = backgroundColor
-                if (Build.VERSION.SDK_INT >= 31 && host is ReaderBackdropHost) {
+                if (Build.VERSION.SDK_INT >= 31 && host is GlassBackdropView) {
                     host.backdropColor = backgroundColor
                     host.gpuEnabled = source?.renderingActive == true
                 }
@@ -149,7 +151,7 @@ internal fun ReaderHardwareScene(
 }
 
 internal class ReaderNativePresentation(
-    val host: ReaderPlaneHost,
+    val host: GlassPlaneView,
     val document: ReaderDocumentPlane,
     val contentView: ComposeView,
     val overlayView: ComposeView,

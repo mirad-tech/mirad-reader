@@ -1,9 +1,12 @@
 package com.mirad.reader.ui.shelf
 
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import com.mirad.reader.ui.common.MiradDialog as AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.CircularProgressIndicator
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -68,19 +72,32 @@ fun ShelfScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    val shelfFlow = remember(container) { container.books.observeShelf() }
+    val loadedShelf by shelfFlow.collectAsState(initial = null)
+    val shelf = loadedShelf
+    // 等到真实数据首帧再挂载列表，避免空集合把恢复的滚动索引裁成0。
+    if (shelf == null) {
+        com.mirad.reader.ui.common.MiradScaffold(topBar = {
+            com.mirad.reader.ui.common.ScreenHeader("书架")
+        }) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator()
+            }
+        }
+        return
+    }
     val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
     val importState by container.importer.state.collectAsState()
     val summary by container.importer.lastSummary.collectAsState()
 
-    var sort by remember { mutableStateOf(ShelfSort.RECENT) }
+    var sort by rememberSaveable { mutableStateOf(ShelfSort.RECENT) }
     // 网格/列表选择持久化：离开书架再回来保持用户上次的选择（此前每次都重置为网格）
     val shelfLayoutGrid by container.settings.shelfLayoutGrid.collectAsState(initial = true)
     val layout = if (shelfLayoutGrid) ShelfLayout.GRID else ShelfLayout.LIST
-    var selectedGroup by remember { mutableStateOf<Long?>(null) }
-    var showHidden by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
-    var showSearch by remember { mutableStateOf(false) }
+    var selectedGroup by rememberSaveable { mutableStateOf<Long?>(null) }
+    var showHidden by rememberSaveable { mutableStateOf(false) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var showSearch by rememberSaveable { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var groupDialog by remember { mutableStateOf(false) }
     var isSingleBookGroupAction by remember { mutableStateOf(false) }
@@ -393,7 +410,7 @@ fun ShelfScreen(
                         groupDeleteTarget = null
                         toast = "已删除分组「${target.name}」"
                     }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { MiradTextButton(onClick = { groupDeleteTarget = null }) { Text("取消") } }
         )
@@ -444,7 +461,7 @@ fun ShelfScreen(
                         selection = emptySet(); confirmDelete = false
                         toast = if (name != null) "已删除《$name》" else "已删除 $count 本书籍"
                     }
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { MiradTextButton(onClick = { confirmDelete = false }) { Text("取消") } }
         )

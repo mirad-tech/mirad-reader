@@ -1,7 +1,12 @@
 package com.mirad.reader.ui
 
 import android.app.Activity
-import android.widget.Toast
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import com.mirad.reader.ui.common.LocalAppBottomBar
+import com.mirad.reader.ui.common.LocalAppRootPage
+import com.mirad.reader.ui.common.LocalRootFeedback
+import com.mirad.reader.ui.common.FeedbackKind
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,28 +65,15 @@ import com.mirad.reader.ui.theme.MiradTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.catch
 
-/** 屏幕（自建返回栈，不引 navigation-compose）。 */
-sealed interface Screen {
-    data object Shelf : Screen
-    data class Reader(val bookId: Long) : Screen
-    data object Stats : Screen
-    data object Settings : Screen
-    data class SettingsDetail(val route: com.mirad.reader.ui.settings.SettingsRoute) : Screen
-    data object Notes : Screen
-    data object HiddenBooks : Screen
-    data object SourceManager : Screen
-    data object OnlineSearch : Screen
-    data object Downloads : Screen
-}
-
 /**
  * 全应用导航。用列表做返回栈，子页面（统计/设置/笔记/隐藏书籍）都能正确回退，
  * 而不是一律跳回书架。
  */
 @Composable
 fun AppRoot(container: AppContainer, systemDark: Boolean) {
-    val backStack = remember { mutableStateListOf<Screen>(Screen.Shelf) }
-    val current = backStack.last()
+    val navigation = rememberSaveable(saver = AppNavigationState.StateSaver) { AppNavigationState() }
+    val current = navigation.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val openDownloads by container.openDownloads.collectAsState()
 
     var loadGeneration by remember { mutableIntStateOf(0) }
@@ -97,7 +89,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val configEditor = remember(container) {
         ReadingConfigEditor(container.settings, container.appScope, onFailure = {
-            Toast.makeText(container.context, "设置更新失败，请重试。", Toast.LENGTH_SHORT).show()
+            container.feedback.show("设置更新失败，请重试。", FeedbackKind.ERROR)
         })
     }
     val appController = remember(container, configEditor, lifecycle) {
@@ -158,20 +150,9 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         }
     }
 
-    fun navigate(screen: Screen) {
-        if (backStack.last() != screen) backStack.add(screen)
-    }
-
-    fun goBack() {
-        if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
-    }
-
-    fun openSourcePage(screen: Screen) {
-        val existing = backStack.indexOfLast { it == screen }
-        if (existing >= 0) {
-            while (backStack.lastIndex > existing) backStack.removeAt(backStack.lastIndex)
-        } else navigate(screen)
-    }
+    fun navigate(screen: Screen) = navigation.open(screen)
+    fun goBack() = navigation.back()
+    fun openSourcePage(screen: Screen) = navigation.open(screen)
 
     LaunchedEffect(container, openDownloads) {
         if (openDownloads) {
@@ -180,7 +161,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         }
     }
 
-    BackHandler(enabled = backStack.size > 1) { goBack() }
+    BackHandler(enabled = navigation.canGoBack) { goBack() }
 
     val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val appearance = appAppearance
@@ -202,6 +183,14 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         return@Surface
     }
     CompositionLocalProvider(
+        LocalRootFeedback provides container.feedback,
+        LocalAppRootPage provides navigation.isRoot,
+        LocalAppBottomBar provides {
+            if (current !is Screen.Reader) AppNavigationBar(navigation.selectedTab) {
+                keyboard?.hide()
+                navigation.select(it)
+            }
+        },
         LocalAppAppearance provides appearance,
         LocalAppDarkTheme provides darkTheme,
         LocalAppSystemDark provides systemDark,
@@ -211,7 +200,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         LocalGlassAppearanceController provides glassController,
         LocalGlassSaveFailed provides glassSaveFailed
     ) {
-        stateHolder.SaveableStateProvider(current.toString()) {
+        stateHolder.SaveableStateProvider("${navigation.selectedTab.name}:$current") {
             com.mirad.reader.ui.common.PageSurface(
                 pageKey = current.toString(),
                 bounded = current != Screen.Shelf && current !is Screen.Reader,
@@ -244,7 +233,8 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         container = container,
                         onOpenRoute = { navigate(Screen.SettingsDetail(it)) },
                         onBack = { goBack() },
-                        onOpenHidden = { navigate(Screen.HiddenBooks) }
+                        onOpenHidden = { navigate(Screen.HiddenBooks) },
+                        onOpenStats = { navigate(Screen.Stats) }
                     )
                     Screen.Notes -> NotesScreen(
                         container = container,

@@ -108,7 +108,7 @@ fun AppearanceSettings() {
     SettingCard(title = "玻璃质感") {
         if (isSimplified) {
             Text(
-                text = "当前处于简化质感模式（$simplifiedReason），采用安全底色保护阅读体验。",
+                text = "$simplifiedReason，使用简化玻璃效果。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
@@ -117,11 +117,6 @@ fun AppearanceSettings() {
 
         SettingSwitchRow(
             label = "磨砂玻璃",
-            subtitle = if (appearance.enabled) {
-                "关闭后改用不透明表面，停止模糊、折射与背景分析"
-            } else {
-                "已关闭；清晰度会保留，重新开启时恢复"
-            },
             checked = appearance.enabled,
             onCheckedChange = { enabled ->
                 controller.update(GlassAppearance(enabled = enabled, clarityPercent = appearance.clarityPercent))
@@ -148,13 +143,6 @@ fun AppearanceSettings() {
                 controller.commit()
             }
         )
-        Text(
-            text = "0% 最朦胧，100% 最清晰；两端都不等于关闭玻璃。标题与正文始终清晰。",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
-
         Spacer(modifier = Modifier.height(8.dp))
 
         Row(

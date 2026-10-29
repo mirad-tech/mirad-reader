@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.sources
 
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items

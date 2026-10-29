@@ -4,6 +4,35 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LiquidGlassPolicyTest {
+    @Test fun clearPanelProtectsForegroundWithoutChangingToolbarOrTheDefaultMaterial() {
+        for (dark in listOf(false, true)) {
+            assertEquals(liquidBaseOpacity(60, dark), liquidMaterialOpacity(60, dark, GlassStyle.Panel), 0f)
+            assertEquals(liquidBaseOpacity(100, dark), liquidMaterialOpacity(100, dark, GlassStyle.Toolbar), 0f)
+            assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
+            assertTrue(liquidMaterialOpacity(100, dark, GlassStyle.Panel) < 1f)
+        }
+    }
+
+    @Test fun clearPanelTextAndActionsKeepFourPointFiveContrastOverExtremeBackdrops() {
+        val ink = com.mirad.reader.ui.theme.Ink
+        for (dark in listOf(false, true)) {
+            val surface = if (dark) ink.Night else ink.Paper
+            val foregrounds = if (dark) listOf(ink.NightText, ink.NightTextMuted, ink.Green80)
+                else listOf(ink.InkText, ink.InkTextMuted, ink.Green40)
+            val opacity = liquidMaterialOpacity(100, dark, GlassStyle.Panel)
+            for (backdrop in listOf(0f, 1f)) {
+                val background = relativeLuminanceFromSrgb(
+                    surface.red * opacity + backdrop * (1 - opacity),
+                    surface.green * opacity + backdrop * (1 - opacity),
+                    surface.blue * opacity + backdrop * (1 - opacity)
+                )
+                foregrounds.forEach { foreground ->
+                    assertTrue(contrastRatio(relativeLuminanceFromSrgb(foreground.red, foreground.green, foreground.blue), background) >= 4.5f)
+                }
+            }
+        }
+    }
+
     @Test fun analysisReadbackAlwaysFits64PixelsAndPreservesAspectRatio() {
         assertNull(liquidAnalysisDimensions(0, 2000))
         assertNull(liquidAnalysisDimensions(1000, -1))
@@ -64,11 +93,11 @@ class LiquidGlassPolicyTest {
     @Test fun zeroBlurKeepsEnoughPaddingForIndependentRefraction() {
         assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
         assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
-        assertEquals(8, liquidMaterialPaddingPx(0f, true, 2f))
+        assertEquals(6, liquidMaterialPaddingPx(0f, true, 2f))
         assertEquals(0, liquidMaterialPaddingPx(0f, false, 2f))
         assertEquals(40, liquidMaterialPaddingPx(20f, true, 2f))
-        assertEquals(9.6f, liquidRefractionRimDp(48f), .001f)
-        assertEquals(13f, liquidRefractionRimDp(100f), .001f)
+        assertEquals(5.76f, liquidRefractionRimDp(48f), .001f)
+        assertEquals(6f, liquidRefractionRimDp(100f), .001f)
     }
 
     @Test fun nightProtectionAlsoAdaptsToBrightContentAndUnknownContentIsConservative() {

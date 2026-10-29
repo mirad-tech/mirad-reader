@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.sources
 
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build

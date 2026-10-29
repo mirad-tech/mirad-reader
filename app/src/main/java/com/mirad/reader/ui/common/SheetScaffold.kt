@@ -63,9 +63,9 @@ fun SheetScaffold(
     content: @Composable ColumnScope.() -> Unit
 ) {
     ResetEdgeBounceOnOverlay()
-    val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
+    val readerHost = com.mirad.reader.ui.common.LocalGlassOverlayHost.current
     if (readerHost != null) {
-        com.mirad.reader.ui.reader.ReaderInWindowSheet(
+        com.mirad.reader.ui.common.GlassInWindowSheet(
             readerHost, title, onDismiss, subtitle, actions, modifier, fillHeight, maxHeightFraction, content
         )
         return

@@ -44,6 +44,8 @@ import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.reader.ReaderWebView
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.reader.*
+import com.mirad.reader.ui.AppNavigationBar
+import com.mirad.reader.ui.AppTab
 import com.mirad.reader.ui.settings.ReadingSettingsPage
 import com.mirad.reader.ui.settings.SettingsContent
 import com.mirad.reader.ui.settings.SettingsRoute
@@ -317,6 +319,8 @@ private fun PreviewContent(
     groupCount: Int = 3
 ) {
     val activity = LocalContext.current as Activity
+    val dialogLoading = activity.intent.getBooleanExtra("dialogLoading", false)
+    val dialogDanger = activity.intent.getBooleanExtra("dialogDanger", true)
     var scene by remember { mutableStateOf(initialScene) }
     var dialog by remember { mutableStateOf(initialScene == "dialog") }
     val resolvedInitialCategory = remember(initialCategoryName) {
@@ -332,9 +336,20 @@ private fun PreviewContent(
     } }
     val books = remember { sampleBooks() }
     BackHandler(scene != "shelf") { scene = "shelf"; Log.i("GlassPreview", "backToShelf") }
+    val overlays = remember { GlassOverlayState() }
+    val shell = initialScene == "app-shell"
+    CompositionLocalProvider(
+        LocalGlassOverlayHost provides if (scene.startsWith("reader")) null else overlays,
+        LocalAppRootPage provides (shell && category == null),
+        LocalAppBottomBar provides {
+            if (shell && !scene.startsWith("reader")) AppNavigationBar(
+                if (scene == "settings") AppTab.Settings else AppTab.Shelf
+            ) { scene = if (it == AppTab.Settings) "settings" else "shelf"; category = null }
+        }
+    ) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when (scene) {
-            "stats-empty" -> androidx.compose.material3.Scaffold(
+            "stats-empty" -> MiradScaffold(
                 containerColor = MaterialTheme.colorScheme.background,
                 topBar = { ScreenHeader(title = "阅读统计", onBack = { scene = "shelf" }) }
             ) { padding ->
@@ -396,9 +411,13 @@ private fun PreviewContent(
             onDismissRequest = { dialog = false; Log.i("GlassPreview", "dialogDismiss") },
             title = { Text("删除书籍") },
             text = { Text("确定删除所选书籍？") },
-            confirmButton = { MiradTextButton(danger = true, onClick = { dialog = false; Log.i("GlassPreview", "dialogConfirmInMemory") }) { Text("删除") } },
+            confirmButton = {
+                MiradTextButton(danger = dialogDanger, enabled = !dialogLoading, loading = dialogLoading,
+                    onClick = { dialog = false; Log.i("GlassPreview", "dialogConfirmInMemory") }) { Text("删除") }
+            },
             dismissButton = { MiradTextButton(onClick = { dialog = false }) { Text("取消") } }
         )
+    }
     }
 }
 

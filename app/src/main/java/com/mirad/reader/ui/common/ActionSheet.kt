@@ -63,14 +63,13 @@ fun ActionSheet(
 }
 
 /**
- * 统一空状态：占位图形 + 标题 + 说明 + 可选按钮。
+ * 统一空状态：必要状态、恢复说明与可选操作。
  * 之前书架、笔记、搜索各写了一套，观感与留白都不同。
  */
 @Composable
 fun EmptyState(
     title: String,
     modifier: Modifier = Modifier,
-    badge: String = "书",
     description: String? = null,
     actionText: String? = null,
     onAction: (() -> Unit)? = null
@@ -80,21 +79,6 @@ fun EmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(Spacing.xxxl)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(96.dp)
-                    .clip(RoundedCornerShape(24.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(24.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = badge,
-                    style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
-            Spacer(modifier = Modifier.height(Spacing.lg))
             Text(text = title, style = MaterialTheme.typography.titleMedium)
             if (description != null) {
                 Spacer(modifier = Modifier.height(Spacing.xs))

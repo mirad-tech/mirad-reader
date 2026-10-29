@@ -1,5 +1,9 @@
 package com.mirad.reader.ui.notes
 
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.ui.Alignment
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -10,7 +14,7 @@ import androidx.compose.foundation.layout.padding
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Text
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
@@ -50,7 +54,9 @@ fun NotesScreen(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var tab by remember { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    val listState = rememberLazyListState()
+    var loaded by remember { mutableStateOf(false) }
     var highlights by remember { mutableStateOf<List<HighlightEntity>>(emptyList()) }
     var bookmarks by remember { mutableStateOf<List<BookmarkEntity>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
@@ -70,6 +76,7 @@ fun NotesScreen(
         chapterLengths = container.books.observeShelf().first().associate { shelfBook ->
             shelfBook.book.id to container.books.getChapters(shelfBook.book.id).map { it.charCount.toInt() }
         }
+        loaded = true
     }
 
     /**
@@ -88,16 +95,23 @@ fun NotesScreen(
     LaunchedEffect(Unit) { reload() }
 
     val exporter = rememberMarkdownExporter { ok ->
-        message = if (ok) "已导出" else "导出失败"
+        feedback.show(if (ok) "已导出" else "导出失败", if (ok) com.mirad.reader.ui.common.FeedbackKind.SUCCESS else com.mirad.reader.ui.common.FeedbackKind.ERROR)
     }
 
+    if (!loaded) {
+        Scaffold(topBar = { ScreenHeader("笔记", onBack = onBack) }) { padding ->
+            Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                androidx.compose.material3.CircularProgressIndicator()
+            }
+        }
+        return
+    }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback) },
         topBar = {
             ScreenHeader(
-                title = "笔记与书签",
-                subtitle = "划线 ${highlights.size} · 书签 ${bookmarks.size}",
+                title = "笔记",
                 onBack = onBack,
                 actions = {
                     MiradTextButton(
@@ -121,6 +135,7 @@ fun NotesScreen(
     ) { padding ->
         key(tab) {
             BouncingLazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().glassBackdropSource(),
                 contentPadding = PaddingValues(
                     start = padding.calculateStartPadding(LocalLayoutDirection.current),
@@ -142,7 +157,6 @@ fun NotesScreen(
                     item(key = "notes-empty") {
                         EmptyState(
                             title = if (tab == 0) "还没有划线或笔记" else "还没有书签",
-                            badge = if (tab == 0) "记" else "签",
                             description = if (tab == 0) "阅读时长按选中文字，用工具条上的「划线」或「笔记」"
                             else "阅读时点顶栏的星标即可添加书签",
                             modifier = Modifier.fillParentMaxHeight(0.75f)
@@ -212,7 +226,7 @@ fun NotesScreen(
                     val action = pending.second
                     pendingDelete = null
                     action()
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+                }) { Text("删除") }
             },
             dismissButton = { MiradTextButton(onClick = { pendingDelete = null }) { Text("取消") } }
         )

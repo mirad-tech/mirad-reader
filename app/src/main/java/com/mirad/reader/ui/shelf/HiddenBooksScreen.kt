@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.size
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Text
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.remember
@@ -62,7 +62,6 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
             item {
             EmptyState(
                 title = "没有被隐藏的书",
-                badge = "空",
                 description = "在书架上长按一本书，选择「在书架隐藏」后会出现在这里",
                 modifier = Modifier
                     .fillParentMaxSize()
@@ -122,7 +121,7 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
                         .onSuccess { deleteTarget = null; feedback.show("已删除书籍") }
                         .onFailure { feedback.show("删除失败，请重试", com.mirad.reader.ui.common.FeedbackKind.ERROR); deleteTarget = null }
                 }
-            }) { Text("删除", color = MaterialTheme.colorScheme.error) } },
+            }) { Text("删除") } },
             dismissButton = { MiradTextButton(onClick = { deleteTarget = null }) { Text("取消") } }
         )
     }

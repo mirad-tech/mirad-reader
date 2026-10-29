@@ -37,8 +37,6 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.CircularProgressIndicator
 import com.mirad.reader.ui.common.GlassDropdownMenu as DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExtendedFloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import com.mirad.reader.ui.common.MiradLinearProgress
@@ -46,7 +44,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -71,6 +69,7 @@ import com.mirad.reader.ui.common.ActionSheet
 import com.mirad.reader.ui.common.ChoiceChip
 import com.mirad.reader.ui.common.EmptyState
 import com.mirad.reader.ui.common.ScreenHeader
+import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------- 顶栏
 
@@ -89,55 +88,44 @@ private fun ShelfHeader(
     onSelectAll: () -> Unit,
     onPinSelected: () -> Unit,
     onGroupSelected: () -> Unit,
-    onDeleteSelected: () -> Unit
+    onDeleteSelected: () -> Unit,
+    importAction: @Composable () -> Unit
 ) {
     var menu by remember { mutableStateOf(false) }
     if (selectionCount > 0) {
         ScreenHeader(
             title = "已选 $selectionCount 本",
             onBack = onExitSelection,
+            root = false,
             actions = {
                 IconButton(onClick = onSelectAll) {
                     Icon(Icons.Default.Check, contentDescription = "全选")
                 }
-                IconButton(onClick = onPinSelected) {
-                    Icon(Icons.Default.Star, contentDescription = "置顶")
-                }
-                IconButton(onClick = onGroupSelected) {
-                    Icon(Icons.Default.Add, contentDescription = "移入分组")
-                }
-                IconButton(onClick = onDeleteSelected) {
-                    Icon(Icons.Default.Delete, contentDescription = "删除")
+                Box {
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "批量操作") }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(text = { Text("置顶") }, onClick = { menu = false; onPinSelected() })
+                        DropdownMenuItem(text = { Text("移入分组") }, onClick = { menu = false; onGroupSelected() })
+                        DropdownMenuItem(text = { Text("删除", color = MaterialTheme.colorScheme.error) },
+                            onClick = { menu = false; onDeleteSelected() })
+                    }
                 }
             }
         )
     } else {
         ScreenHeader(
-            title = "墨读",
-            subtitle = if (total == 0) "导入本地书开始阅读" else "书架共 $total 本",
+            title = "书架",
+            subtitle = if (total == 0) null else "$total 本",
             large = true,
             divider = false,
             actions = {
+                importAction()
                 IconButton(onClick = onToggleSearch) {
                     Icon(
                         Icons.Default.Search,
                         contentDescription = "搜索",
                         tint = if (searchVisible) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onStats) {
-                    Icon(
-                        Icons.Default.Star,
-                        contentDescription = "阅读统计",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = onSettings) {
-                    Icon(
-                        Icons.Default.Settings,
-                        contentDescription = "设置",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Box {
@@ -149,10 +137,6 @@ private fun ShelfHeader(
                         )
                     }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                        DropdownMenuItem(
-                            text = { Text("笔记与书签") },
-                            onClick = { menu = false; onNotes() }
-                        )
                         DropdownMenuItem(
                             text = { Text("隐藏的书籍") },
                             onClick = { menu = false; onHidden() }
@@ -174,21 +158,18 @@ private fun EmptyShelf(searching: Boolean, onImport: () -> Unit, hiddenOnly: Boo
         hiddenOnly -> EmptyState(
             // 只看隐藏书籍的筛选为空时，书架本身往往还有书，不能引导"导入"。
             title = "没有隐藏的书籍",
-            badge = "空",
             description = "长按书籍后选择「隐藏」，书籍会出现在这里",
             modifier = Modifier.fillMaxSize()
         )
         searching -> EmptyState(
             title = "没有匹配的书籍",
-            badge = "空",
             description = "换个关键词，或切回「全部」分组",
             modifier = Modifier.fillMaxSize()
         )
         else -> EmptyState(
-            title = "书架还是空的",
-            badge = "书",
-            description = "导入本机的 txt / epub 就能开始阅读",
-            actionText = "导入 txt / epub",
+            title = "书架为空",
+            description = "支持 TXT、EPUB 文件",
+            actionText = "导入书籍",
             onAction = onImport,
             modifier = Modifier.fillMaxSize()
         )
@@ -308,13 +289,7 @@ internal fun ShelfContent(
     com.mirad.reader.ui.common.ResetEdgeBounceOnOverlay(importMenu || sortMenu)
     val gridState = rememberLazyGridState(initialScrollIndex, initialScrollOffset)
     val listState = rememberLazyListState(initialScrollIndex, initialScrollOffset)
-    // Search moved into the scroll content; opening it must still expose the field.
-    androidx.compose.runtime.LaunchedEffect(showSearch, layout) {
-        if (showSearch) {
-            if (layout == ShelfLayout.GRID) gridState.animateScrollToItem(0)
-            else listState.animateScrollToItem(0)
-        }
-    }
+    val scrollScope = androidx.compose.runtime.rememberCoroutineScope()
     val controls: @Composable () -> Unit = {
         Column {
             if (showSearch) {
@@ -340,7 +315,7 @@ internal fun ShelfContent(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                         .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.primaryContainer)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = .08f))
                         .clickable { onOpenBook(item.book.id) }
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -355,13 +330,14 @@ internal fun ShelfContent(
                             text = item.book.title,
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 1
+                            maxLines = 2, overflow = TextOverflow.Ellipsis
                         )
                     }
                     Text(
                         text = formatRelative(item.lastReadAt),
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(start = 12.dp)
                     )
                 }
             }
@@ -447,62 +423,39 @@ internal fun ShelfContent(
         topBar = {
             ShelfHeader(
                 total = shelf.count { !it.book.isHidden }, selectionCount = selection.size,
-                searchVisible = showSearch, onToggleSearch = actions.onToggleSearch,
+                searchVisible = showSearch, onToggleSearch = {
+                    actions.onToggleSearch()
+                    // 仅用户打开搜索时露出输入框，跨栏恢复可见搜索不触发回顶。
+                    if (!showSearch) scrollScope.launch {
+                        if (layout == ShelfLayout.GRID) gridState.animateScrollToItem(0)
+                        else listState.animateScrollToItem(0)
+                    }
+                },
                 onStats = actions.onStats, onSettings = actions.onSettings,
                 onNotes = actions.onNotes, onHidden = actions.onHidden,
                 onManageGroups = actions.onManageGroups,
                 onExitSelection = { actions.onSelectionChange(emptySet()) },
                 onSelectAll = actions.onSelectAll, onPinSelected = actions.onPinSelected,
-                onGroupSelected = actions.onGroupSelected, onDeleteSelected = actions.onDeleteSelected
-            )
-        },
-        floatingActionButton = {
-            if (selection.isEmpty()) {
-                Box {
-                    if (com.mirad.reader.ui.common.LocalGlassLegacy.current) {
-                        ExtendedFloatingActionButton(
-                            onClick = { importMenu = true },
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            shape = MaterialTheme.shapes.medium,
-                            elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 2.dp, pressedElevation = 4.dp),
-                            icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                            text = { Text("导入") }
-                        )
-                    } else {
-                        com.mirad.reader.ui.common.GlassSurface(shape = MaterialTheme.shapes.large) {
-                            Row(
-                                modifier = Modifier
-                                    .heightIn(min = 56.dp)
-                                    .clickable(role = androidx.compose.ui.semantics.Role.Button) { importMenu = true }
-                                    .padding(horizontal = 20.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                Text("导入", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
-                            }
+                onGroupSelected = actions.onGroupSelected, onDeleteSelected = actions.onDeleteSelected,
+                importAction = {
+                    Box {
+                        IconButton(onClick = { importMenu = true }) {
+                            Icon(Icons.Default.Add, "导入", tint = MaterialTheme.colorScheme.primary)
                         }
-                    }
-                    DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
-                        DropdownMenuItem(text = { Text("导入文件（txt / epub）") },
-                            onClick = { importMenu = false; actions.onImportFile() })
-                        DropdownMenuItem(text = { Text("导入文件夹") },
-                            onClick = { importMenu = false; actions.onImportFolder() })
-                        DropdownMenuItem(text = { Text("网址导入") },
-                            onClick = { importMenu = false; actions.onImportUrl() })
-                        DropdownMenuItem(text = { Text("在线搜书") },
-                            onClick = { importMenu = false; actions.onOnlineSearch() })
-                        DropdownMenuItem(text = { Text("书源管理") },
-                            onClick = { importMenu = false; actions.onSourceManager() })
-                        if (BuildConfig.DEBUG) {
-                            DropdownMenuItem(text = { Text("导入调试样书（samples 目录）") },
+                        DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
+                            DropdownMenuItem(text = { Text("导入文件（txt / epub）") },
+                                onClick = { importMenu = false; actions.onImportFile() })
+                            DropdownMenuItem(text = { Text("导入文件夹") },
+                                onClick = { importMenu = false; actions.onImportFolder() })
+                            DropdownMenuItem(text = { Text("网址导入") },
+                                onClick = { importMenu = false; actions.onImportUrl() })
+                            if (BuildConfig.DEBUG) DropdownMenuItem(text = { Text("导入调试样书（samples 目录）") },
                                 onClick = { importMenu = false; actions.onImportSamples() })
                         }
                     }
                 }
-            }
-        }
+            )
+        },
     ) { padding ->
         Column(Modifier.fillMaxSize().glassBackdropSource()) {
             val layoutDirection = LocalLayoutDirection.current
@@ -510,7 +463,7 @@ internal fun ShelfContent(
                 start = padding.calculateStartPadding(layoutDirection) + 16.dp,
                 end = padding.calculateEndPadding(layoutDirection) + 16.dp,
                 top = padding.calculateTopPadding() + 4.dp,
-                bottom = padding.calculateBottomPadding() + 96.dp
+                bottom = padding.calculateBottomPadding() + 16.dp
             )
             if (layout == ShelfLayout.GRID) {
                 BouncingLazyVerticalGrid(

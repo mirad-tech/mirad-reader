@@ -1,4 +1,4 @@
-package com.mirad.reader.ui.reader
+package com.mirad.reader.ui.common
 
 import android.content.Context
 import android.graphics.Canvas
@@ -8,12 +8,12 @@ import android.view.View
 import androidx.annotation.RequiresApi
 
 /**
- * Hardware-only bridge. The reader keeps owning the attached WebView;
- * this parent records only the content plane, then draws its Compose overlay separately.
- * Never include the overlay in [contentLayer]: consumers must not capture themselves.
+ * 只录制内容平面的 GPU 桥接，控制平面独立绘制。
+ * 阅读页继续持有自己的 WebView；此容器不接管业务会话。
+ * [contentLayer] 不能包含浮层，避免玻璃采到自身。
  */
 @RequiresApi(31)
-internal class ReaderBackdropHost(context: Context) : ReaderPlaneHost(context) {
+internal class GlassBackdropView(context: Context) : GlassPlaneView(context) {
     val contentLayer = RenderNode("MiradReaderContent")
     var gpuEnabled = true
         set(value) {

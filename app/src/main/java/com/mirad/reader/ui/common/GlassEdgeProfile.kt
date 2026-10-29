@@ -4,19 +4,16 @@ package com.mirad.reader.ui.common
  * 玻璃边缘的纯参数模型。绘制仍由 Compose Brush 完成，不模拟真实光学折射。
  */
 internal object GlassEdgeProfile {
-    const val BROAD_BAND_COUNT = 6
-    const val CONTOUR_STROKE_COUNT = 1
-    const val SPECULAR_STROKE_COUNT = 1
-    const val TOTAL_STROKE_COUNT = BROAD_BAND_COUNT + CONTOUR_STROKE_COUNT + SPECULAR_STROKE_COUNT
+    const val BROAD_BAND_COUNT = 1
 
-    private val broadBandScales = floatArrayOf(.035f, .05f, .07f, .10f, .15f, .24f)
+    private val broadBandScales = floatArrayOf(.32f)
 
-    /** 0% 为 12dp、100% 为 7.2dp，且任一方向都不超过面板短边的 20%。 */
+    /** 窄散射过渡保留薄片轮廓，不再堆叠宽带模拟厚度。 */
     fun bandWidthDp(clarity: Int, shortSideDp: Float): Float {
-        val limit = shortSideLimit(shortSideDp, .20f)
+        val limit = shortSideLimit(shortSideDp, .12f)
         if (limit <= 0f) return 0f
         val ratio = clarityRatio(clarity)
-        val requested = 12f + (7.2f - 12f) * ratio
+        val requested = 3.2f + (1.8f - 3.2f) * ratio
         return minOf(requested, limit)
     }
 
@@ -25,7 +22,7 @@ internal object GlassEdgeProfile {
         val limit = shortSideLimit(shortSideDp, .05f)
         if (limit <= 0f) return 0f
         val ratio = clarityRatio(clarity)
-        return minOf(1.25f + (.8f - 1.25f) * ratio, limit)
+        return minOf(.6f + (.45f - .6f) * ratio, limit)
     }
 
     /** 窄镜面线比散射带更细，并在清晰档进一步收窄。 */
@@ -33,22 +30,22 @@ internal object GlassEdgeProfile {
         val limit = shortSideLimit(shortSideDp, .04f)
         if (limit <= 0f) return 0f
         val ratio = clarityRatio(clarity)
-        return minOf(1.1f + (.55f - 1.1f) * ratio, limit)
+        return minOf(1f + (.65f - 1f) * ratio, limit)
     }
 
     /** 磨砂时暗轮廓更实，清晰时让窄镜面线承担更多锐度。 */
-    fun contourAlpha(clarity: Int): Float = ((.30f + (.18f - .30f) * clarityRatio(clarity)) * 1.15f).coerceIn(0f, 1f)
+    fun contourAlpha(clarity: Int): Float = .065f - .025f * clarityRatio(clarity)
 
-    /** 六条方向散射带在磨砂档更柔和、稍强；清晰档减弱宽带存在感。 */
+    /** 磨砂档略加强窄散射，清晰档保留轻薄的镜面线。 */
     fun scatteringIntensity(clarity: Int, darkSurface: Boolean): Float {
         val matte = 1f - clarityRatio(clarity)
-        return (if (darkSurface) .68f + .24f * matte else .72f + .28f * matte) * 1.10f
+        return if (darkSurface) .45f + .15f * matte else .35f + .12f * matte
     }
 
     /** 窄镜面高光随清晰度增强，深色底能承载更亮的反光。 */
     fun specularIntensity(clarity: Int, darkSurface: Boolean): Float {
         val ratio = clarityRatio(clarity)
-        return (if (darkSurface) .22f + .78f * ratio else .18f + .56f * ratio) * 1.20f
+        return if (darkSurface) .42f + .26f * ratio else .30f + .18f * ratio
     }
 
     fun broadBandScale(index: Int): Float = broadBandScales[index]

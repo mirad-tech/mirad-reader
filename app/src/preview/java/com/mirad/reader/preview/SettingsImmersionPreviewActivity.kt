@@ -416,7 +416,7 @@ private fun ImmersionReader(
     }
     var ready by remember { mutableIntStateOf(0) }
     var autoSettings by remember { mutableStateOf(false) }
-    val safe = readerSafeInsets().asPaddingValues()
+    val safe = glassSafeInsets().asPaddingValues()
     val direction = LocalLayoutDirection.current
     val top = if (config.showHeader) 24 else 0
     val bottom = safe.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0

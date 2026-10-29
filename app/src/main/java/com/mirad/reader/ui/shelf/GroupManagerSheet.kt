@@ -74,7 +74,6 @@ internal fun GroupManagerContent(
             item {
                 EmptyState(
                 title = "还没有分组",
-                badge = "组",
                 description = "在书架上长按选中的书，选「移入分组」即可新建分组",
                 modifier = Modifier.fillParentMaxWidth()
             )

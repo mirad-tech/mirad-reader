@@ -9,6 +9,9 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -18,10 +21,14 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.delay
 import kotlin.reflect.KProperty
 
 enum class FeedbackKind { INFO, SUCCESS, ERROR }
+
+val LocalRootFeedback = staticCompositionLocalOf<FeedbackState?> { null }
 
 data class UiFeedback(val id: Long, val owner: String, val text: String, val kind: FeedbackKind)
 
@@ -78,22 +85,33 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier) {
         exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { distance }
     ) {
         displayed?.let { value ->
-            Snackbar(
+            Surface(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                    .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.large)
                     .semantics { liveRegion = LiveRegionMode.Polite },
-                shape = MaterialTheme.shapes.medium,
-                containerColor = if (value.kind == FeedbackKind.ERROR)
-                    MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.inverseSurface,
-                contentColor = if (value.kind == FeedbackKind.ERROR)
-                    MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.inverseOnSurface,
-                dismissAction = {
+                shape = MaterialTheme.shapes.large,
+                color = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(when (value.kind) {
+                        FeedbackKind.INFO -> Icons.Default.Info
+                        FeedbackKind.SUCCESS -> Icons.Default.CheckCircle
+                        FeedbackKind.ERROR -> Icons.Default.Warning
+                    }, contentDescription = when (value.kind) {
+                        FeedbackKind.INFO -> "提示"
+                        FeedbackKind.SUCCESS -> "成功"
+                        FeedbackKind.ERROR -> "错误"
+                    }, tint = if (value.kind == FeedbackKind.ERROR) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+                    Text(value.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     IconButton(onClick = { state.dismiss(value.id) }) {
-                        Icon(Icons.Default.Close, "关闭提示",
-                            tint = if (value.kind == FeedbackKind.ERROR) MaterialTheme.colorScheme.onErrorContainer
-                            else MaterialTheme.colorScheme.inverseOnSurface)
+                        Icon(Icons.Default.Close, "关闭提示", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
-            ) { Text(value.text, style = MaterialTheme.typography.bodyMedium) }
+            }
         }
     }
 }

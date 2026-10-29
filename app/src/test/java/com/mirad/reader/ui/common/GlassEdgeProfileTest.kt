@@ -11,35 +11,36 @@ class GlassEdgeProfileTest {
         val widths = listOf(0, 25, 50, 75, 100).map {
             GlassEdgeProfile.bandWidthDp(it, shortSideDp = 200f)
         }
-        val expected = listOf(12f, 10.8f, 9.6f, 8.4f, 7.2f)
+        val expected = listOf(3.2f, 2.85f, 2.5f, 2.15f, 1.8f)
         widths.zip(expected).forEach { (actual, wanted) -> assertEquals(wanted, actual, .001f) }
     }
 
     @Test
-    fun shortPanelCapsBroadBandAtTwentyPercentAndPreservesHighClaritySteps() {
+    fun shortPanelKeepsTheSameThinEdgeWithoutAThickBevel() {
         val widths = listOf(0, 25, 50, 75, 100).map {
             GlassEdgeProfile.bandWidthDp(it, shortSideDp = 48f)
         }
-        val expected = listOf(9.6f, 9.6f, 9.6f, 8.4f, 7.2f)
+        val expected = listOf(3.2f, 2.85f, 2.5f, 2.15f, 1.8f)
         widths.zip(expected).forEach { (actual, wanted) -> assertEquals(wanted, actual, .001f) }
-        assertTrue(widths.all { it <= 48f * .20f + .001f })
+        assertTrue(widths.all { it <= 48f * .12f + .001f })
     }
 
     @Test
     fun clarityIsClampedAndInvalidShortSidesProduceNoStrokeWidth() {
-        assertEquals(12f, GlassEdgeProfile.bandWidthDp(-50, 200f), .001f)
-        assertEquals(7.2f, GlassEdgeProfile.bandWidthDp(150, 200f), .001f)
+        assertEquals(3.2f, GlassEdgeProfile.bandWidthDp(-50, 200f), .001f)
+        assertEquals(1.8f, GlassEdgeProfile.bandWidthDp(150, 200f), .001f)
         assertEquals(0f, GlassEdgeProfile.bandWidthDp(50, 0f), .001f)
         assertEquals(0f, GlassEdgeProfile.bandWidthDp(50, -20f), .001f)
         assertEquals(0f, GlassEdgeProfile.bandWidthDp(50, Float.NaN), .001f)
     }
 
     @Test
-    fun edgeUsesSixScatterBandsThenOneContourAndOneSpecularStroke() {
-        assertEquals(6, GlassEdgeProfile.BROAD_BAND_COUNT)
-        assertEquals(1, GlassEdgeProfile.CONTOUR_STROKE_COUNT)
-        assertEquals(1, GlassEdgeProfile.SPECULAR_STROKE_COUNT)
-        assertEquals(8, GlassEdgeProfile.TOTAL_STROKE_COUNT)
+    fun edgeRemainsThinAtEveryClarityAndCapsToSmallControls() {
+        for (clarity in 0..100) {
+            assertTrue(GlassEdgeProfile.bandWidthDp(clarity, 200f) <= 3.2f)
+            assertTrue(GlassEdgeProfile.contourAlpha(clarity) <= .07f)
+            assertTrue(GlassEdgeProfile.bandWidthDp(clarity, 10f) <= 1.2f)
+        }
     }
 
     @Test

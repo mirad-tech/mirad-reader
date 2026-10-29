@@ -117,7 +117,7 @@ internal fun HardwareReaderPreview(
     }
     val percent = ((chapter + offset.toFloat() / textLength.coerceAtLeast(1)) / chapters.size).coerceIn(0f, 1f)
 
-    val safe = readerSafeInsets().asPaddingValues()
+    val safe = glassSafeInsets().asPaddingValues()
     val direction = LocalLayoutDirection.current
     val top = if (config.showHeader) 24 else 0
     val bottom = safe.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
@@ -452,7 +452,7 @@ internal fun HardwareReaderPreview(
                 }
             },
             overlays = {
-                ReaderOverlayHost(onModalVisibilityChanged = {
+                GlassOverlayHost(onModalVisibilityChanged = {
                     modalVisible = it; controller.setModalVisible(it)
                     if (it && autoState == AutoReadState.RUNNING) stopAnimation()
                 }) {
@@ -516,8 +516,7 @@ internal fun HardwareReaderPreview(
                             "note" -> MiradDialog(onDismissRequest = ::closePanel, title = { Text("写笔记") },
                                 text = { Column {
                                     Text(selectedText.take(80))
-                                    OutlinedTextField(noteDraft, { noteDraft = it }, label = { Text("笔记内容") },
-                                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp), minLines = 3, maxLines = 7)
+                                    NoteEditor(noteDraft) { noteDraft = it }
                                 } },
                                 confirmButton = { MiradTextButton({ noteSaveCount++; closePanel() }) { Text("保存") } },
                                 dismissButton = { MiradTextButton(::closePanel) { Text("取消") } })

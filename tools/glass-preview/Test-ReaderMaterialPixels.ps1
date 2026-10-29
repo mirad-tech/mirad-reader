@@ -236,26 +236,26 @@ function Resolve-Crop($Capture) {
         $b=NodeBounds $_
         if($b) {[pscustomobject]@{Text=$_.GetAttribute('text');Description=$_.GetAttribute('content-desc');Bounds=$b}}
     })
+    $margin=[int][Math]::Ceiling($bounds.Height*.04)
     if($null -ne $CropRectangle) {
         $candidate=[pscustomobject]@{Left=$CropRectangle[0];Top=$CropRectangle[1];Width=$CropRectangle[2];Height=$CropRectangle[3]}
         $method='explicit native pixel rectangle'
     } else {
-        # Calibrated against the production ReaderTopBar, not a window-wide magic point.
-        # The region lies behind the last part of the chapter heading, right of the
-        # foreground title and left of the bookmark icon. Its raw text provides texture.
-        $left=[int][Math]::Ceiling($bounds.Left+$bounds.Width*.58)
-        $right=[int][Math]::Floor($bounds.Left+$bounds.Width*.73)
+        # 由前景语义边界定位标题与书签之间的空区，不依据像素结果挑选取样位置。
+        $titleRight=($foreground | Where-Object {$_.Text -ne ''} | ForEach-Object {$_.Bounds.Right} | Measure-Object -Maximum).Maximum
+        $bookmark=$foreground | Where-Object {$_.Description -eq '书签'} | Select-Object -First 1
+        $left=[int][Math]::Ceiling([Math]::Max($bounds.Left+$bounds.Width*.5,$titleRight+$margin+1))
+        $right=[int][Math]::Floor($bookmark.Bounds.Left-$margin-1)
         $top=[int][Math]::Ceiling($bounds.Top+$bounds.Height*.15)
         $bottom=[int][Math]::Floor($bounds.Top+$bounds.Height*.45)
         $candidate=[pscustomobject]@{Left=$left;Top=$top;Width=$right-$left;Height=$bottom-$top}
-        $method='semantic toolbar rectangle: x58%-73%, y15%-45%'
+        $method='semantic foreground gap between title and bookmark, y15%-45%'
     }
     $right=$candidate.Left+$candidate.Width
     $bottom=$candidate.Top+$candidate.Height
     Check ($candidate.Width -ge 3 -and $candidate.Height -ge 3 -and $candidate.Width*$candidate.Height -ge $thresholds.MinimumCropPixels) 'the material crop has enough native pixels'
     Check ($candidate.Left -ge $bounds.Left -and $candidate.Top -ge $bounds.Top -and $right -le $bounds.Right -and $bottom -le $bounds.Bottom) 'the crop stays inside the top toolbar'
     # A foreground glyph or its nearby protection halo must not become a blur sample.
-    $margin=[int][Math]::Ceiling($bounds.Height*.04)
     foreach($item in $foreground) {
         $b=$item.Bounds
         $intersects=($candidate.Left -lt $b.Right+$margin -and $right -gt $b.Left-$margin -and $candidate.Top -lt $b.Bottom+$margin -and $bottom -gt $b.Top-$margin)
@@ -288,7 +288,7 @@ try {
     if($installed -notmatch '^package:(/data/app/[^\r\n]+/base\.apk)$') {throw 'Unexpected preview package path.'}
     $installedHash=((Device @('shell','sha256sum',$Matches[1])) -split '\s+')[0]
     Check ($installedHash -eq $apkHash) 'installed APK matches the pinned test artifact'
-    $launch=Device @('shell','am','start','-S','-W','-n',$component,'--es','scene','appearance','--es','entry','reader','--ez','hardware','true','--es','mode','DAY','--es','theme','PAPER','--ez','chrome','true','--ei','transparency','100','--es','pageMode','SCROLL','--ez','fullScreen','false','--ez','showClock','false')
+    $launch=Device @('shell','am','start','-S','-W','-n',$component,'--es','scene','appearance','--es','entry','reader','--ez','hardware','true','--es','mode','DAY','--es','theme','PAPER','--ez','chrome','true','--ei','transparency','60','--es','pageMode','SCROLL','--ez','fullScreen','false','--ez','showClock','false')
     Check ($launch -match 'Status: ok') 'the real reader Activity launches successfully'
     $launched=$true
     $processId=(Device @('shell','pidof',$package)).Trim()
@@ -297,19 +297,21 @@ try {
     Check ($initial.State.hardwarePreview -and $initial.State.hardware.hostWindowMatchesActivity) 'the fixture uses the production same-window hardware scene'
     Check (-not $initial.State.config.showClock -and $initial.State.appearance.mode -eq 'DAY') 'the comparison fixes day appearance and removes the reader clock'
     Check ((Metric $initial.State 'hardware') -eq 'true' -and (Metric $initial.State 'gpuActive') -eq 'true' -and (Metric $initial.State 'cpuDisplayCaptures') -eq '0') 'initial glass uses the GPU source without CPU display captures'
+    Check ($initial.State.glass.enabled -and $initial.State.glass.clarityPercent -eq 60 -and [double](Metric $initial.State 'blurDp') -gt 0) 'the blur comparison uses enabled glass at 60% clarity'
     $crop=Resolve-Crop $initial
     $initialCropEvidence=$cropEvidence
 
     # Only broadcasts: do not recreate or hide the toolbar between these two settings.
-    Command 'transparency' @('--ei','percent','0')
-    $zero=Capture 'solid-zero' $true
-    Check-Position $initial.State $zero.State 'setting zero transparency'
-    Check ((Metric $zero.State 'gpuActive') -eq 'false' -and [double](Metric $zero.State 'baseOpacity') -eq 1.0) 'zero transparency reaches the solid path before recovery'
-    Command 'transparency' @('--ei','percent','100')
+    # 清晰度0不是关闭。显式开关负责退出/恢复GPU材质，清晰度始终保留60。
+    Command 'transparency' @('--ez','enabled','false')
+    $disabled=Capture 'glass-disabled' $true
+    Check-Position $initial.State $disabled.State 'disabling glass'
+    Check (-not $disabled.State.glass.enabled -and $disabled.State.glass.clarityPercent -eq 60 -and (Metric $disabled.State 'gpuActive') -eq 'false' -and [double](Metric $disabled.State 'baseOpacity') -eq 1.0) 'disabling glass reaches the solid path and retains clarity before recovery'
+    Command 'transparency' @('--ez','enabled','true')
     $restored=Capture 'restored-glass' $true
-    Check-Position $initial.State $restored.State 'restoring transparency'
+    Check-Position $initial.State $restored.State 'restoring glass'
     Check ((Metric $restored.State 'gpuActive') -eq 'true' -and (Metric $restored.State 'cpuDisplayCaptures') -eq '0') 'restored glass reactivates the hardware source'
-    Check ((Device @('shell','pidof',$package)).Trim() -eq $processId) 'the same application process owns the entire transparency transition'
+    Check ((Device @('shell','pidof',$package)).Trim() -eq $processId) 'the same application process owns the entire glass toggle'
     $restoredCrop=Resolve-Crop $restored
     $cropEvidence=[ordered]@{Initial=$initialCropEvidence;Restored=$cropEvidence}
     Check ($restoredCrop.Left -eq $crop.Left -and $restoredCrop.Top -eq $crop.Top -and $restoredCrop.Width -eq $crop.Width -and $restoredCrop.Height -eq $crop.Height) 'restoration preserves toolbar geometry and the foreground-free crop'
@@ -346,7 +348,7 @@ try {
 } finally {
     if($launched) {
         try {Command 'chrome' @('--ez','visible','false')} catch {$cleanupErrors.Add($_.Exception.Message)}
-        try {Command 'transparency' @('--ei','percent','100')} catch {$cleanupErrors.Add($_.Exception.Message)}
+        try {Command 'transparency' @('--ez','enabled','true','--ei','percent','60')} catch {$cleanupErrors.Add($_.Exception.Message)}
         try {$cleanupState=Dump} catch {$cleanupErrors.Add($_.Exception.Message)}
     }
     [ordered]@{

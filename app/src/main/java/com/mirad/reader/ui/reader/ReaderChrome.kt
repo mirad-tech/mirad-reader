@@ -1,5 +1,7 @@
 package com.mirad.reader.ui.reader
 
+import com.mirad.reader.ui.common.*
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -64,12 +66,6 @@ import kotlinx.coroutines.delay
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 
-/** Same safe area for controls and text, including transient bars in immersive mode. */
-@Composable
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-internal fun readerSafeInsets(): WindowInsets =
-    WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)
-
 // WebView rounds its viewport before centering columns; keep fractional edges outside cutouts.
 internal fun readerHorizontalInsetDp(inset: Dp): Int =
     if (inset.value > 0f) ceil(inset.value).toInt() + 1 else 0
@@ -97,7 +93,7 @@ fun ReaderTopBar(
     var menu by remember { mutableStateOf(false) }
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
-        .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+        .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
         .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
         Column {
@@ -146,7 +142,7 @@ fun ReaderTopBar(
                 IconButton(onClick = { menu = true }) {
                     Icon(Icons.Default.MoreVert, contentDescription = "更多")
                 }
-                ReaderDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                GlassPortalMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("目录") }, onClick = { menu = false; onToc() })
                     DropdownMenuItem(text = { Text("笔记与书签") }, onClick = { menu = false; onNotes() })
                     DropdownMenuItem(
@@ -186,7 +182,7 @@ fun ReaderBottomBar(
 ) {
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
-        .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+        .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
         Column {
@@ -311,7 +307,7 @@ internal fun HeaderFooter(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .windowInsetsPadding(readerSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
+            .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
             .padding(horizontal = horizontal, vertical = 4.dp),
         verticalArrangement = Arrangement.SpaceBetween
     ) {

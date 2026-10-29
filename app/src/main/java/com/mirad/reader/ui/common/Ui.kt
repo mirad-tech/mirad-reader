@@ -68,6 +68,7 @@ val MiradButtonTextStyle = TextStyle(
 )
 
 val MiradButtonShape = RoundedCornerShape(12.dp)
+internal val LocalDialogPrimaryAction = staticCompositionLocalOf { false }
 
 @Composable
 fun MiradButton(
@@ -91,8 +92,9 @@ fun MiradButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = contentColor,
-            disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-            disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            // 加载时仍不可点击，但保留主色底与对应前景，避免进度环落在灰色禁用底上。
+            disabledContainerColor = if (loading) containerColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            disabledContentColor = if (loading) contentColor else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         ),
         contentPadding = contentPadding
     ) {
@@ -142,6 +144,10 @@ fun MiradTextButton(
     contentPadding: PaddingValues = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
     content: @Composable RowScope.() -> Unit
 ) {
+    if (LocalDialogPrimaryAction.current) {
+        MiradButton(onClick, modifier, enabled, loading, danger, contentPadding, content)
+        return
+    }
     val contentColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
     TextButton(
         onClick = onClick,
@@ -210,11 +216,10 @@ fun SettingCard(
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = container,
-            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 if (subtitle != null) {

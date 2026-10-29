@@ -69,7 +69,7 @@ fun ResetReadingDialog(
                     onDismiss()
                     onConfirm(scopes)
                 }
-            ) { Text("恢复", color = MaterialTheme.colorScheme.error) }
+            ) { Text("恢复") }
         },
         dismissButton = { MiradTextButton(onClick = onDismiss) { Text("取消") } }
     )

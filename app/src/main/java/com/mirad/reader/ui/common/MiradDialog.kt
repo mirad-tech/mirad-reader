@@ -24,11 +24,14 @@ fun MiradDialog(
     icon: (@Composable () -> Unit)? = null
 ) {
     ResetEdgeBounceOnOverlay()
-    val readerHost = com.mirad.reader.ui.reader.LocalReaderOverlayHost.current
+    val primaryAction: @Composable () -> Unit = {
+        CompositionLocalProvider(LocalDialogPrimaryAction provides true) { confirmButton() }
+    }
+    val readerHost = com.mirad.reader.ui.common.LocalGlassOverlayHost.current
     if (readerHost != null) {
         CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
-        com.mirad.reader.ui.reader.ReaderInWindowDialog(
-            readerHost, onDismissRequest, confirmButton, modifier, dismissButton, title, text, icon
+        com.mirad.reader.ui.common.GlassInWindowDialog(
+            readerHost, onDismissRequest, primaryAction, modifier, dismissButton, title, text, icon
         )
         }
         return
@@ -37,7 +40,7 @@ fun MiradDialog(
     CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
-        confirmButton = { ApplyReaderDialogWindowPolicy(); confirmButton() },
+        confirmButton = { ApplyReaderDialogWindowPolicy(); primaryAction() },
         dismissButton = dismissButton, title = title, icon = icon,
         modifier = modifier.imePadding().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge),
         shape = MaterialTheme.shapes.extraLarge,

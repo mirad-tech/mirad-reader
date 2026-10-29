@@ -2,13 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前版本：1.1.5（versionCode 24）**
+**当前版本：1.2.0（versionCode 25）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.1.5.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.2.0.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-[墨读 1.1.5 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.5/mirad-reader-1.1.5-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.1.5/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.1.5)。内容与验证边界见 [1.1.5 更新说明](docs/releases/1.1.5.md)。
+[墨读 1.2.0 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.2.0/mirad-reader-1.2.0-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.2.0/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.2.0)。内容与验证边界见 [1.2.0 更新说明](docs/releases/1.2.0.md)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
@@ -18,13 +18,14 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 
 ## 功能
 
+- **四栏导航**：书架、搜书、笔记和设置分别保留页面状态；阅读时隐藏应用底栏，退出后回到原入口。阅读统计归入设置。
 - **导入与书架**：TXT / EPUB 文件、多文件及目录导入，接收其他应用分享，输入 HTTP/HTTPS 文件直链或网页长文；支持封面、搜索、排序、分组、置顶、隐藏和批量操作，网格/列表布局会被记住。
 - **书源与离线下载**：保存阅读类 JSON 书源 URL，跨源搜索并按完整目录章数比较；支持后台整本下载、暂停、继续、取消和重试，完成后作为 EPUB 加入书架。兼容范围见[书源说明](docs/BOOK_SOURCES.md)。
 - **阅读**：左右分页、上下滚动、目录跳转、进度记忆、可关闭的音量键翻页、自动阅读，以及字体、字号、行距、字间距、背景和主题设置。
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
 - **统一外观**：全应用共享跟随系统、日间、夜间模式；日夜分别记忆阅读配色、背景图片和图片不透明度，阅读弹层与当前模式一致。
-- **玻璃外观**：独立的磨砂玻璃开关与 0–100% 清晰度控制，默认清晰度 60%；100% 保持零模糊，日夜主题共用边缘散射与高光绘制。高清晰度下仍有背景文字干扰前景的限制，详见[1.1.3 外观说明](docs/releases/1.1.3.md)。
+- **玻璃外观**：导航、工具栏、菜单、消息与确认弹窗共用轻薄玻璃材质；独立开关与 0–100% 清晰度控制，默认 60%，100% 保持零模糊。长内容面板使用统一底色保护文字可读性，关闭玻璃后使用不透明表面。
 
 ### 阅读设置的作用范围
 

@@ -1,4 +1,4 @@
-package com.mirad.reader.ui.reader
+package com.mirad.reader.ui.common
 
 import androidx.activity.OnBackPressedDispatcher
 import androidx.activity.OnBackPressedDispatcherOwner
@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
@@ -50,15 +51,15 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-internal enum class ReaderOverlayKind(val priority: Int) { Sheet(0), Menu(1), Dialog(2) }
+internal enum class GlassOverlayKind(val priority: Int) { Sheet(0), Menu(1), Dialog(2) }
 
 private class OverlayBackOwner(override val lifecycle: Lifecycle) : OnBackPressedDispatcherOwner {
     override val onBackPressedDispatcher = OnBackPressedDispatcher()
 }
 
-private class ReaderOverlayEntry(
+private class GlassOverlayEntry(
     val id: Any,
-    val kind: ReaderOverlayKind,
+    val kind: GlassOverlayKind,
     val localContext: State<CompositionLocalContext>,
     val dismiss: () -> Unit,
     val content: @Composable () -> Unit
@@ -67,23 +68,23 @@ private class ReaderOverlayEntry(
     var parkedFocus: FocusRequester? = null
 }
 
-/** The list is owned by the reader's composition, never by an Activity-wide singleton. */
+/** 浮层属于当前页面，由页面销毁时释放，应用不持有全局浮层单例。 */
 @Stable
-internal class ReaderOverlayState internal constructor() {
-    private val entries = mutableStateListOf<ReaderOverlayEntry>()
+internal class GlassOverlayState internal constructor() {
+    private val entries = mutableStateListOf<GlassOverlayEntry>()
     internal var windowOrigin by mutableStateOf(Offset.Zero)
         private set
-    private val orderedEntries: List<ReaderOverlayEntry>
+    private val orderedEntries: List<GlassOverlayEntry>
         get() = entries.sortedBy { it.kind.priority }
 
-    private fun add(entry: ReaderOverlayEntry) { entries += entry }
-    private fun remove(entry: ReaderOverlayEntry) { entries.remove(entry) }
+    private fun add(entry: GlassOverlayEntry) { entries += entry }
+    private fun remove(entry: GlassOverlayEntry) { entries.remove(entry) }
 
     companion object {
         @Composable
         internal fun Register(
-            host: ReaderOverlayState,
-            kind: ReaderOverlayKind,
+            host: GlassOverlayState,
+            kind: GlassOverlayKind,
             onDismiss: () -> Unit,
             content: @Composable () -> Unit
         ) {
@@ -91,7 +92,7 @@ internal class ReaderOverlayState internal constructor() {
             val latestDismiss = rememberUpdatedState(onDismiss)
             val latestLocals = rememberUpdatedState(currentCompositionLocalContext)
             val entry = remember(host, kind) {
-                ReaderOverlayEntry(Any(), kind, latestLocals, { latestDismiss.value() }) {
+                GlassOverlayEntry(Any(), kind, latestLocals, { latestDismiss.value() }) {
                     latestContent.value()
                 }
             }
@@ -109,10 +110,13 @@ internal class ReaderOverlayState internal constructor() {
         content: @Composable () -> Unit
     ) {
         val layers = orderedEntries
+        val hardwareBackdrop = LocalHardwareGlassBackdrop.current
+        val legacyBackdrop = LocalGlassBackdrop.current
         val top = layers.lastOrNull()
         val lifecycle = LocalLifecycleOwner.current.lifecycle
         val navigationOwner = remember(lifecycle) { OverlayBackOwner(lifecycle) }
         val focusManager = LocalFocusManager.current
+        val windowView = LocalView.current
         val keyboard = LocalSoftwareKeyboardController.current
         val density = LocalDensity.current
         val imeVisible = WindowInsets.ime.getBottom(density) > 0
@@ -132,7 +136,7 @@ internal class ReaderOverlayState internal constructor() {
 
         fun back() {
             val current = top ?: return
-            dispatchReaderOverlayBack(
+            dispatchGlassOverlayBack(
                 kind = current.kind,
                 imeVisible = imeVisible,
                 contentHandlesBack = current.backDispatcher?.hasEnabledCallbacks() == true,
@@ -148,7 +152,7 @@ internal class ReaderOverlayState internal constructor() {
             )
         }
 
-        CompositionLocalProvider(LocalReaderOverlayHost provides this) {
+        CompositionLocalProvider(LocalGlassOverlayHost provides this) {
             Box(modifier.fillMaxSize().onGloballyPositioned { windowOrigin = it.positionInWindow() }) {
                 CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides navigationOwner) {
                     Box(Modifier.fillMaxSize()
@@ -184,7 +188,14 @@ internal class ReaderOverlayState internal constructor() {
                             } else requester.saveFocusedChild()
                         }
                         CompositionLocalProvider(entry.localContext.value) {
-                            CompositionLocalProvider(LocalOnBackPressedDispatcherOwner provides owner) {
+                            CompositionLocalProvider(
+                                LocalHardwareGlassBackdrop provides hardwareBackdrop,
+                                LocalGlassBackdrop provides legacyBackdrop,
+                                LocalFocusManager provides focusManager,
+                                LocalView provides windowView,
+                                LocalSoftwareKeyboardController provides keyboard,
+                                LocalOnBackPressedDispatcherOwner provides owner
+                            ) {
                                 Box(Modifier.fillMaxSize()
                                     .then(if (!active) Modifier.clearAndSetSemantics { } else Modifier)
                                     .focusRequester(requester)
@@ -234,22 +245,22 @@ internal class ReaderOverlayState internal constructor() {
     }
 }
 
-internal val LocalReaderOverlayHost = staticCompositionLocalOf<ReaderOverlayState?> { null }
+internal val LocalGlassOverlayHost = staticCompositionLocalOf<GlassOverlayState?> { null }
 
 @Composable
-internal fun ReaderOverlayHost(
+internal fun GlassOverlayHost(
     modifier: Modifier = Modifier,
     onModalVisibilityChanged: (Boolean) -> Unit = {},
     content: @Composable () -> Unit
 ) {
-    remember { ReaderOverlayState() }.Render(modifier, onModalVisibilityChanged, content)
+    remember { GlassOverlayState() }.Render(modifier, onModalVisibilityChanged, content)
 }
 
 /** Standard Material sheet gestures and nested scrolling, drawn in this window. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-internal fun ReaderInWindowSheet(
-    host: ReaderOverlayState,
+internal fun GlassInWindowSheet(
+    host: GlassOverlayState,
     title: String,
     onDismiss: () -> Unit,
     subtitle: String?,
@@ -287,15 +298,15 @@ internal fun ReaderInWindowSheet(
         if (state.currentValue != SheetValue.Hidden) shown = true
         else if (shown && !closing) { closing = true; latestDismiss() }
     }
-    ReaderOverlayState.Register(host, ReaderOverlayKind.Sheet, close) {
+    GlassOverlayState.Register(host, GlassOverlayKind.Sheet, close) {
         val density = LocalDensity.current
         val imeVisible = WindowInsets.ime.getBottom(density) > 0
-        val safe = readerSafeInsets().union(WindowInsets.ime)
+        val safe = glassSafeInsets().union(WindowInsets.ime)
         // A partially expanded sheet extends below its visible anchor. Keep its scroll content
         // inside the safe viewport instead of painting controls under the gesture bar or IME.
         BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safe).clipToBounds()) {
             val available = with(density) { maxHeight.roundToPx() }
-            val peek = with(density) { readerSheetPeekHeight(contentHeight, available).toDp() }
+            val peek = with(density) { glassSheetPeekHeight(contentHeight, available).toDp() }
             // The fraction belongs to the reading viewport, not to the reduced IME
             // area. Otherwise opening the keyboard shrinks the sheet a second time.
             val sceneHeight = maxHeight + with(density) {
@@ -357,14 +368,14 @@ internal fun ReaderInWindowSheet(
                     }
                 }
             ) {
-                ReaderModalScrim(close)
+                GlassModalScrim(close)
             }
         }
     }
 }
 
 @Composable
-private fun ReaderModalScrim(onDismiss: () -> Unit, dim: Boolean = true) {
+private fun GlassModalScrim(onDismiss: () -> Unit, dim: Boolean = true) {
     val dismiss by rememberUpdatedState(onDismiss)
     Box(Modifier.fillMaxSize()
         .then(if (dim) Modifier.background(MaterialTheme.colorScheme.scrim.copy(alpha = .32f)) else Modifier)
@@ -374,8 +385,8 @@ private fun ReaderModalScrim(onDismiss: () -> Unit, dim: Boolean = true) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ReaderInWindowDialog(
-    host: ReaderOverlayState,
+internal fun GlassInWindowDialog(
+    host: GlassOverlayState,
     onDismissRequest: () -> Unit,
     confirmButton: @Composable () -> Unit,
     modifier: Modifier,
@@ -384,12 +395,13 @@ internal fun ReaderInWindowDialog(
     text: (@Composable () -> Unit)?,
     icon: (@Composable () -> Unit)?
 ) {
-    ReaderOverlayState.Register(host, ReaderOverlayKind.Dialog, onDismissRequest) {
-        ReaderModalScrim(onDismissRequest)
-        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(readerSafeInsets().union(WindowInsets.ime)).clipToBounds(), contentAlignment = Alignment.Center) {
+    GlassOverlayState.Register(host, GlassOverlayKind.Dialog, onDismissRequest) {
+        GlassModalScrim(onDismissRequest)
+        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(glassSafeInsets().union(WindowInsets.ime)).clipToBounds(), contentAlignment = Alignment.Center) {
             val compact = maxHeight < 240.dp
             val outerVertical = if (compact) 0.dp else 24.dp
-            val innerPadding = if (compact) 8.dp else 24.dp
+            val innerPadding = if (compact) 16.dp else 24.dp
+            val verticalPadding = if (compact) 4.dp else innerPadding
             val availableHeight = (maxHeight - outerVertical * 2f).coerceAtLeast(0.dp)
             val bodyLimit = availableHeight * .55f
             val outerScroll = rememberScrollState()
@@ -417,12 +429,14 @@ internal fun ReaderInWindowDialog(
                 shape = MaterialTheme.shapes.extraLarge) {
                 // One scroll container owns caret visibility in a short IME viewport.
                 // Keep the body call at the same composition position while insets change.
-                Column(Modifier.padding(innerPadding).bouncingVerticalScroll(outerScroll),
+                Column(Modifier.padding(horizontal = innerPadding, vertical = verticalPadding).bouncingVerticalScroll(outerScroll),
                     verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 16.dp)) {
                     icon?.let { Box(Modifier.align(Alignment.CenterHorizontally)) { it() } }
                     title?.let { ProvideTextStyle(MaterialTheme.typography.headlineSmall, it) }
                     text?.let { body ->
                         CompositionLocalProvider(
+                            LocalDialogBodyHeight provides if (compact)
+                                (availableHeight - verticalPadding * 2f).coerceAtLeast(0.dp) else androidx.compose.ui.unit.Dp.Infinity,
                             LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
                             com.mirad.reader.ui.common.LocalEdgeBounceAllowed provides { delta ->
                                 if (delta < 0f) !outerScroll.canScrollForward else !outerScroll.canScrollBackward
@@ -451,14 +465,14 @@ internal fun ReaderInWindowDialog(
 /** Uses the same anchor box as DropdownMenu while the portal remains at reader root. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun ReaderDropdownMenu(
+internal fun GlassPortalMenu(
     expanded: Boolean,
     onDismissRequest: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
     com.mirad.reader.ui.common.ResetEdgeBounceOnOverlay(expanded)
-    val host = LocalReaderOverlayHost.current
+    val host = LocalGlassOverlayHost.current
     if (host == null) {
         GlassDropdownMenu(expanded, onDismissRequest, modifier, content)
         return
@@ -468,9 +482,9 @@ internal fun ReaderDropdownMenu(
         val bounds = coordinates.parentLayoutCoordinates?.boundsInWindow() ?: coordinates.boundsInWindow()
         anchor = IntRect(bounds.left.roundToInt(), bounds.top.roundToInt(), bounds.right.roundToInt(), bounds.bottom.roundToInt())
     })
-    if (expanded && anchor.width > 0 && anchor.height > 0) ReaderOverlayState.Register(host, ReaderOverlayKind.Menu, onDismissRequest) {
-        ReaderModalScrim(onDismissRequest, dim = false)
-        val safeInsets = readerSafeInsets().union(WindowInsets.ime)
+    if (expanded && anchor.width > 0 && anchor.height > 0) GlassOverlayState.Register(host, GlassOverlayKind.Menu, onDismissRequest) {
+        GlassModalScrim(onDismissRequest, dim = false)
+        val safeInsets = glassSafeInsets().union(WindowInsets.ime)
         val density = LocalDensity.current
         val direction = LocalLayoutDirection.current
         val margin = with(density) { 8.dp.roundToPx() }
@@ -491,18 +505,18 @@ internal fun ReaderDropdownMenu(
             val placeable = measurables.single().measure(Constraints(maxWidth = safe.width, maxHeight = safe.height))
             val origin = host.windowOrigin
             val localAnchor = anchor.translate(-origin.x.roundToInt(), -origin.y.roundToInt())
-            val position = readerMenuPosition(localAnchor, IntSize(placeable.width, placeable.height), safe, direction)
+            val position = glassMenuPosition(localAnchor, IntSize(placeable.width, placeable.height), safe, direction)
             layout(constraints.maxWidth, constraints.maxHeight) { placeable.place(position.x, position.y) }
         }
     }
 }
 
-internal fun readerSheetPeekHeight(contentHeight: Int, availableHeight: Int): Int =
+internal fun glassSheetPeekHeight(contentHeight: Int, availableHeight: Int): Int =
     min(contentHeight.coerceAtLeast(0), availableHeight.coerceAtLeast(0) / 2)
 
 /** Lower sheet navigation must never consume a confirmation or menu's Back action. */
-internal fun dispatchReaderOverlayBack(
-    kind: ReaderOverlayKind,
+internal fun dispatchGlassOverlayBack(
+    kind: GlassOverlayKind,
     imeVisible: Boolean,
     contentHandlesBack: Boolean,
     navigationHandlesBack: Boolean,
@@ -514,12 +528,12 @@ internal fun dispatchReaderOverlayBack(
     when {
         imeVisible -> hideIme()
         contentHandlesBack -> contentBack()
-        kind == ReaderOverlayKind.Sheet && navigationHandlesBack -> navigationBack()
+        kind == GlassOverlayKind.Sheet && navigationHandlesBack -> navigationBack()
         else -> dismiss()
     }
 }
 
-internal fun readerMenuPosition(anchor: IntRect, menu: IntSize, safe: IntRect, direction: LayoutDirection): IntOffset {
+internal fun glassMenuPosition(anchor: IntRect, menu: IntSize, safe: IntRect, direction: LayoutDirection): IntOffset {
     val preferredX = if (direction == LayoutDirection.Ltr) anchor.left else anchor.right - menu.width
     val alternateX = if (direction == LayoutDirection.Ltr) anchor.right - menu.width else anchor.left
     val x = when {
@@ -534,3 +548,8 @@ internal fun readerMenuPosition(anchor: IntRect, menu: IntSize, safe: IntRect, d
     }
     return IntOffset(x, y)
 }
+
+@Composable
+@OptIn(ExperimentalLayoutApi::class)
+internal fun glassSafeInsets(): WindowInsets =
+    WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout)

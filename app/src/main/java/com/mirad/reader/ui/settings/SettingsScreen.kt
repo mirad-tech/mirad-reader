@@ -11,7 +11,7 @@ import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -56,7 +56,8 @@ fun SettingsScreen(
     onBack: () -> Unit,
     route: SettingsRoute? = null,
     onOpenRoute: (SettingsRoute) -> Unit = {},
-    onOpenHidden: () -> Unit = {}
+    onOpenHidden: () -> Unit = {},
+    onOpenStats: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
     val baseConfig by container.settings.global.collectAsState(initial = null)
@@ -92,7 +93,7 @@ fun SettingsScreen(
     SettingsContent(
         config = config, fonts = fontActions.fonts, shelf = shelf,
         route = route, onBack = onBack, onOpenRoute = onOpenRoute,
-        onOpenHidden = onOpenHidden, onChange = { update(it) },
+        onOpenHidden = onOpenHidden, onOpenStats = onOpenStats, onChange = { update(it) },
         onImportFont = fontActions.importFont,
         onDeleteFont = fontActions.deleteFont,
         onPickImage = pickImage,
@@ -128,6 +129,7 @@ internal fun SettingsContent(
     onBack: () -> Unit = {},
     onOpenRoute: (SettingsRoute) -> Unit = {},
     onOpenHidden: () -> Unit = {},
+    onOpenStats: () -> Unit = {},
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit = {},
     onImportFont: () -> Unit = {},
     onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
@@ -139,17 +141,17 @@ internal fun SettingsContent(
     initialScrollPx: Int = 0
 ) {
     val hiddenCount = shelf.count { it.book.isHidden }
+    val scrollState = rememberScrollState(initial = initialScrollPx)
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { snackbarHost() },
-        topBar = { ScreenHeader(title = route?.title ?: "设置", onBack = onBack,
-            subtitle = if (route is SettingsRoute.Reading) "全书通用" else null) }
+        topBar = { ScreenHeader(title = route?.title ?: "设置", onBack = onBack) }
     ) { padding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .glassBackdropSource()
-                .bouncingVerticalScroll(rememberScrollState(initial = initialScrollPx))
+                .bouncingVerticalScroll(scrollState)
                 .padding(padding)
                 .padding(horizontal = Spacing.lg)
         ) {
@@ -161,6 +163,9 @@ internal fun SettingsContent(
                     }
                     CardDivider()
                     SettingNavRow("恢复默认", onClick = onResetReading)
+                }
+                SettingCard(title = "阅读记录") {
+                    SettingNavRow("阅读统计", onClick = onOpenStats)
                 }
                 SettingCard(title = "应用设置") {
                     appSettingsPages.forEach { page ->

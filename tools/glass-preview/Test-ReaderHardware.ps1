@@ -240,6 +240,8 @@ try {
                 $state=Capture "$mode-c$clarity"
                 if($clarity -eq 100) {
                     Check ([double](Metric $state 'blurDp') -eq 0) "$mode 100% clarity takes the explicit no-blur branch"
+                    $readableFloor=if($mode -eq 'DAY'){.92}else{.88}
+                    Check ([double](Metric $state 'baseOpacity') -ge $readableFloor-.001) "$mode clear panels use a uniform readability tint without blurring the foreground"
                 } else {
                     Check ([double](Metric $state 'blurDp') -gt 0) "$mode $clarity% clarity keeps a non-zero blur radius"
                 }

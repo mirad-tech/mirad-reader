@@ -1,5 +1,7 @@
 package com.mirad.reader.ui.reader
 
+import com.mirad.reader.ui.common.*
+
 import android.view.View
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
@@ -221,7 +223,7 @@ internal fun ReaderContent(
     }
 
     // 正文与顶部阅读文字不再为状态栏、挖孔增加留白，也不执行挖孔区域文字裁剪；保留页眉页脚自身占位与导航栏预留。
-    val systemBarInsets = readerSafeInsets().asPaddingValues()
+    val systemBarInsets = glassSafeInsets().asPaddingValues()
     val layoutDirection = LocalLayoutDirection.current
     val reserveTop = if (config.showHeader) 24 else 0
     val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
@@ -310,7 +312,7 @@ internal fun ReaderContent(
                                         text = selection.text,
                                         chapterIndex = selection.chapterIndex
                                     ) { ok ->
-                                        toast = if (ok) "已划线" else "划线失败"
+                                        feedback.show(if (ok) "已划线" else "划线失败", if (ok) com.mirad.reader.ui.common.FeedbackKind.SUCCESS else com.mirad.reader.ui.common.FeedbackKind.ERROR)
                                     }
                                     session.clearSelection()
                                 }
@@ -377,7 +379,7 @@ internal fun ReaderContent(
         }
         },
         overlays = {
-        ReaderOverlayHost(onModalVisibilityChanged = {
+        GlassOverlayHost(onModalVisibilityChanged = {
             modalVisible = it
             hardwareScene.setModalVisible(it)
         }) {
@@ -464,13 +466,16 @@ internal fun ReaderContent(
             )
         }
 
-        com.mirad.reader.ui.common.FeedbackHost(
-            feedback,
-            Modifier.align(Alignment.BottomCenter).imePadding().then(
-                if (chromeVisible) Modifier.padding(bottom = with(density) { bottomControlsHeight.toDp() })
-                else Modifier.navigationBarsPadding()
-            )
-        )
+        Column(Modifier.align(Alignment.BottomCenter).imePadding().then(
+            if (chromeVisible) Modifier.padding(bottom = with(density) { bottomControlsHeight.toDp() })
+            else Modifier.navigationBarsPadding()
+        )) {
+            com.mirad.reader.ui.common.FeedbackHost(feedback)
+            com.mirad.reader.ui.common.LocalRootFeedback.current?.let {
+                com.mirad.reader.ui.common.FeedbackHost(it)
+            }
+        }
+
     }
 
     if (showToc) {
@@ -594,13 +599,7 @@ internal fun ReaderContent(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    androidx.compose.material3.OutlinedTextField(
-                        value = noteDraft,
-                        onValueChange = { noteDraft = it },
-                        label = { Text("笔记内容") },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp),
-                        minLines = 3, maxLines = 7
-                    )
+                    NoteEditor(noteDraft) { noteDraft = it }
                 }
             },
             confirmButton = {
@@ -612,7 +611,7 @@ internal fun ReaderContent(
                         note = noteDraft.ifBlank { null },
                         chapterIndex = noteInfo.chapterIndex
                     ) { ok ->
-                        toast = if (ok) "已保存笔记" else "保存失败"
+                        feedback.show(if (ok) "已保存笔记" else "保存失败", if (ok) com.mirad.reader.ui.common.FeedbackKind.SUCCESS else com.mirad.reader.ui.common.FeedbackKind.ERROR)
                     }
                     session.clearSelection()
                     pendingNote = null

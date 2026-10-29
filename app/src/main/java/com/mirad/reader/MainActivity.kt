@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
@@ -120,7 +119,7 @@ class MainActivity : ComponentActivity() {
             text = intent.getStringExtra(Intent.EXTRA_TEXT)
         )
         if (raw.isEmpty()) {
-            Toast.makeText(this, "没有可导入的文件（只支持 txt / epub 文件）", Toast.LENGTH_SHORT).show()
+            container.feedback.show("没有可导入的文件（只支持 txt / epub 文件）", com.mirad.reader.ui.common.FeedbackKind.ERROR)
             return
         }
 
@@ -135,7 +134,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     "没有读取权限，换个方式分享试试"
                 }
-                Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
+                container.feedback.show(message, com.mirad.reader.ui.common.FeedbackKind.ERROR)
                 return@launch
             }
             container.importer.import(sources)

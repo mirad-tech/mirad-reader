@@ -1,6 +1,5 @@
 package com.mirad.reader.ui.common
 
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -193,7 +192,7 @@ internal fun rememberReadingBackgroundPicker(container: AppContainer): (dark: Bo
                 }
                 if (imported == null) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(context, "背景图片读取失败，请重新选择。", Toast.LENGTH_SHORT).show()
+                        container.feedback.show("背景图片读取失败，请重新选择。", FeedbackKind.ERROR)
                     }
                 } else {
                     controller.updateReadingConfig(destination, { latest ->

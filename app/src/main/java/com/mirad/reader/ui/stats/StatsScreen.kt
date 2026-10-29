@@ -17,7 +17,7 @@ import com.mirad.reader.ui.common.bouncingVerticalScroll
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,7 +87,6 @@ internal fun StatsEmptyContent(contentPadding: PaddingValues) {
         item {
             EmptyState(
                 title = "还没有阅读记录",
-                badge = "时",
                 description = "阅读满 5 秒就会开始统计，读一读就有数据了",
                 modifier = Modifier.fillParentMaxSize()
             )

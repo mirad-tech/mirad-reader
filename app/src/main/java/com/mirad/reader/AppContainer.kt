@@ -111,6 +111,7 @@ class AppContainer(app: Application) {
     val context: Application get() = application
 
     val openDownloads = MutableStateFlow(false)
+    val feedback = com.mirad.reader.ui.common.FeedbackState("application")
     private val sourceHttp = SourceHttpClient()
     private val sourceEngine = DefaultBookSourceEngine(sourceHttp, SandboxRuleExecutor(app))
     val sources: SourceRepository = BookSourceRepository(File(app.filesDir, "book-sources"), sourceHttp, appScope)

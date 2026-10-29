@@ -274,7 +274,7 @@ fun Modifier.glassBackground(
     }
 
     // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色。
-    val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur)
+    val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur, style)
     val animatedOpacity by animateFloatAsState(
         targetValue = targetOpacity,
         animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
@@ -294,7 +294,7 @@ fun Modifier.glassBackground(
             lastProtectedCellCount = 0
         }
     }
-    this.shadow(if (legacy) 0.dp else if (style == GlassStyle.Panel) 8.dp else 6.dp, shape, clip = false)
+    this.shadow(if (legacy) 0.dp else if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false)
         .onGloballyPositioned { coordinates ->
             val newOrigin = coordinates.positionOnScreen()
             val newSize = coordinates.size
@@ -367,6 +367,10 @@ fun GlassDropdownMenu(
     content: @Composable ColumnScope.() -> Unit
 ) {
     ResetEdgeBounceOnOverlay(expanded)
+    if (LocalGlassOverlayHost.current != null) {
+        GlassPortalMenu(expanded, onDismissRequest, modifier, content)
+        return
+    }
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
