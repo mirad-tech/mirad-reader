@@ -96,7 +96,7 @@ private fun ShelfHeader(
         ScreenHeader(
             title = "已选 $selectionCount 本",
             onBack = onExitSelection,
-            root = false,
+            root = false, floatingGlass = true,
             actions = {
                 IconButton(onClick = onSelectAll) {
                     Icon(Icons.Default.Check, contentDescription = "全选")
@@ -440,7 +440,7 @@ internal fun ShelfContent(
                 importAction = {
                     Box {
                         IconButton(onClick = { importMenu = true }) {
-                            Icon(Icons.Default.Add, "导入", tint = MaterialTheme.colorScheme.primary)
+                            Icon(Icons.Default.Add, "导入", tint = MaterialTheme.colorScheme.onSurface)
                         }
                         DropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
                             DropdownMenuItem(text = { Text("导入文件（txt / epub）") },

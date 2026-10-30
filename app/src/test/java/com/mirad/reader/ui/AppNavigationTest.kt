@@ -6,6 +6,32 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AppNavigationTest {
+    @Test fun pagingActivationKeepsEachRouteEvenWhenCrossingTheSameEntryRepeatedly() {
+        val state = AppNavigationState()
+        state.select(AppTab.Settings)
+        state.open(Screen.Stats)
+        state.activate(AppTab.Notes)
+        state.activate(AppTab.Settings)
+        state.activate(AppTab.Settings)
+        assertEquals(Screen.Stats, state.current)
+        assertEquals(Screen.Notes, state.screenFor(AppTab.Notes))
+        state.select(AppTab.Settings)
+        assertEquals(Screen.Settings, state.current)
+    }
+
+    @Test fun aPagingSnapshotRestoresStacksWithoutAddingTabHistory() {
+        val state = AppNavigationState()
+        state.activate(AppTab.Search)
+        state.open(Screen.Downloads)
+        state.activate(AppTab.Settings)
+        val restored = AppNavigationState(state.snapshot())
+        assertEquals(Screen.Downloads, restored.screenFor(AppTab.Search))
+        restored.activate(AppTab.Search)
+        restored.back()
+        assertEquals(Screen.OnlineSearch, restored.current)
+        restored.back()
+        assertEquals(Screen.Shelf, restored.current)
+    }
     @Test fun tabsKeepIndependentStacksAndBackDoesNotReplayTabSwitches() {
         val state = AppNavigationState()
         state.select(AppTab.Settings)

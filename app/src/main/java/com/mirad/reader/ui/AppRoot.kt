@@ -1,6 +1,13 @@
 package com.mirad.reader.ui
 
+import androidx.compose.runtime.derivedStateOf
 import android.app.Activity
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.activity.OnBackPressedDispatcher
+import androidx.activity.OnBackPressedDispatcherOwner
+import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
+import com.mirad.reader.ui.common.*
+import kotlin.math.abs
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import com.mirad.reader.ui.common.LocalAppBottomBar
@@ -185,12 +192,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     CompositionLocalProvider(
         LocalRootFeedback provides container.feedback,
         LocalAppRootPage provides navigation.isRoot,
-        LocalAppBottomBar provides {
-            if (current !is Screen.Reader) AppNavigationBar(navigation.selectedTab) {
-                keyboard?.hide()
-                navigation.select(it)
-            }
-        },
+        LocalAppBottomBar provides {},
         LocalAppAppearance provides appearance,
         LocalAppDarkTheme provides darkTheme,
         LocalAppSystemDark provides systemDark,
@@ -200,13 +202,15 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         LocalGlassAppearanceController provides glassController,
         LocalGlassSaveFailed provides glassSaveFailed
     ) {
-        stateHolder.SaveableStateProvider("${navigation.selectedTab.name}:$current") {
+        val renderScreen: @Composable (AppTab, Screen) -> Unit = { tab, screen ->
+            CompositionLocalProvider(LocalAppRootPage provides (screen == tab.root), LocalPagerPage provides tab.name, LocalPagerPageIndex provides tab.ordinal) {
+        stateHolder.SaveableStateProvider("${tab.name}:$screen") {
             com.mirad.reader.ui.common.PageSurface(
-                pageKey = current.toString(),
-                bounded = current != Screen.Shelf && current !is Screen.Reader,
-                animate = current !is Screen.Reader
+                pageKey = screen.toString(),
+                bounded = screen != Screen.Shelf && screen !is Screen.Reader,
+                animate = false
             ) {
-                when (current) {
+                when (screen) {
                     Screen.Shelf -> ShelfScreen(
                         container = container,
                         onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) },
@@ -219,13 +223,13 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                     )
                     is Screen.Reader -> ReaderScreen(
                         container = container,
-                        bookId = current.bookId,
+                        bookId = screen.bookId,
                         systemDark = systemDark,
                         onBack = { goBack() }
                     )
                     Screen.Stats -> StatsScreen(container = container, onBack = { goBack() })
                     is Screen.SettingsDetail -> SettingsScreen(
-                        container = container, route = current.route, onBack = { goBack() },
+                        container = container, route = screen.route, onBack = { goBack() },
                         onOpenRoute = { navigate(Screen.SettingsDetail(it)) },
                         onOpenHidden = { navigate(Screen.HiddenBooks) }
                     )
@@ -266,6 +270,49 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                 }
             }
         }
+            }
+        }
+        val motion = rememberAppPagerMotion(navigation)
+        BackHandler(enabled = motion.isDragging) { motion.cancelDrag() }
+        val routes = AppTab.entries.map { navigation.screenFor(it) }
+        var previousRoutes by remember { mutableStateOf(routes) }
+        LaunchedEffect(routes) {
+            if (previousRoutes != routes) motion.cancelDrag()
+            previousRoutes = routes
+        }
+        val chrome = remember { PagerChrome() }
+        if (current is Screen.Reader) {
+            LaunchedEffect(current) { motion.cancelDrag() }
+            renderScreen(navigation.selectedTab, current)
+        } else {
+            PagerChromeHost(chrome, navigation.selectedTab.name, pageProgress = { motion.progress },
+                onAvailability = { if (!it && motion.isDragging) motion.cancelDrag() },
+                navigation = { available -> AppNavigationBar(navigation.selectedTab, motion = motion, enabled = available) {
+                    keyboard?.hide(); navigation.select(it)
+                } }
+            ) {
+                HorizontalPager(state = motion.pager, userScrollEnabled = false,
+                    beyondViewportPageCount = 1, key = { AppTab.entries[it].name }, modifier = Modifier.fillMaxSize()) { index ->
+                    val tab = AppTab.entries[index]
+                    val route = navigation.screenFor(tab)
+                    val visible by remember(index, motion) { derivedStateOf { abs(index - motion.progress) < 1f } }
+                    val active by remember(tab, navigation) { derivedStateOf { tab == navigation.selectedTab } }
+                    val parentBack = requireNotNull(LocalOnBackPressedDispatcherOwner.current)
+                    val inactiveBack = remember(tab, parentBack) {
+                        object : OnBackPressedDispatcherOwner {
+                            override val lifecycle = requireNotNull(parentBack).lifecycle
+                            override val onBackPressedDispatcher = OnBackPressedDispatcher()
+                        }
+                    }
+                    CompositionLocalProvider(LocalPagerPageVisible provides visible,
+                        LocalPagerPageActive provides active,
+                        LocalOnBackPressedDispatcherOwner provides if (active) parentBack else inactiveBack) {
+                        renderScreen(tab, if (route is Screen.Reader) tab.root else route)
+                    }
+                }
+            }
+        }
+
     }
     }
     }

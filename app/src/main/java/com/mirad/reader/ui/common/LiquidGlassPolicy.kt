@@ -22,18 +22,12 @@ internal fun liquidBaseOpacity(percent: Int, isDark: Boolean = false): Float {
     return floor + (1f - floor) * remaining * remaining
 }
 
-/** 高档清晰度不模糊底图，面板以一层均匀底色保护长文案；工具栏仍保持轻薄。 */
-internal fun liquidMaterialOpacity(clarity: Int, isDark: Boolean, style: GlassStyle): Float {
-    val base = liquidBaseOpacity(clarity, isDark)
-    if (style != GlassStyle.Panel) return base
-    val clear = ((clarity.coerceIn(0, 100) - 60) / 40f).coerceIn(0f, 1f)
-    val readable = if (isDark) .88f else .92f
-    return base + (max(base, readable) - base) * clear * clear
-}
+/** 面板在 80 档保留柔化和透色；工具栏继续支持 100 清晰度的零模糊。不改保存值。 */
+internal fun liquidBlurClarity(clarity: Int, style: GlassStyle): Int =
+    clarity.coerceIn(0, if (style == GlassStyle.Panel) 80 else 100)
 
-internal fun uniformGlassOpacity(appearance: GlassAppearance, isDark: Boolean, available: Boolean,
-    style: GlassStyle = GlassStyle.Toolbar): Float =
-    if (!appearance.enabled) 1f else if (!available) .94f else liquidMaterialOpacity(appearance.clarityPercent, isDark, style)
+internal fun uniformGlassOpacity(appearance: GlassAppearance, isDark: Boolean, available: Boolean): Float =
+    if (!appearance.enabled) 1f else if (!available) .94f else liquidBaseOpacity(appearance.clarityPercent, isDark)
 
 internal const val LIQUID_REFRACTION_STRENGTH_DP = 2.1f
 internal fun liquidRefractionRimDp(shortSideDp: Float): Float = min(6f, shortSideDp.coerceAtLeast(0f) * .12f)
@@ -46,15 +40,15 @@ internal fun liquidMaterialPaddingPx(blurRadiusPx: Float, refraction: Boolean, d
 /**
  * GPU 路径的模糊半径。
  *
- * 与 Compose 路径共用同一方向与端点语义：清晰度 0 = 最朦胧，100 = 不模糊（调用方据此走无 effect 分支），
- * 50 是改造前观感的校准点。工具栏与面板保留各自基值，不再是一组与用户设置无关的常量。
+ * 与 Compose 路径共用角色策略：清晰度 0 = 最朦胧，工具栏 100 = 不模糊；
+ * 面板在高档位保留柔化，避免长内容与底下正文重叠，也不再靠近乎不透明的底色遮挡。
  */
 internal fun liquidBlurDp(style: GlassStyle, clarityPercent: Int = 50): Float {
     val base = when (style) {
         GlassStyle.Toolbar -> 10f
         GlassStyle.Panel -> 14f
     }
-    val clarity = clarityPercent.coerceIn(0, 100)
+    val clarity = liquidBlurClarity(clarityPercent, style)
     if (clarity >= 100) return 0f
     val scale = 1f + (50 - clarity) / 50f * 0.75f
     return (base * scale).coerceIn(1f, 26f)

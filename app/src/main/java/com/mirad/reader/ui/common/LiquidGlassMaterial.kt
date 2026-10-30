@@ -27,22 +27,25 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
+import kotlin.math.max
 
 /** Material and foreground have independent hardware layers; only the material is refracted. */
 @RequiresApi(31)
 internal fun Modifier.hardwareGlassBackground(
-    source: HardwareGlassBackdrop, style: GlassStyle, shape: Shape
+    source: HardwareGlassBackdrop, style: GlassStyle, shape: Shape,
+    minimumTintAlpha: Float = 0f, shadowElevation: Dp? = null
 ): Modifier = composed {
     val appearance = LocalGlassAppearance.current
     val percent = appearance.transparencyPercent
-    // 清晰度与开关同源：关闭时 percent=0 走稳定表面，100% 时 blur=0 走无模糊分支。
+    // 关闭时 percent=0 走稳定表面；工具栏 100 时零模糊，面板按公共策略保留柔化。
     val clarity = appearance.clarityPercent
     val edgeTexture = LocalGlassEdgeTexture.current
     val surface = MaterialTheme.colorScheme.surface
     val baseOpacity by animateFloatAsState(
-        liquidMaterialOpacity(clarity, surface.luminance() < .5f, style),
+        max(liquidBaseOpacity(clarity, surface.luminance() < .5f), minimumTintAlpha.coerceIn(0f, 1f)),
         animationSpec = if (appearance.enabled) tween(180) else snap(), label = "liquidTint")
     val blurDp by animateFloatAsState(liquidBlurDp(style, clarity), tween(180), label = "liquidBlur")
     val active = source.renderingActive && source.contentReady && percent > 0
@@ -54,7 +57,7 @@ internal fun Modifier.hardwareGlassBackground(
         onDispose { source.removeConsumer(renderer); renderer.release() }
     }
 
-    this.shadow(if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false).onGloballyPositioned {
+    this.shadow(shadowElevation ?: if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false).onGloballyPositioned {
         coordinates = it
         // LayoutCoordinates identity usually survives a drag. Publish its position separately so
         // changing only the outer placement also invalidates this material's cached display list.

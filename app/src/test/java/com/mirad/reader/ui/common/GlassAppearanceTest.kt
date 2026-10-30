@@ -101,4 +101,15 @@ class GlassAppearanceTest {
         assertEquals("关闭后必须是完全不透明表面", 1f, params.opacity, 0.001f)
         assertEquals("关闭后不再模糊", 0.dp, params.blurRadius)
     }
+
+    @Test
+    fun composeAndGpuPanelsKeepSofteningAtMaximumClarity() {
+        val panel80 = computeGlassParams(100, GlassStyle.Panel, false, true, null, clarityPercent = 80)
+        val panel100 = computeGlassParams(100, GlassStyle.Panel, false, true, null, clarityPercent = 100)
+        assertEquals(panel80.blurRadius, panel100.blurRadius)
+        assertTrue(panel100.blurRadius > 0.dp)
+        assertEquals(liquidBlurDp(GlassStyle.Panel, 80), liquidBlurDp(GlassStyle.Panel, 100), 0f)
+        assertEquals(0.dp, computeGlassParams(100, GlassStyle.Toolbar, false, true, null, clarityPercent = 100).blurRadius)
+        assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
+    }
 }

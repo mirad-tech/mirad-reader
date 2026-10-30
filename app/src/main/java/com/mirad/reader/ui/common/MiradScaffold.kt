@@ -1,5 +1,7 @@
 package com.mirad.reader.ui.common
 
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.clipRect
 import android.os.Build
 import android.view.View
 import androidx.compose.foundation.layout.*
@@ -30,10 +32,14 @@ internal val LocalPageSafeInsets = staticCompositionLocalOf<WindowInsets?> { nul
 internal fun GlassScene(
     modal: Boolean,
     modifier: Modifier = Modifier,
+    composite: PagerChrome? = null,
     content: @Composable () -> Unit,
     controls: @Composable () -> Unit
 ) {
-    val source = rememberHardwareGlassBackdrop(Unit)
+    val pageRegistry = if (composite == null) LocalPagerChrome.current else null
+    val pageIndex = LocalPagerPageIndex.current
+    val visible = LocalPagerPageVisible.current
+    val source = rememberHardwareGlassBackdrop(Unit, visible)
     val body = rememberUpdatedState(content)
     val chrome = rememberUpdatedState(controls)
     val background = MaterialTheme.colorScheme.background.toArgb()
@@ -61,6 +67,10 @@ internal fun GlassScene(
                 host.setPlanes(bodyView, controlsView)
                 if (Build.VERSION.SDK_INT >= 31 && host is GlassBackdropView && source != null) {
                     host.onContentRecorded = { source.contentChanged("page") }
+                    if (composite != null) {
+                        host.recordContent = { canvas -> composite.draw(canvas, host) }
+                        host.recordVersion = { composite.version(host) }
+                    } else pageRegistry?.add(host, pageIndex)
                     source.attach(host, host.contentLayer)
                 }
                 host
@@ -73,6 +83,7 @@ internal fun GlassScene(
                 }
             },
             onRelease = { host ->
+                pageRegistry?.remove(host)
                 host.setContentBlocked(false)
                 if (Build.VERSION.SDK_INT >= 31) source?.detach(host)
                 host.onContentRecorded = null
@@ -95,6 +106,7 @@ fun MiradScaffold(
     floatingActionButton: @Composable () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit
 ) {
+    val pager = LocalPagerChrome.current
     val localOverlays = LocalGlassOverlayHost.current
     val overlays = localOverlays ?: remember { GlassOverlayState() }
     var modal by remember { mutableStateOf(false) }
@@ -104,44 +116,57 @@ fun MiradScaffold(
     val direction = LocalLayoutDirection.current
     val safeInsets = LocalPageSafeInsets.current ?: glassSafeInsets()
     val keyboard = WindowInsets.isImeVisible
-    val rootFeedback = LocalRootFeedback.current
+    val rootFeedback = if (pager == null) LocalRootFeedback.current else null
+    val effectiveBottom = pager?.bottomHeight ?: bottomHeight
     CompositionLocalProvider(LocalGlassOverlayHost provides overlays, LocalPageSafeInsets provides safeInsets) {
         GlassScene(modal, modifier.fillMaxSize(), content = {
             Box(Modifier.fillMaxSize().background(containerColor)) {
                 // 直接传递已测留白，避免第二个Scaffold的可变padding在首帧改写滚动范围。
-                if (topHeight >= 0 && bottomHeight >= 0) {
+                if (topHeight >= 0 && effectiveBottom >= 0) {
                     val padding = with(density) { PaddingValues(
                         start = safeInsets.getLeft(density, direction).toDp(),
                         top = maxOf(topHeight, safeInsets.getTop(density)).toDp(),
                         end = safeInsets.getRight(density, direction).toDp(),
-                        bottom = maxOf(bottomHeight, safeInsets.getBottom(density)).toDp()
+                        bottom = maxOf(effectiveBottom, safeInsets.getBottom(density)).toDp()
                     ) }
-                    CompositionLocalProvider(LocalContentColor provides contentColorFor(containerColor)) { content(padding) }
+                    CompositionLocalProvider(LocalContentColor provides contentColorFor(containerColor)) {
+                        // 只排除系统栏，仍让内容在悬浮玻璃顶栏/底栏后方滚动。
+                        Box(Modifier.fillMaxSize().drawWithContent {
+                            clipRect(
+                                left = safeInsets.getLeft(density, direction).toFloat(),
+                                top = safeInsets.getTop(density).toFloat(),
+                                right = size.width - safeInsets.getRight(density, direction),
+                                bottom = size.height - safeInsets.getBottom(density)
+                            ) { this@drawWithContent.drawContent() }
+                        }) { content(padding) }
+                    }
                 }
             }
         }, controls = {
-            overlays.Render(Modifier, { modal = it }) {
+            val chromeContent: @Composable () -> Unit = {
                 // 控制平面的空白区域必须允许事件穿透到正文，不能放全屏 Material Surface。
                 Box(Modifier.fillMaxSize()) {
                     Box(Modifier.align(androidx.compose.ui.Alignment.TopCenter)
                         .onSizeChangedForChrome { topHeight = it }) { topBar() }
                     Box(Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
                         .onSizeChangedForChrome { bottomHeight = it }) {
-                            if (!keyboard) bottomBar()
+                            if (!keyboard && pager == null) bottomBar()
                     }
-                    val bottom = with(density) { bottomHeight.coerceAtLeast(0).toDp() }
+                    val bottom = with(density) { effectiveBottom.coerceAtLeast(0).toDp() }
                     Box(Modifier.align(androidx.compose.ui.Alignment.BottomEnd).imePadding()
                         .padding(end = 20.dp, bottom = bottom + 16.dp)) { floatingActionButton() }
                     Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth()
                         .imePadding().padding(bottom = bottom)) {
-                            snackbarHost()
+                            if (pager == null || LocalPagerPageActive.current) snackbarHost()
                             if (rootFeedback != null) FeedbackHost(rootFeedback)
                     }
                 }
             }
+            if (pager == null) overlays.Render(Modifier, { modal = it }, chromeContent)
+            else chromeContent()
         })
     }
 }
 
-private fun Modifier.onSizeChangedForChrome(onHeight: (Int) -> Unit): Modifier =
+internal fun Modifier.onSizeChangedForChrome(onHeight: (Int) -> Unit): Modifier =
     this.then(Modifier.onSizeChanged { onHeight(it.height) })

@@ -43,7 +43,9 @@
             c.style.marginLeft = geo.inset + 'px';
             c.style.marginRight = geo.inset + 'px';
             c.style.marginTop = geo.padTop + 'px';
-            c.style.width = 'auto';
+            // WebView 的实际 CSS 宽度可能含小数，clientWidth 却取整；auto 会多出不足1px，
+            // scrollWidth 再取整便产生并不存在的下一列。容器和分页必须使用同一列宽。
+            c.style.width = geo.colW + 'px';
             c.style.maxWidth = 'none';
             c.style.columnWidth = geo.colW + 'px';
             c.style.columnGap = geo.gap + 'px';

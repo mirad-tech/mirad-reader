@@ -4,12 +4,13 @@
   "version": "1.0.0",
   "description": "Local Chromium regression checks for the MiradReader WebView assets",
   "scripts": {
-    "test": "node auto-read.cjs && node font-browser.cjs && node modern-upgrades.cjs && node anchor-regressions.cjs && node csp.cjs",
+    "test": "node auto-read.cjs && node font-browser.cjs && node modern-upgrades.cjs && node anchor-regressions.cjs && node csp.cjs && node pagination-restore.cjs",
     "test:auto-read": "node auto-read.cjs",
     "test:font": "node font-browser.cjs",
     "test:modern": "node modern-upgrades.cjs",
     "test:anchors": "node anchor-regressions.cjs",
-    "test:csp": "node csp.cjs"
+    "test:csp": "node csp.cjs",
+    "test:restore": "node pagination-restore.cjs"
   },
   "devDependencies": {
     "playwright": "1.62.1"

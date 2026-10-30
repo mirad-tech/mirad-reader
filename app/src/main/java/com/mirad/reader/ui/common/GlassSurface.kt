@@ -40,6 +40,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -196,11 +197,13 @@ fun Modifier.glassBackdropSource(): Modifier = composed {
 /** The effect belongs exclusively to a background layer; children are drawn afterwards. */
 fun Modifier.glassBackground(
     style: GlassStyle = GlassStyle.Toolbar,
-    shape: Shape = RoundedCornerShape(22.dp)
+    shape: Shape = RoundedCornerShape(22.dp),
+    minimumTintAlpha: Float = 0f,
+    shadowElevation: Dp? = null
 ): Modifier = composed {
     val hardware = LocalHardwareGlassBackdrop.current
     if (hardware != null && Build.VERSION.SDK_INT >= 31) {
-        return@composed this.hardwareGlassBackground(hardware, style, shape)
+        return@composed this.hardwareGlassBackground(hardware, style, shape, minimumTintAlpha, shadowElevation)
     }
     val source = LocalGlassBackdrop.current
     val view = LocalView.current
@@ -274,7 +277,10 @@ fun Modifier.glassBackground(
     }
 
     // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色。
-    val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur, style)
+    val targetOpacity = max(
+        if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur),
+        minimumTintAlpha.coerceIn(0f, 1f)
+    )
     val animatedOpacity by animateFloatAsState(
         targetValue = targetOpacity,
         animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
@@ -294,7 +300,7 @@ fun Modifier.glassBackground(
             lastProtectedCellCount = 0
         }
     }
-    this.shadow(if (legacy) 0.dp else if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false)
+    this.shadow(shadowElevation ?: if (legacy) 0.dp else if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false)
         .onGloballyPositioned { coordinates ->
             val newOrigin = coordinates.positionOnScreen()
             val newSize = coordinates.size
@@ -345,10 +351,12 @@ fun GlassSurface(
     modifier: Modifier = Modifier,
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = MaterialTheme.shapes.large,
+    minimumTintAlpha: Float = 0f,
+    shadowElevation: Dp? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.glassBackground(style, shape),
+        modifier = modifier.glassBackground(style, shape, minimumTintAlpha, shadowElevation),
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,

@@ -29,6 +29,10 @@ object BuiltinBackgrounds {
     const val DAWN = "dawn"
     const val GREEN = "green"
     const val NIGHT = "night"
+    const val FIBER_PAPER = "fiber-paper"
+    const val MIST_PAPER = "mist-paper"
+    const val INK_TEAL = "ink-teal"
+    const val CHARCOAL = "charcoal"
 
     val ALL: List<BuiltinBackground> = listOf(
         BuiltinBackground(PAPER, "纸纹", "backgrounds/paper.jpg", false, ThemeKey.PAPER),
@@ -37,7 +41,11 @@ object BuiltinBackgrounds {
         BuiltinBackground(GRAPH, "淡格纸", "backgrounds/graph.jpg", false, ThemeKey.LIGHT),
         BuiltinBackground(DAWN, "柔光", "backgrounds/dawn.jpg", false, ThemeKey.LIGHT),
         BuiltinBackground(GREEN, "护眼绿", "backgrounds/green.jpg", false, ThemeKey.GREEN),
-        BuiltinBackground(NIGHT, "夜间暗纹", "backgrounds/night.jpg", true, ThemeKey.DARK)
+        BuiltinBackground(NIGHT, "夜间暗纹", "backgrounds/night.jpg", true, ThemeKey.DARK),
+        BuiltinBackground(FIBER_PAPER, "纤维纸", "backgrounds/fiber-paper.jpg", false, ThemeKey.PAPER),
+        BuiltinBackground(MIST_PAPER, "雾青纸", "backgrounds/mist-paper.jpg", false, ThemeKey.GREEN),
+        BuiltinBackground(INK_TEAL, "墨青", "backgrounds/ink-teal.jpg", true, ThemeKey.DARK),
+        BuiltinBackground(CHARCOAL, "炭灰", "backgrounds/charcoal.jpg", true, ThemeKey.DARK)
     )
 
     fun byKey(key: String): BuiltinBackground? = ALL.firstOrNull { it.key == key }

@@ -1,5 +1,6 @@
 package com.mirad.reader.core.sources
 
+import java.io.InputStream
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -24,8 +25,12 @@ data class SourceImportReport(
     val updated: Int = 0,
     val invalid: Int = 0,
     val unsupported: Int = 0,
-    val messages: List<String> = emptyList()
+    val messages: List<String> = emptyList(),
+    val failedLinks: Int = 0,
+    val cancelled: Boolean = false
 )
+
+data class SourceImportProgress(val completed: Int, val total: Int, val report: SourceImportReport)
 
 @Serializable
 data class RemoteBook(
@@ -67,6 +72,8 @@ interface SourceRepository {
     val subscriptions: StateFlow<List<SourceSubscription>>
     val loadError: StateFlow<String?>
     suspend fun importUrl(url: String): SourceImportReport
+    suspend fun importText(text: String, onProgress: (SourceImportProgress) -> Unit = {}): SourceImportReport
+    suspend fun importDocument(openInput: () -> InputStream?, onProgress: (SourceImportProgress) -> Unit = {}): SourceImportReport
     suspend fun setEnabled(id: String, enabled: Boolean)
     suspend fun remove(id: String)
     suspend fun removeSubscription(url: String)

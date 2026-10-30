@@ -14,6 +14,9 @@ import androidx.annotation.RequiresApi
  */
 @RequiresApi(31)
 internal class GlassBackdropView(context: Context) : GlassPlaneView(context) {
+    var recordVersion: (() -> Any)? = null
+    private var recordedVersion: Any? = null
+    var recordContent: ((Canvas) -> Unit)? = null
     val contentLayer = RenderNode("MiradReaderContent")
     var gpuEnabled = true
         set(value) {
@@ -33,14 +36,18 @@ internal class GlassBackdropView(context: Context) : GlassPlaneView(context) {
 
     override fun contentInvalidated() {
         contentDirty = true
+        // 合成宿主引用页内子图层；其属性变动也必须让合成显示列表刷新。
+        if (recordContent != null) invalidate()
         super.contentInvalidated()
     }
 
     override fun dispatchDraw(canvas: Canvas) {
         val content = contentPlane ?: return
         lastHardwareCanvas = canvas.isHardwareAccelerated
+        if (recordContent != null) drawChild(canvas, content, drawingTime)
+        val version = recordVersion?.invoke()
         if (gpuEnabled && canvas.isHardwareAccelerated && content.width > 0 && content.height > 0) {
-            if (contentDirty || !contentLayer.hasDisplayList() || contentLayer.width != content.width || contentLayer.height != content.height) {
+            if ((contentDirty || (recordContent != null && version != recordedVersion)) || !contentLayer.hasDisplayList() || contentLayer.width != content.width || contentLayer.height != content.height) {
             val start = System.nanoTime()
             try {
                 Trace.beginSection("Mirad.recordReaderContent")
@@ -49,8 +56,9 @@ internal class GlassBackdropView(context: Context) : GlassPlaneView(context) {
                 try {
                     recording.drawColor(backdropColor)
                     // drawChild supplies the actual child bounds, scroll and display-list transform.
-                    drawChild(recording, content, drawingTime)
+                    recordContent?.invoke(recording) ?: drawChild(recording, content, drawingTime)
                 } finally { contentLayer.endRecording() }
+                recordedVersion = version
                 contentDirty = false
                 contentRecords++
                 onContentRecorded?.invoke()
@@ -59,9 +67,9 @@ internal class GlassBackdropView(context: Context) : GlassPlaneView(context) {
                 recordDurationNanos += System.nanoTime() - start
             }
             }
-            canvas.drawRenderNode(contentLayer)
+            if (recordContent == null) canvas.drawRenderNode(contentLayer)
         } else {
-            drawChild(canvas, content, drawingTime)
+            if (recordContent == null) drawChild(canvas, content, drawingTime)
         }
         overlayPlane?.let { drawChild(canvas, it, drawingTime) }
     }

@@ -165,6 +165,18 @@ internal class ReaderNativePresentation(
     private var previousNativeFocus: View? = null
     private var previousContentObserver: (() -> Unit)? = null
     private var contentObserver: (() -> Unit)? = null
+    private val logGlassState = Runnable {
+        if (modal && host.isAttachedToWindow) {
+            val hardwareState = if (Build.VERSION.SDK_INT >= 31) {
+                val hardware = host as? GlassBackdropView
+                "canvasHardware=${hardware?.lastHardwareCanvas == true} records=${hardware?.contentRecords ?: 0} " +
+                    (source?.statsSummary() ?: "fallback=true")
+            } else "fallback=true"
+            android.util.Log.d("ReaderGlass",
+                "modal=true host=${host.width}x${host.height} hardware=${host.isHardwareAccelerated} " +
+                    hardwareState)
+        }
+    }
 
     fun observeDocument(onChanged: () -> Unit) {
         previousContentObserver = document.webView.onBackdropContentChanged
@@ -184,6 +196,10 @@ internal class ReaderNativePresentation(
         if (modal == visible) return
         modal = visible
         ReaderKeys.blockedByOverlay = visible
+        if (com.mirad.reader.BuildConfig.DEBUG) {
+            host.removeCallbacks(logGlassState)
+            if (visible) host.postDelayed(logGlassState, 400L)
+        }
         if (visible) {
             originalFocusability = document.descendantFocusability
             originalAccessibility = document.importantForAccessibility

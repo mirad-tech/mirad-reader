@@ -47,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.luminance
 import com.mirad.reader.ui.common.GlassSurface
 import com.mirad.reader.ui.common.LocalGlassLegacy
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,7 +96,8 @@ fun ReaderTopBar(
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
         .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
-    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
+    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large,
+        minimumTintAlpha = if (MaterialTheme.colorScheme.surface.luminance() < .5f) .78f else .66f) {
         Column {
             Row(
                 modifier = Modifier
@@ -184,7 +186,8 @@ fun ReaderBottomBar(
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
-    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
+    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large,
+        minimumTintAlpha = if (MaterialTheme.colorScheme.surface.luminance() < .5f) .78f else .66f) {
         Column {
             if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             val draftState = androidx.compose.runtime.remember {

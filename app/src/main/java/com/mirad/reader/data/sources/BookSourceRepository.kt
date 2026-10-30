@@ -1,10 +1,15 @@
 package com.mirad.reader.data.sources
 
 import com.mirad.reader.core.sources.BookSource
+import com.mirad.reader.core.sources.SourceImportProgress
 import com.mirad.reader.core.sources.SourceImportReport
 import com.mirad.reader.core.sources.SourceRepository
 import com.mirad.reader.core.sources.SourceSubscription
 import com.mirad.reader.core.sources.rules.SourceRules
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
+import java.io.InputStream
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -79,25 +84,67 @@ class BookSourceRepository(
         }
     }
 
-    override suspend fun importUrl(url: String): SourceImportReport {
+    override suspend fun importUrl(url: String): SourceImportReport = withContext(Dispatchers.IO) { importRemote(url) }
+
+    private suspend fun importRemote(url: String, committed: (SourceImportReport) -> Unit = {}): SourceImportReport {
         ready.await()
         val importUrl = SourceHttpClient.checkedUrl(url).toExternalForm()
         val response = http.request(importUrl)
-        val parsed = try {
-            json.parseToJsonElement(response.body)
-        } catch (error: Exception) {
-            return SourceImportReport(invalid = 1, messages = listOf("响应不是有效的书源 JSON：${error.message}"))
-        }
+        val parsed = try { json.parseToJsonElement(response.body.removePrefix("\uFEFF")) }
+        catch (_: Exception) { return SourceImportReport(invalid = 1, messages = listOf("响应不是有效的书源 JSON")) }
         val elements = when (parsed) {
             is JsonArray -> parsed.toList()
             is JsonObject -> listOf(parsed)
             else -> return SourceImportReport(invalid = 1, messages = listOf("书源 JSON 必须是对象或数组"))
         }
+        return importDefinitions(elements, importUrl, committed)
+    }
+
+    override suspend fun importDocument(openInput: () -> InputStream?, onProgress: (SourceImportProgress) -> Unit): SourceImportReport =
+        withContext(Dispatchers.IO) {
+            val text = (openInput() ?: throw IOException("无法读取所选书源文件")).use { readSourceDocument(it) }
+            importText(text, onProgress)
+        }
+
+    override suspend fun importText(text: String, onProgress: (SourceImportProgress) -> Unit): SourceImportReport = withContext(Dispatchers.IO) {
+        ready.await()
+        val payload = try { parseSourceImport(text) } catch (error: IllegalArgumentException) {
+            return@withContext SourceImportReport(invalid = 1, messages = listOf(error.message ?: "书源文件格式无效"))
+        }
+        if (payload is SourceImportPayload.Definitions) {
+            return@withContext importDefinitions(payload.entries, "") { onProgress(SourceImportProgress(1, 1, it)) }
+        }
+        val urls = (payload as SourceImportPayload.Links).urls
+        if (urls.isEmpty()) return@withContext SourceImportReport(invalid = 1, messages = listOf("链接清单为空，现有书源未变更"))
+        var combined = SourceImportReport()
+        onProgress(SourceImportProgress(0, urls.size, combined))
+        urls.forEachIndexed { index, url ->
+            coroutineContext.ensureActive()
+            var published = false
+            val report = try {
+                importRemote(url) { committed ->
+                    combined = mergeSourceReports(combined, committed)
+                    published = true
+                    onProgress(SourceImportProgress(index + 1, urls.size, combined))
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { SourceImportReport(failedLinks = 1, messages = listOf("第 ${index + 1} 个链接导入失败")) }
+            if (!published) {
+                combined = mergeSourceReports(combined, report)
+                onProgress(SourceImportProgress(index + 1, urls.size, combined))
+            }
+        }
+        combined
+    }
+
+    private suspend fun importDefinitions(elements: List<kotlinx.serialization.json.JsonElement>, importUrl: String,
+        committed: (SourceImportReport) -> Unit = {}): SourceImportReport {
         val messages = mutableListOf<String>()
         var invalid = 0
         var unsupported = 0
         val accepted = linkedMapOf<String, BookSource>()
         elements.forEachIndexed { position, element ->
+            coroutineContext.ensureActive()
             try {
                 val definition = element as? JsonObject ?: error("条目必须是对象")
                 val name = (definition["bookSourceName"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
@@ -124,14 +171,19 @@ class BookSourceRepository(
             invalid = invalid.coerceAtLeast(1), unsupported = unsupported,
             messages = messages.ifEmpty { listOf("书源数组为空，现有书源未变更") }
         )
+        coroutineContext.ensureActive()
         return mutex.withLock {
             val current = sources.value.associateBy { it.id }.toMutableMap()
             val updated = accepted.keys.count { it in current }
-            accepted.forEach { (id, source) -> current[id] = source.copy(enabled = current[id]?.enabled ?: source.enabled) }
-            val nextSubscriptions = subscriptions.value.filterNot { it.url == importUrl } +
-                SourceSubscription(importUrl, System.currentTimeMillis())
-            persist(current.values.toList(), nextSubscriptions, accepted.keys)
-            SourceImportReport(accepted.size - updated, updated, invalid, unsupported, messages)
+            accepted.forEach { (id, source) -> current[id] = source.copy(
+                enabled = current[id]?.enabled ?: source.enabled,
+                importUrl = importUrl.ifBlank { current[id]?.importUrl.orEmpty() }
+            ) }
+            val nextSubscriptions = if (importUrl.isBlank()) subscriptions.value else
+                subscriptions.value.filterNot { it.url == importUrl } + SourceSubscription(importUrl, System.currentTimeMillis())
+            val report = SourceImportReport(accepted.size - updated, updated, invalid, unsupported, messages)
+            persist(current.values.toList(), nextSubscriptions, accepted.keys) { committed(report) }
+            report
         }
     }
 
@@ -153,7 +205,7 @@ class BookSourceRepository(
         mutex.withLock { persist(sources.value, subscriptions.value.filterNot { it.url == url }, emptySet()) }
     }
 
-    private suspend fun persist(next: List<BookSource>, subscriptions: List<SourceSubscription>, changed: Set<String>) {
+    private suspend fun persist(next: List<BookSource>, subscriptions: List<SourceSubscription>, changed: Set<String>, committed: () -> Unit = {}) {
         withContext(Dispatchers.IO + NonCancellable) {
             val entries = index.entries.filterKeys { id -> next.any { it.id == id } }.toMutableMap()
             next.filter { it.id in changed || it.id !in entries }.forEach { source ->
@@ -167,6 +219,7 @@ class BookSourceRepository(
             index = nextIndex
             mutableSources.value = sorted(next)
             mutableSubscriptions.value = subscriptions
+            committed()
             obsolete.filter { it.matches(Regex("[0-9a-f]{64}-[0-9a-f-]{36}\\.json")) }.forEach { File(root, it).delete() }
         }
     }

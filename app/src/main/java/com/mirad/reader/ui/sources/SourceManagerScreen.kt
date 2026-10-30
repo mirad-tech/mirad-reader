@@ -1,6 +1,12 @@
 package com.mirad.reader.ui.sources
 
 import com.mirad.reader.ui.common.MiradScaffold as Scaffold
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import android.net.Uri
+import kotlinx.coroutines.Job
+import com.mirad.reader.core.sources.SourceImportProgress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -43,6 +49,11 @@ fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSear
     var query by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf(SourceFilter.ALL) }
     var importDialog by rememberSaveable { mutableStateOf(false) }
+    var importMenu by remember { mutableStateOf(false) }
+    var importDocumentUri by rememberSaveable { mutableStateOf<String?>(null) }
+    val documentPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { importDocumentUri = uri.toString(); importDialog = true }
+    }
     var busyIds by remember { mutableStateOf(emptySet<String>()) }
     var operationError by remember { mutableStateOf<String?>(null) }
     var deleteSource by remember { mutableStateOf<BookSource?>(null) }
@@ -86,7 +97,17 @@ fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSear
         topBar = {
             ScreenHeader("书源管理", onBack = onBack, actions = {
                 IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "在线搜书") }
-                IconButton(onClick = { importDialog = true }) { Icon(Icons.Default.Add, "导入书源") }
+                Box {
+                    IconButton(onClick = { importMenu = true }) { Icon(Icons.Default.Add, "导入书源") }
+                    GlassDropdownMenu(expanded = importMenu, onDismissRequest = { importMenu = false }) {
+                        DropdownMenuItem(text = { Text("链接导入") }, onClick = {
+                            importMenu = false; importDocumentUri = null; importDialog = true
+                        })
+                        DropdownMenuItem(text = { Text("文件导入") }, onClick = {
+                            importMenu = false; documentPicker.launch(arrayOf("*/*"))
+                        })
+                    }
+                }
             })
         }
     ) { padding ->
@@ -153,7 +174,7 @@ fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSear
                 }
                 if (visible.isEmpty()) item {
                     SourceEmpty(if (sources.isEmpty()) "暂无书源" else "没有符合筛选的书源")
-                    if (sources.isEmpty()) MiradButton(onClick = { importDialog = true }) { Text("导入书源") }
+                    if (sources.isEmpty()) MiradButton(onClick = { importMenu = true }) { Text("导入书源") }
                 }
                 items(visible, key = { it.id }) { source ->
                     val busy = source.id in busyIds
@@ -186,7 +207,7 @@ fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSear
         }
     }
 
-    if (importDialog) SourceImportDialog(repository, onDismiss = { importDialog = false })
+    if (importDialog) SourceImportDialog(repository, importDocumentUri, onDismiss = { importDialog = false; importDocumentUri = null })
     deleteSource?.let { source ->
         MiradDialog(
             onDismissRequest = { deleteSource = null },
@@ -218,57 +239,75 @@ fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSear
 }
 
 @Composable
-private fun SourceImportDialog(repository: SourceRepository, onDismiss: () -> Unit) {
+private fun SourceImportDialog(repository: SourceRepository, documentUri: String?, onDismiss: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
     var url by rememberSaveable { mutableStateOf("") }
     var importing by remember { mutableStateOf(false) }
+    var job by remember { mutableStateOf<Job?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<SourceImportReport?>(null) }
+    var progress by remember { mutableStateOf<SourceImportProgress?>(null) }
+    fun start() {
+        if (importing) return
+        importing = true
+        error = null
+        report = null
+        progress = null
+        job = scope.launch {
+            try {
+                val update: (SourceImportProgress) -> Unit = { progress = it }
+                report = if (documentUri != null) repository.importDocument(
+                    { context.contentResolver.openInputStream(Uri.parse(documentUri)) }, update
+                ) else repository.importText(url.trim(), update)
+            } catch (cancelled: CancellationException) {
+                report = (progress?.report ?: SourceImportReport()).copy(cancelled = true)
+                throw cancelled
+            } catch (failure: Exception) {
+                error = sourceActionError("导入失败", failure)
+            } finally {
+                importing = false
+                job = null
+            }
+        }
+    }
+    LaunchedEffect(documentUri) { if (documentUri != null) start() }
     MiradDialog(
-        onDismissRequest = { if (!importing) onDismiss() },
-        title = { Text("导入书源") },
+        onDismissRequest = { if (importing) job?.cancel() else onDismiss() },
+        title = { Text(if (documentUri == null) "链接导入" else "文件导入") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Spacing.md)) {
-                OutlinedTextField(
+                if (documentUri == null) OutlinedTextField(
                     value = url,
                     onValueChange = { url = it; error = null; report = null },
-                    label = { Text("书源链接") },
+                    label = { Text("书源链接或链接清单") },
                     modifier = Modifier.fillMaxWidth(), maxLines = 4, enabled = !importing,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
                 )
+                if (importing) Text(progress?.let { "导入中 ${it.completed}/${it.total}" } ?: "读取中")
                 error?.let { ErrorDetails(it) }
-                report?.let { SourceImportResult(it) }
+                (report ?: progress?.report)?.let { SourceImportResult(it) }
             }
         },
         confirmButton = {
-            MiradButton(enabled = url.isNotBlank() && !importing, loading = importing, onClick = {
-                importing = true
-                error = null
-                report = null
-                scope.launch {
-                    try {
-                        report = repository.importUrl(url.trim())
-                    } catch (failure: CancellationException) {
-                        throw failure
-                    } catch (failure: Exception) {
-                        error = sourceActionError("导入失败", failure)
-                    } finally {
-                        importing = false
-                    }
-                }
-            }) { Text(if (importing) "导入中" else "导入") }
+            if (documentUri != null && !importing) {
+                MiradTextButton(onClick = onDismiss) { Text("完成") }
+            } else MiradButton(enabled = documentUri == null && url.isNotBlank() && !importing,
+                loading = importing, onClick = { start() }) { Text(if (importing) "导入中" else "导入") }
         },
-        dismissButton = { MiradTextButton(enabled = !importing, onClick = onDismiss) { Text(if (report == null) "取消" else "完成") } }
+        dismissButton = {
+            if (importing) MiradTextButton(onClick = { job?.cancel() }) { Text("取消导入") }
+            else if (documentUri == null) MiradTextButton(onClick = onDismiss) { Text(if (report == null) "取消" else "完成") }
+        }
     )
 }
 
 @Composable
 private fun SourceImportResult(report: SourceImportReport) {
     Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
-        Text("新增 ${report.added} · 更新 ${report.updated} · 无效 ${report.invalid} · 不支持 ${report.unsupported}",
+        if (report.cancelled) Text("已取消，已完成的导入保留")
+        Text("新增 ${report.added} · 更新 ${report.updated} · 无效 ${report.invalid} · 不支持 ${report.unsupported} · 失败链接 ${report.failedLinks}",
             style = MaterialTheme.typography.bodyMedium)
-        report.messages.forEach { message ->
-            Text(message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+        if (report.messages.isNotEmpty()) ErrorDetails(report.messages.joinToString("\n"))
     }
 }

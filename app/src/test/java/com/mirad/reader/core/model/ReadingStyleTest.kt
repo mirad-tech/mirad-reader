@@ -53,6 +53,22 @@ class ReadingFontsTest {
         assertEquals("楷体", ReadingFonts.presetLabel(FontFamilyKey.KAITI))
         assertEquals("自定义", ReadingFonts.presetLabel("SOMETHING_ELSE"))
     }
+
+    @Test
+    fun bundledFontsAreRealFilesWithReadableLabelsAndKeepTheExistingDefault() {
+        assertEquals(ReadingFonts.BUNDLED_WENKAI, ReadingFonts.DEFAULT_CUSTOM_FONT)
+        val assets = File("src/main/assets")
+        assumeTrue("不在模块目录下运行，跳过素材检查", assets.isDirectory)
+        for (path in listOf(ReadingFonts.BUNDLED_WENKAI, ReadingFonts.BUNDLED_SERIF,
+            ReadingFonts.BUNDLED_SANS, ReadingFonts.BUNDLED_FANGSONG)) {
+            val file = File(assets, path)
+            assertTrue("缺少字体：$path", file.isFile && file.length() > 1024)
+            assertTrue("字体显示名未登记：$path", ReadingFonts.bundledLabel(file.name) != file.nameWithoutExtension)
+            assertEquals("字体容器必须是 WOFF2：$path", "wOF2", file.inputStream().use {
+                String(ByteArray(4).also { header -> assertEquals(4, it.read(header)) }, Charsets.US_ASCII)
+            })
+        }
+    }
 }
 
 class ReadingStyleNormalizationTest {
@@ -104,6 +120,9 @@ class BuiltinBackgroundsTest {
         assertNotNull(night)
         assertTrue(night!!.isDark)
         assertEquals(ThemeKey.DARK, night.suggestedTheme)
+        for (preset in BuiltinBackgrounds.ALL.filter { it.isDark }) {
+            assertEquals(ThemeKey.DARK, preset.suggestedTheme)
+        }
     }
 
     @Test

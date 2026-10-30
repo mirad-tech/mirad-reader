@@ -72,6 +72,7 @@ private class GlassOverlayEntry(
 @Stable
 internal class GlassOverlayState internal constructor() {
     private val entries = mutableStateListOf<GlassOverlayEntry>()
+    internal val hasEntries: Boolean get() = entries.isNotEmpty()
     internal var windowOrigin by mutableStateOf(Offset.Zero)
         private set
     private val orderedEntries: List<GlassOverlayEntry>

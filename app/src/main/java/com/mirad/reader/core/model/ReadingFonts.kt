@@ -66,16 +66,20 @@ object ReadingFonts {
     // ---------------------------------------------------------------- 内置字体
 
     /**
-     * 内置字体（assets/fonts 下，按 GB2312 常用字子集化，单款 1.5–2MB）。
+     * 内置字体（assets/fonts 下）；各款字形覆盖和许可见该目录 README。
      * 文件名 → 中文显示名。
      */
     private val BUNDLED_LABELS = mapOf(
         "lxgw-wenkai-regular" to "霞鹜文楷",
-        "noto-serif-sc-regular" to "思源宋体"
+        "noto-serif-sc-regular" to "思源宋体",
+        "mirad-reading-sans" to "Noto 黑体",
+        "zhuque-fangsong-regular" to "朱雀仿宋"
     )
 
     const val BUNDLED_WENKAI = "fonts/lxgw-wenkai-regular.woff2"
     const val BUNDLED_SERIF = "fonts/noto-serif-sc-regular.woff2"
+    const val BUNDLED_SANS = "fonts/mirad-reading-sans.woff2"
+    const val BUNDLED_FANGSONG = "fonts/zhuque-fangsong-regular.woff2"
 
     /** 新书默认用内置楷体：保证开箱即用的一致观感。 */
     const val DEFAULT_CUSTOM_FONT = BUNDLED_WENKAI
@@ -89,6 +93,8 @@ object ReadingFonts {
     fun bundledNote(fileName: String): String = when (fileName.lowercase()) {
         "lxgw-wenkai-regular.woff2" -> "内置 · 楷体，笔画舒展"
         "noto-serif-sc-regular.woff2" -> "内置 · 宋体，横细竖粗"
+        "mirad-reading-sans.woff2" -> "内置 · 黑体，笔画匀净"
+        "zhuque-fangsong-regular.woff2" -> "内置 · 仿宋，字形舒展"
         else -> "内置"
     }
 }

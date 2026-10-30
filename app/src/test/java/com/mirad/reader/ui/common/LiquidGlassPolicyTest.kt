@@ -4,22 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class LiquidGlassPolicyTest {
-    @Test fun clearPanelProtectsForegroundWithoutChangingToolbarOrTheDefaultMaterial() {
+    @Test fun highClarityPanelsCapOnlyBlurAtEightyWithoutThickeningTintOrChangingSavedValues() {
         for (dark in listOf(false, true)) {
-            assertEquals(liquidBaseOpacity(60, dark), liquidMaterialOpacity(60, dark, GlassStyle.Panel), 0f)
-            assertEquals(liquidBaseOpacity(100, dark), liquidMaterialOpacity(100, dark, GlassStyle.Toolbar), 0f)
-            assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
-            assertTrue(liquidMaterialOpacity(100, dark, GlassStyle.Panel) < 1f)
+            val clear = GlassAppearance(enabled = true, clarityPercent = 100)
+            assertEquals(liquidBaseOpacity(100, dark), uniformGlassOpacity(clear, dark, true), 0f)
+            assertTrue(uniformGlassOpacity(clear, dark, true) < uniformGlassOpacity(clear.copy(clarityPercent = 80), dark, true))
+            assertEquals(liquidBlurDp(GlassStyle.Panel, 80), liquidBlurDp(GlassStyle.Panel, 100), 0f)
+            assertTrue(liquidBlurDp(GlassStyle.Panel, 100) > 0f)
+            assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
+            assertEquals(100, clear.clarityPercent)
         }
     }
 
-    @Test fun clearPanelTextAndActionsKeepFourPointFiveContrastOverExtremeBackdrops() {
+    @Test fun disabledPanelsKeepFourPointFiveContrastOverExtremeBackdrops() {
         val ink = com.mirad.reader.ui.theme.Ink
         for (dark in listOf(false, true)) {
             val surface = if (dark) ink.Night else ink.Paper
             val foregrounds = if (dark) listOf(ink.NightText, ink.NightTextMuted, ink.Green80)
                 else listOf(ink.InkText, ink.InkTextMuted, ink.Green40)
-            val opacity = liquidMaterialOpacity(100, dark, GlassStyle.Panel)
+            val opacity = uniformGlassOpacity(GlassAppearance(enabled = false, clarityPercent = 100), dark, true)
             for (backdrop in listOf(0f, 1f)) {
                 val background = relativeLuminanceFromSrgb(
                     surface.red * opacity + backdrop * (1 - opacity),
@@ -92,7 +95,7 @@ class LiquidGlassPolicyTest {
 
     @Test fun zeroBlurKeepsEnoughPaddingForIndependentRefraction() {
         assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
-        assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
+        assertTrue(liquidBlurDp(GlassStyle.Panel, 100) > 0f)
         assertEquals(6, liquidMaterialPaddingPx(0f, true, 2f))
         assertEquals(0, liquidMaterialPaddingPx(0f, false, 2f))
         assertEquals(40, liquidMaterialPaddingPx(20f, true, 2f))

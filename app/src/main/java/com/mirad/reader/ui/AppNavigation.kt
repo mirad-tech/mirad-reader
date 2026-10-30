@@ -36,7 +36,8 @@ internal class AppNavigationState(saved: List<String> = emptyList()) {
             put(tab, if (restored.firstOrNull() == tab.root) restored else listOf(tab.root))
         }
     }
-    val current: Screen get() = stacks.getValue(selectedTab).last()
+    fun screenFor(tab: AppTab): Screen = stacks.getValue(tab).last()
+    val current: Screen get() = screenFor(selectedTab)
     val isRoot: Boolean get() = current == selectedTab.root
     val canGoBack: Boolean get() = !isRoot || selectedTab != AppTab.Shelf
 
@@ -44,6 +45,9 @@ internal class AppNavigationState(saved: List<String> = emptyList()) {
         if (selectedTab == tab) stacks[tab] = listOf(tab.root)
         selectedTab = tab
     }
+
+    /** 分页经过入口时只激活，不能把反复经过当前入口当作重选首页。 */
+    fun activate(tab: AppTab) { selectedTab = tab }
 
     fun open(screen: Screen) {
         val root = AppTab.entries.find { it.root == screen }

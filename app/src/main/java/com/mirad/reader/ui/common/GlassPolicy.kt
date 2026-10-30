@@ -391,13 +391,13 @@ internal fun computeGlassParams(
         ambientOpacity = requiredPeakAlpha
     }
 
-    // 模糊半径在 12-24dp 内，面板略厚；清晰度在这里实际生效（100% 走无模糊分支）。
-    val clarity = clarityPercent.coerceIn(0, 100)
+    // 面板略厚，并按公共角色策略在高档位保留柔化；工具栏 100 走无模糊分支。
+    val clarity = liquidBlurClarity(clarityPercent, style)
     val baseBlur = if (style == GlassStyle.Panel) 16f else 13f
     val maxBlur = if (style == GlassStyle.Panel) 24f else 20f
     val complexity = (m.span * 0.6f + m.edgeIntensity * 0.4f).coerceIn(0f, 1f)
     val adaptiveBlur = (baseBlur + complexity * (maxBlur - baseBlur)).coerceIn(12f, 24f)
-    // 50% 是改造前观感的校准点：更高更清晰（更小的模糊半径），更低更朦胧；100% 直接不为 0 传半径。
+    // 50 是改造前观感的校准点；有效档位越高，模糊半径越小。
     val clarityScale = 1f + (50 - clarity) / 50f * 0.75f
     val blurRadius = if (clarity >= 100) 0.dp else (adaptiveBlur * clarityScale).coerceIn(1f, 34f).dp
 

@@ -335,13 +335,14 @@ internal class HardwareGlassBackdrop(
 }
 
 @Composable
-internal fun rememberHardwareGlassBackdrop(revision: Any?): HardwareGlassBackdrop? {
+internal fun rememberHardwareGlassBackdrop(revision: Any?, visible: Boolean = true): HardwareGlassBackdrop? {
     if (Build.VERSION.SDK_INT < 31) return null
     val context = LocalContext.current
     val power = remember(context) { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
     var powerSave by remember { mutableStateOf(power.isPowerSaveMode) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
+    val latestVisible by rememberUpdatedState(visible)
     // key 含 lifecycle：DisposableEffect 的 onDispose 会 close() source 且 close 不可恢复，
     // 若宿主 lifecycle 变化而 source 因 scope 未变被复用，玻璃会从此静默失效。
     val source = remember(scope, lifecycle) { HardwareGlassBackdrop(scope) }
@@ -355,10 +356,10 @@ internal fun rememberHardwareGlassBackdrop(revision: Any?): HardwareGlassBackdro
         context.registerReceiver(receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
         val observer = LifecycleEventObserver { _, _ ->
             val started = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
-            source.setForegroundActive(started)
+            source.setForegroundActive(started && latestVisible)
             if (started) powerSave = power.isPowerSaveMode
         }
-        source.setForegroundActive(lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        source.setForegroundActive(visible && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
         lifecycle.addObserver(observer)
         onDispose {
             context.unregisterReceiver(receiver)
@@ -366,6 +367,9 @@ internal fun rememberHardwareGlassBackdrop(revision: Any?): HardwareGlassBackdro
             source.close()
         }
     }
-    SideEffect { source.configure(!legacy && !fallback && !powerSave, percent, revision) }
+    SideEffect {
+        source.setForegroundActive(visible && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
+        source.configure(!legacy && !fallback && !powerSave, percent, revision)
+    }
     return source
 }

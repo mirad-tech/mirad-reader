@@ -128,7 +128,7 @@ fun NotesScreen(
                             }
                         },
                         enabled = highlights.isNotEmpty() || bookmarks.isNotEmpty()
-                    ) { Text("全部导出") }
+                    ) { Text("全部导出", color = MaterialTheme.colorScheme.onSurface) }
                 }
             )
         }

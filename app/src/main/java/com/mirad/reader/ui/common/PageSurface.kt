@@ -13,6 +13,12 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun PageSurface(pageKey: String, bounded: Boolean, animate: Boolean, content: @Composable () -> Unit) {
     val overlays = remember(pageKey) { GlassOverlayState() }
+    val pager = LocalPagerChrome.current
+    val owner = LocalPagerPage.current
+    DisposableEffect(pager, owner, overlays) {
+        if (owner != null) pager?.overlays?.set(owner, overlays)
+        onDispose { if (owner != null && pager?.overlays?.get(owner) === overlays) pager.overlays.remove(owner) }
+    }
     val alpha = remember(pageKey) { Animatable(if (animate) 0f else 1f) }
     LaunchedEffect(pageKey) { if (animate) alpha.animateTo(1f, tween(160)) }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {

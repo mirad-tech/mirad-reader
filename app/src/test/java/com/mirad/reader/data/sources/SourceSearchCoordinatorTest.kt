@@ -35,6 +35,8 @@ class SourceSearchCoordinatorTest {
         override val subscriptions = MutableStateFlow<List<SourceSubscription>>(emptyList())
         override val loadError = MutableStateFlow<String?>(null)
         override suspend fun importUrl(url: String) = SourceImportReport()
+        override suspend fun importText(text: String, onProgress: (com.mirad.reader.core.sources.SourceImportProgress) -> Unit) = SourceImportReport()
+        override suspend fun importDocument(openInput: () -> java.io.InputStream?, onProgress: (com.mirad.reader.core.sources.SourceImportProgress) -> Unit) = SourceImportReport()
         override suspend fun setEnabled(id: String, enabled: Boolean) = Unit
         override suspend fun remove(id: String) = Unit
         override suspend fun removeSubscription(url: String) = Unit
