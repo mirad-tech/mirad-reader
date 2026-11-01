@@ -1,10 +1,14 @@
 package com.mirad.reader.ui.common
 
+/** 光向：自上方略偏左（已接近单位向量），只在边缘绘制与 lightFacing 之间共享一次。 */
+internal const val GLASS_LIGHT_X = -.2425f
+internal const val GLASS_LIGHT_Y = -.9701f
+
 /**
  * 玻璃边缘的纯参数模型。绘制由 Compose Brush 完成；硬件路径另有 RuntimeShader 做背景弯折，
- * 这里只负责"看得见的厚度"：散射过渡、内侧暗部、受光高光三条线。
+ * 这里只负责"看得见的厚度"：两层散射过渡、内侧暗部、发丝暗轮廓、柔光与亮线。
  *
- * 三个宽度都按短边限幅，小胶囊上不会铺满整个表面；三条线都随清晰度收窄，
+ * 五个宽度都按短边限幅，小胶囊上不会铺满整个表面；都随清晰度收窄，
  * 0 档最朦胧时边缘更软，100 档零模糊时更锐，但任何一档都不允许变成整圈等亮白框。
  */
 internal object GlassEdgeProfile {
@@ -81,6 +85,19 @@ internal object GlassEdgeProfile {
     /** 柔光强度低于亮线，保证"一到两个层次"而不是一圈白框。 */
     fun glowIntensity(clarity: Int, darkSurface: Boolean): Float =
         specularIntensity(clarity, darkSurface) * .42f
+
+    /**
+     * 固定光向（自上方略偏左）在给定轮廓法线上的受光系数，1 = 正对光，-1 = 完全背光。
+     *
+     * 只做法线投影，不引入传感器或时间驱动：法线绕轮廓连续转动时返回值连续，
+     * 圆角切点因此不会有跳变。渐变端点也由同一条光向派生，避免两处各写一个方向。
+     */
+    fun lightFacing(normalX: Float, normalY: Float): Float {
+        if (normalX.isNaN() || normalY.isNaN()) return 0f
+        val length = kotlin.math.sqrt(normalX * normalX + normalY * normalY)
+        if (length <= 1e-4f) return 0f
+        return ((normalX * GLASS_LIGHT_X + normalY * GLASS_LIGHT_Y) / length).coerceIn(-1f, 1f)
+    }
 
     fun broadBandScale(index: Int): Float = broadBandScales[index]
 

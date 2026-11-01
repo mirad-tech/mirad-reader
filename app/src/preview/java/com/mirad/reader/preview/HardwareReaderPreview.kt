@@ -112,10 +112,10 @@ internal fun HardwareReaderPreview(
     var snapshotSerial by remember { mutableIntStateOf(0) }
     var snapshotStatus by remember { mutableStateOf("idle") }
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
-    // 仅预览：章节数可用 --ei chapters N 调大（默认 6），用于验证目录滚动条的长列表行为。
-    val chapterCount = remember { activity.intent.getIntExtra("chapters", 6).coerceIn(1, 2000) }
     val chapters = remember {
-        List(chapterCount) { ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000) }
+        List(activity.intent.getIntExtra("tocChapters", 6).coerceIn(1, 2000)) {
+            ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000)
+        }
     }
     val percent = ((chapter + offset.toFloat() / textLength.coerceAtLeast(1)) / chapters.size).coerceIn(0f, 1f)
 
@@ -315,6 +315,16 @@ internal fun HardwareReaderPreview(
             "image" -> {
                 val svg = "<svg xmlns='http://www.w3.org/2000/svg' width='320' height='180'><rect width='320' height='180' fill='#719aae'/></svg>"
                 evaluate("""setTimeout(function(){let img=document.createElement('img');img.src='data:image/svg+xml,'+encodeURIComponent(${JSONObject.quote(svg)});document.querySelector('#mirad-content p').after(img)},120);""")
+            }
+            // 仅预览：图案随真实正文一起滚动，仍由生产内容层和玻璃材质采样。
+            "pattern" -> {
+                val background = when (command.getStringExtra("name")) {
+                    "light" -> "#e9e6dc"
+                    "dark" -> "#202b32"
+                    "none" -> "none"
+                    else -> "repeating-linear-gradient(125deg,#d8b17b 0px 32px,#668e99 32px 64px,#8e6579 64px 96px,#d5ded4 96px 128px)"
+                }
+                evaluate("""document.getElementById('mirad-content').style.background=${JSONObject.quote(background)};""")
             }
             "animate" -> startAnimation(command.getIntExtra("durationMs", 30000))
             "stop-animation" -> stopAnimation()

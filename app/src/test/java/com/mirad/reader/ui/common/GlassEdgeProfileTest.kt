@@ -7,6 +7,24 @@ import org.junit.Test
 class GlassEdgeProfileTest {
 
     @Test
+    fun fixedLightFollowsTheNormalContinuouslyAroundCorners() {
+        assertTrue(GlassEdgeProfile.lightFacing(0f, -1f) > GlassEdgeProfile.lightFacing(-1f, 0f))
+        assertTrue(GlassEdgeProfile.lightFacing(-1f, 0f) > 0f)
+        assertTrue(GlassEdgeProfile.lightFacing(1f, 0f) < 0f)
+        assertTrue(GlassEdgeProfile.lightFacing(0f, 1f) < 0f)
+        var previous = GlassEdgeProfile.lightFacing(1f, 0f)
+        for (degree in 1..360) {
+            val angle = Math.toRadians(degree.toDouble())
+            val light = GlassEdgeProfile.lightFacing(kotlin.math.cos(angle).toFloat(), kotlin.math.sin(angle).toFloat())
+            assertTrue(light.isFinite() && light in -1f..1f)
+            assertTrue("角度 $degree 不应跳变", kotlin.math.abs(light - previous) < .018f)
+            previous = light
+        }
+        // 环形渐变首尾与直边的法线一致，避免圆角切点和 sweep 接缝跳色。
+        assertEquals(GlassEdgeProfile.lightFacing(1f, 0f), previous, .0001f)
+    }
+
+    @Test
     fun bandWidthNarrowsWithClarityAndBecomesReadableAtDefault() {
         val widths = listOf(0, 25, 50, 75, 100).map {
             GlassEdgeProfile.bandWidthDp(it, shortSideDp = 200f)
@@ -59,7 +77,6 @@ class GlassEdgeProfileTest {
             assertEquals(0f, GlassEdgeProfile.contourWidthDp(50, shortSide), .001f)
             assertEquals(0f, GlassEdgeProfile.specularWidthDp(50, shortSide), .001f)
             assertEquals(0f, GlassEdgeProfile.glowWidthDp(50, shortSide), .001f)
-            assertTrue(shortSide.isNaN() || shortSide <= 0f)
         }
     }
 

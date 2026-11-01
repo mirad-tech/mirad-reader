@@ -349,6 +349,10 @@ private fun PreviewContent(
     ) {
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         when (scene) {
+            "navigation-glass" -> NavigationGlassPreview {
+                PreviewContent(initialScene = "app-shell", dark = dark, scrolled = scrolled,
+                    longTitle = longTitle, fullScreen = fullScreen, readerDark = readerDark)
+            }
             "stats-empty" -> MiradScaffold(
                 containerColor = MaterialTheme.colorScheme.background,
                 topBar = { ScreenHeader(title = "阅读统计", onBack = { scene = "shelf" }) }

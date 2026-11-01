@@ -2,7 +2,9 @@
 
 日期：2026-11-01（Asia/Shanghai）。项目：`G:\mirad\mirad-server\book`，墨读 MiradReader。
 
-状态：**玻璃边缘优化与背景素材接入均待实施**。本轮按 plan-handoff 核对当前代码、文档、已有截图和官方资料，并按用户要求准备日／夜极简线条背景素材。用户最新明确要求背景接入也写入计划，因此本轮只交付计划与素材，不修改玻璃材质、背景注册表或其他产品源码，不运行产品构建／原生测试。
+状态：**已实施，验证与隔离实例清理完成**。分支为 `codex/liquid-glass-edges-backgrounds-20261101`；共享边缘、四张背景及用户追加的目录侧边滚动条均已实现。JVM、构建、lint、同场景前后图、独立折射对照、交互／动态及两轮隔离实例Stop结果见[实施记录](../reports/liquid-glass-edge-20261101.md)。旧API真实运行、业务进程重启耐久性及真机性能未验证；模拟器性能仅作有限诊断，不声明无回归。
+
+以下保留执行前交接计划的原文，其中“待实施”“本轮只交付计划”及历史参数均属于当时的规划阶段，不能替代上述实施记录中的当前状态。
 
 ## 1. 用户目标与验收范围
 
@@ -40,21 +42,21 @@
 
 | 事实源 | 已确认内容 |
 | --- | --- |
-| [MiradScaffold.kt](../../app/src/main/java/com/mirad/reader/ui/common/MiradScaffold.kt)，`GlassScene`，约 32–74 行；[PagerChrome.kt](../../app/src/main/java/com/mirad/reader/ui/common/PagerChrome.kt)，`PagerChromeHost`，约 75 行 | 普通页面与应用底栏也进入硬件背景链，不应先假定“只有阅读页有折射” |
-| [ReaderHardwareScene.kt](../../app/src/main/java/com/mirad/reader/ui/reader/ReaderHardwareScene.kt)，约 91–96 行；[GlassOverlayHost.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassOverlayHost.kt)，约 114、193 行 | 阅读场景提供共享硬件背景，浮层继承它；保持内容层／控制层分离 |
-| [GlassSurface.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassSurface.kt)，`glassBackground`，约 203–205、307–341 行 | 有硬件源且 API 31+ 时转入 `hardwareGlassBackground`；另一条 Compose 路径使用 BlurEffect 加公共边缘描边，没有同等的 RuntimeShader 折射 |
-| [LiquidGlassMaterial.kt](../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassMaterial.kt)，`LiquidBackdropRenderer.draw`、`LiquidEdgeRefraction.effect`，约 147–183、208–266 行 | 已有边缘折射。API 33+、边缘开启且轮廓非 `Outline.Generic` 才启用；shader 按圆角距离场法线移动采样，位移权重为 `weight²`。当前效果链是 `edge(blur(content))`；零模糊时仍能单独折射 |
-| [LiquidGlassPolicy.kt](../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassPolicy.kt)，约 87–109 行 | 当前最大位移 **2.1dp**，边缘影响带为 `min(6dp, 短边 × 12%)`；默认 60 档 Toolbar 模糊 8.5dp、Panel 11.9dp。位移和影响带不是用户锁死的验收数值 |
-| [GlassEdgeProfile.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeProfile.kt)，约 6–48 行；[GlassEdgeTexture.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeTexture.kt)，约 26–68、140–175 行 | 当前只有 **1 层**散射带，带宽随清晰度从 3.2dp 到 1.8dp；高光描边宽 1dp 到 0.65dp。高光是按高度渐变的 Brush，没有随圆角法线变化的光照；描边居中且向轮廓内裁切，细线可见宽度约为设定宽度一半 |
-| [GlassAppearance.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassAppearance.kt)，约 10–35 行 | 默认清晰度 60；开关与清晰度分离。`transparencyPercent` 是旧键兼容投影，不应拿它重新定义 UI 清晰度 |
-| [HardwareGlassBackdrop.kt](../../app/src/main/java/com/mirad/reader/ui/common/HardwareGlassBackdrop.kt)，`recordMaterial`、诊断摘要，约 281–315 行 | 可记录 `refractionActive`、`baseOpacity`、`blurDp`、材质就绪等状态。状态可证明分支，但不能证明边缘肉眼可见 |
-| [SettingsImmersionPreviewActivity.kt](../../app/src/preview/java/com/mirad/reader/preview/SettingsImmersionPreviewActivity.kt)，约 73、136、191、239 行 | 有 `hardware=true` 生产组件预览，以及 `edge` 开关；可做同包、同场景的边缘开／关对照，无须新增产品设置 |
+| [MiradScaffold.kt](../../../app/src/main/java/com/mirad/reader/ui/common/MiradScaffold.kt)，`GlassScene`，约 32–74 行；[PagerChrome.kt](../../../app/src/main/java/com/mirad/reader/ui/common/PagerChrome.kt)，`PagerChromeHost`，约 75 行 | 普通页面与应用底栏也进入硬件背景链，不应先假定“只有阅读页有折射” |
+| [ReaderHardwareScene.kt](../../../app/src/main/java/com/mirad/reader/ui/reader/ReaderHardwareScene.kt)，约 91–96 行；[GlassOverlayHost.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassOverlayHost.kt)，约 114、193 行 | 阅读场景提供共享硬件背景，浮层继承它；保持内容层／控制层分离 |
+| [GlassSurface.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassSurface.kt)，`glassBackground`，约 203–205、307–341 行 | 有硬件源且 API 31+ 时转入 `hardwareGlassBackground`；另一条 Compose 路径使用 BlurEffect 加公共边缘描边，没有同等的 RuntimeShader 折射 |
+| [LiquidGlassMaterial.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassMaterial.kt)，`LiquidBackdropRenderer.draw`、`LiquidEdgeRefraction.effect`，约 147–183、208–266 行 | 已有边缘折射。API 33+、边缘开启且轮廓非 `Outline.Generic` 才启用；shader 按圆角距离场法线移动采样，位移权重为 `weight²`。当前效果链是 `edge(blur(content))`；零模糊时仍能单独折射 |
+| [LiquidGlassPolicy.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassPolicy.kt)，约 87–109 行 | 当前最大位移 **2.1dp**，边缘影响带为 `min(6dp, 短边 × 12%)`；默认 60 档 Toolbar 模糊 8.5dp、Panel 11.9dp。位移和影响带不是用户锁死的验收数值 |
+| [GlassEdgeProfile.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeProfile.kt)，约 6–48 行；[GlassEdgeTexture.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeTexture.kt)，约 26–68、140–175 行 | 当前只有 **1 层**散射带，带宽随清晰度从 3.2dp 到 1.8dp；高光描边宽 1dp 到 0.65dp。高光是按高度渐变的 Brush，没有随圆角法线变化的光照；描边居中且向轮廓内裁切，细线可见宽度约为设定宽度一半 |
+| [GlassAppearance.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassAppearance.kt)，约 10–35 行 | 默认清晰度 60；开关与清晰度分离。`transparencyPercent` 是旧键兼容投影，不应拿它重新定义 UI 清晰度 |
+| [HardwareGlassBackdrop.kt](../../../app/src/main/java/com/mirad/reader/ui/common/HardwareGlassBackdrop.kt)，`recordMaterial`、诊断摘要，约 281–315 行 | 可记录 `refractionActive`、`baseOpacity`、`blurDp`、材质就绪等状态。状态可证明分支，但不能证明边缘肉眼可见 |
+| [SettingsImmersionPreviewActivity.kt](../../../app/src/preview/java/com/mirad/reader/preview/SettingsImmersionPreviewActivity.kt)，约 73、136、191、239 行 | 有 `hardware=true` 生产组件预览，以及 `edge` 开关；可做同包、同场景的边缘开／关对照，无须新增产品设置 |
 
-主入口位置：[ScreenHeader.kt](../../app/src/main/java/com/mirad/reader/ui/common/ScreenHeader.kt) 的 `GlassSurface`、[AppNavigationBar.kt](../../app/src/main/java/com/mirad/reader/ui/AppNavigationBar.kt) 的底座与选中胶囊、[ReaderChrome.kt](../../app/src/main/java/com/mirad/reader/ui/reader/ReaderChrome.kt) 的上下工具栏。优先改共享材质，不在各入口复制一组边缘参数。
+主入口位置：[ScreenHeader.kt](../../../app/src/main/java/com/mirad/reader/ui/common/ScreenHeader.kt) 的 `GlassSurface`、[AppNavigationBar.kt](../../../app/src/main/java/com/mirad/reader/ui/AppNavigationBar.kt) 的底座与选中胶囊、[ReaderChrome.kt](../../../app/src/main/java/com/mirad/reader/ui/reader/ReaderChrome.kt) 的上下工具栏。优先改共享材质，不在各入口复制一组边缘参数。
 
 ### 历史资料的使用限制
 
-- [阅读玻璃说明](../reader-liquid-glass.md) 中“3.2dp 折射／13dp 或 20% 影响带／六层散射”等历史文字与当前源码不一致，不能直接照抄或恢复。当前事实以以上代码为准。
+- [阅读玻璃说明](../../reader-liquid-glass.md) 中“3.2dp 折射／13dp 或 20% 影响带／六层散射”等历史文字与当前源码不一致，不能直接照抄或恢复。当前事实以以上代码为准。
 - [上下栏透色修复报告](../reports/glass-bars-white-tint-fix-20261030.md) 记录了取消 66%／78% 整栏底色下限、区分栏与面板的结果。这些改动已在当前源码核对，应保留。
 - 本轮看过历史对比图 `build/verification/glass-bars-fix-20261030/zooms/compare-header.png` 与 `zooms/compare-bottom.png`：可看到透色增强，边界仍主要表现为细轮廓与阴影。它们只辅助理解既有视觉，不能证明用户当前安装包、当前运行状态或本次优化效果。
 - 本轮确认存在 `build/verification/glass-bars-final-20261030/session.ps1`，可供接手者核对跨命令持有隔离实例的方式；不能直接复用它的旧 RunId 或运行中实例。本机忽略路径以纯文本记录。
@@ -73,7 +75,7 @@
 
 ### 第一步：固定当前基线并验证问题落点
 
-- 阅读当前 `AGENTS.md` 与 [隔离验证说明](../../tools/glass-preview/README.md)，重新检查 diff。记录本轮将改文件的原始状态，保留所有在先改动。
+- 阅读当前 `AGENTS.md` 与 [隔离验证说明](../../../tools/glass-preview/README.md)，重新检查 diff。记录本轮将改文件的原始状态，保留所有在先改动。
 - 在修改玻璃渲染代码前，从当前工作区构建基线 Debug／Preview，固定 APK 路径和 SHA-256；后续构建不能覆盖唯一的基线副本，也不借历史 APK 冒充当前基线。若先完成第 8 节背景接入，玻璃前后对照必须都包含同一批背景。
 - 在全新项目隔离实例里记录普通页与阅读页日／夜 60 档，另选代表性圆角控件检查 100 档；固定背景、滚动位置、尺寸、字体和系统设置，采集边缘开／关截图及诊断。
 - 如果实际未进入预期硬件分支，先修复经证实的接入／恢复问题再评估质感。若分支正常，直接进入共享材质优化，不重构整个背景架构。
@@ -96,7 +98,7 @@
 
 ### 第四步：同步必要测试和文档
 
-- 按实际变更更新 [GlassEdgeProfileTest.kt](../../app/src/test/java/com/mirad/reader/ui/common/GlassEdgeProfileTest.kt) 与 [LiquidGlassPolicyTest.kt](../../app/src/test/java/com/mirad/reader/ui/common/LiquidGlassPolicyTest.kt)。旧测试中的“永远极薄”精确数值可以随新视觉目标调整，但不能删除小控件限幅、合法透明度、零模糊采样留白等必要约束。
+- 按实际变更更新 [GlassEdgeProfileTest.kt](../../../app/src/test/java/com/mirad/reader/ui/common/GlassEdgeProfileTest.kt) 与 [LiquidGlassPolicyTest.kt](../../../app/src/test/java/com/mirad/reader/ui/common/LiquidGlassPolicyTest.kt)。旧测试中的“永远极薄”精确数值可以随新视觉目标调整，但不能删除小控件限幅、合法透明度、零模糊采样留白等必要约束。
 - 测试应验证新增曲线的边界内连续性、有限值、小控件限制和采样范围等真实风险；不要堆砌只重复常量的测试。Android shader 的编译和最终像素效果必须在隔离实例确认，JVM 通过不能代替。
 - 更新 `docs/reader-liquid-glass.md` 中此次相关的现状说明，区分当前值和历史记录；不顺手归档无关文件或改版本号。
 
@@ -165,14 +167,14 @@ python tools/check-doc-links.py
 
 ### 已确认的现有接入链
 
-- [BuiltinBackgrounds.kt](../../app/src/main/java/com/mirad/reader/core/model/BuiltinBackgrounds.kt) 是注册表：每项包含 key、label、assetName、isDark、suggestedTheme；现有背景使用 `builtin:` URI。
-- [AppAppearanceState.kt](../../app/src/main/java/com/mirad/reader/ui/common/AppAppearanceState.kt) 的 `readingBackgroundChoices`（约 144 行）按 `isDark` 过滤；[ReaderStyleSections.kt](../../app/src/main/java/com/mirad/reader/ui/common/ReaderStyleSections.kt) 的 `ImageBackgroundControls`／`BackgroundPresetTile` 从注册表加载缩略图并更新 `backgroundImageUri`。预期不需要新入口或额外 UI 列表。
-- [AppAppearance.kt](../../app/src/main/java/com/mirad/reader/core/model/AppAppearance.kt) 的 `ReadingStyle.normalized` 会清除与日／夜组不匹配的内置图片选择，分组必须准确。
-- [ReaderSessionStyle.kt](../../app/src/main/java/com/mirad/reader/reader/ReaderSessionStyle.kt) 解析内置 URI；[ReaderResourceProvider.kt](../../app/src/main/java/com/mirad/reader/reader/ReaderResourceProvider.kt) 用 `bg` 路由流式返回 assets，已支持 JPEG／PNG／WebP。[ReaderCss.kt](../../app/src/main/java/com/mirad/reader/core/reader/ReaderCss.kt) 当前使用 `background-size: cover` 与居中定位，因此必须验证窄竖屏和横屏的真实裁切。
+- [BuiltinBackgrounds.kt](../../../app/src/main/java/com/mirad/reader/core/model/BuiltinBackgrounds.kt) 是注册表：每项包含 key、label、assetName、isDark、suggestedTheme；现有背景使用 `builtin:` URI。
+- [AppAppearanceState.kt](../../../app/src/main/java/com/mirad/reader/ui/common/AppAppearanceState.kt) 的 `readingBackgroundChoices`（约 144 行）按 `isDark` 过滤；[ReaderStyleSections.kt](../../../app/src/main/java/com/mirad/reader/ui/common/ReaderStyleSections.kt) 的 `ImageBackgroundControls`／`BackgroundPresetTile` 从注册表加载缩略图并更新 `backgroundImageUri`。预期不需要新入口或额外 UI 列表。
+- [AppAppearance.kt](../../../app/src/main/java/com/mirad/reader/core/model/AppAppearance.kt) 的 `ReadingStyle.normalized` 会清除与日／夜组不匹配的内置图片选择，分组必须准确。
+- [ReaderSessionStyle.kt](../../../app/src/main/java/com/mirad/reader/reader/ReaderSessionStyle.kt) 解析内置 URI；[ReaderResourceProvider.kt](../../../app/src/main/java/com/mirad/reader/reader/ReaderResourceProvider.kt) 用 `bg` 路由流式返回 assets，已支持 JPEG／PNG／WebP。[ReaderCss.kt](../../../app/src/main/java/com/mirad/reader/core/reader/ReaderCss.kt) 当前使用 `background-size: cover` 与居中定位，因此必须验证窄竖屏和横屏的真实裁切。
 
 ### 最小实施步骤
 
-1. 先核验原图与 `checks.json`，再制作产品编码副本，保留交接 PNG。可按[既有素材说明](../../app/src/main/assets/backgrounds/README.txt)先尝试 768 × 1152 的 JPEG、quality 86、无色度抽样；这只是现有打包基准，细线断裂、暗色条带或阅读效果不合格时保留更高分辨率／编码质量。只做尺寸与编码适配，不另添纹理、重绘植物或把中央线条删掉。
+1. 先核验原图与 `checks.json`，再制作产品编码副本，保留交接 PNG。可按[既有素材说明](../../../app/src/main/assets/backgrounds/README.txt)先尝试 768 × 1152 的 JPEG、quality 86、无色度抽样；这只是现有打包基准，细线断裂、暗色条带或阅读效果不合格时保留更高分辨率／编码质量。只做尺寸与编码适配，不另添纹理、重绘植物或把中央线条删掉。
 2. 把最终四张 JPEG 放入 `app/src/main/assets/backgrounds/`，在 `BuiltinBackgrounds` 增加四个独立 key 与上述记录，检查 key／路径不重名。复用现有明暗分组与 `ReadingConfigEditor` 保存路径，不添加偏好、迁移、外部下载或运行时生成逻辑。
 3. 只追加可选背景，不替换、删除旧素材，也不把当前用户的日／夜背景自动换成新图。更新素材 `README.txt`，记录这批来源、导出尺寸与格式。
 4. 这项可先作为独立增量完成，再做玻璃边缘；两者交付和验证状态分别记录。新低对比背景可用于联合观感检查，但不能替代第 7 节用于观察折射的彩色图块／斜线测试背景。

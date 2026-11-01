@@ -2,11 +2,13 @@ package com.mirad.reader.ui.reader
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import com.mirad.reader.ui.common.BouncingLazyColumn
@@ -21,11 +23,18 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInWindow
+import kotlin.math.roundToInt
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
@@ -61,6 +70,14 @@ fun TocSheet(
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = filtered.indexOfFirst { it.index == currentIndex }.coerceAtLeast(0)
     )
+    val density = LocalDensity.current
+    var visibleListHeight by remember { mutableIntStateOf(0) }
+    val scrollable by remember(listState) {
+        derivedStateOf {
+            listState.layoutInfo.totalItemsCount > 0 &&
+                (listState.canScrollBackward || listState.canScrollForward)
+        }
+    }
     SheetScaffold(
         title = "目录",
         // 用章节标题而不是"第 N 章"序号：分卷/重新编号的书里，序号和标题里的章号会不一致，
@@ -82,20 +99,14 @@ fun TocSheet(
         if (filtered.isEmpty()) {
             BouncingSheetEmpty("没有匹配的章节")
         } else {
-            // 目录可能上千章：右侧常驻可拖动滚动条用于快速定位，滚动条只移动列表，
-            // 不触发跳转；仍然只有点章节行才跳转正文。
-            // 面板可视边缘比内容框窄，滚动条贴到内容框右缘会被裁掉一半、点不到；
-            // 收进 16dp，让整列落在面板内。
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-                    .padding(end = 16.dp)
-            ) {
-                BouncingLazyColumn(
-                    state = listState,
-                    modifier = Modifier.weight(1f).fillMaxHeight()
-                ) {
+            Box(Modifier.fillMaxWidth().weight(1f).onGloballyPositioned {
+                // 半展开面板的完整布局延伸到屏幕外，列表和拖动条只使用当前可见区域。
+                visibleListHeight = it.boundsInWindow().height.roundToInt()
+            }) {
+                val listHeight = if (visibleListHeight > 0)
+                    Modifier.height(with(density) { visibleListHeight.toDp() }) else Modifier.fillMaxHeight()
+                BouncingLazyColumn(state = listState,
+                    modifier = Modifier.fillMaxWidth().then(listHeight).padding(end = if (scrollable) 32.dp else 0.dp)) {
                     items(filtered, key = { it.index }) { chapter ->
                         ListRow(
                             title = chapter.title,
@@ -116,13 +127,9 @@ fun TocSheet(
                         )
                     }
                 }
-                if (filtered.size > 1) {
-                    TocScrollBar(
-                        listState = listState,
-                        itemCount = filtered.size,
-                        titleAt = { filtered.getOrNull(it)?.title.orEmpty() },
-                        modifier = Modifier.fillMaxHeight().padding(vertical = Spacing.xs)
-                    )
+                if (scrollable) {
+                    TocFastScrollbar(listState, filtered.size,
+                        Modifier.align(Alignment.TopEnd).then(listHeight).width(48.dp).padding(vertical = 8.dp))
                 }
             }
         }

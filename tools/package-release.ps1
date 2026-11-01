@@ -4,9 +4,9 @@ param(
     [string]$Keystore = $env:MIRAD_KEYSTORE,
     [string]$StorePasswordFile = $env:MIRAD_KEYSTORE_PASSWORD_FILE,
     [string]$KeyAlias = 'mirad-reader-release',
-    [string]$BuildToolsVersion = '37.0.0',
+    [string]$BuildToolsVersion = '36.1.0',
     [string]$OutputDirectory,
-    [string]$ExpectedCertificate = '5AC7DBE93C8D02663FCD563C442A281C32B3D8BCF12411F43C85030A37BAF0B6'
+    [string]$ExpectedCertificate = '3151FFA59CD9CC59390CBC94EC3EF7DFF4E4DEB893630649EB7F0C17A41A11E7'
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot

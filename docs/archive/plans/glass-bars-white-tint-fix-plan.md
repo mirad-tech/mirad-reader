@@ -29,19 +29,19 @@
 
 | 位置 | 当前行为 | 首要检查点 |
 | --- | --- | --- |
-| [ScreenHeader.kt](../../app/src/main/java/com/mirad/reader/ui/common/ScreenHeader.kt)，约40行 | 日间`.66`／夜间`.78` | 一级和二级公共顶栏 |
-| [AppNavigationBar.kt](../../app/src/main/java/com/mirad/reader/ui/AppNavigationBar.kt)，约50、65行 | 同一`tintFloor`传给底座 | 应用底栏 |
+| [ScreenHeader.kt](../../../app/src/main/java/com/mirad/reader/ui/common/ScreenHeader.kt)，约40行 | 日间`.66`／夜间`.78` | 一级和二级公共顶栏 |
+| [AppNavigationBar.kt](../../../app/src/main/java/com/mirad/reader/ui/AppNavigationBar.kt)，约50、65行 | 同一`tintFloor`传给底座 | 应用底栏 |
 | 同文件约119行 | 选中胶囊也传入同一下限 | 与底座的绘制、采样及底色关系 |
-| [ReaderChrome.kt](../../app/src/main/java/com/mirad/reader/ui/reader/ReaderChrome.kt)，约100行 | 日间`.66`／夜间`.78` | 阅读顶部工具栏 |
+| [ReaderChrome.kt](../../../app/src/main/java/com/mirad/reader/ui/reader/ReaderChrome.kt)，约100行 | 日间`.66`／夜间`.78` | 阅读顶部工具栏 |
 | 同文件约190行 | 同上 | 阅读底部工具栏 |
 
-实际绘制并非优先使用薄底色：[LiquidGlassMaterial.kt](../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassMaterial.kt)约48行取`max(liquidBaseOpacity(...), minimumTintAlpha)`；[GlassSurface.kt](../../app/src/main/java/com/mirad/reader/ui/common/GlassSurface.kt)约280行的另一条路径也取最大值。
+实际绘制并非优先使用薄底色：[LiquidGlassMaterial.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassMaterial.kt)约48行取`max(liquidBaseOpacity(...), minimumTintAlpha)`；[GlassSurface.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassSurface.kt)约280行的另一条路径也取最大值。
 
 因此，即使 GPU 背景采样、模糊和折射正常，背景仍会被至少66%／78%的主题底色覆盖。在100清晰度下，原基础底色只有日间8%／夜间10%，这些调用点却把它重新抬高。这是当前最明确的白底来源，**不是已经证明 GPU 失效**。
 
 另有两项需要在实际复现中区分：
 
-1. [LiquidGlassPolicy.kt](../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassPolicy.kt)的基础底色在清晰度0时为1；只删`.66/.78`并不能自动解决所有档位的实心观感。若要调整，应聚焦上下栏角色的底色策略，保持模糊方向与开关语义，避免无关改变已接受的弹窗效果。
+1. [LiquidGlassPolicy.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassPolicy.kt)的基础底色在清晰度0时为1；只删`.66/.78`并不能自动解决所有档位的实心观感。若要调整，应聚焦上下栏角色的底色策略，保持模糊方向与开关语义，避免无关改变已接受的弹窗效果。
 2. GPU未就绪、软件Canvas、停用或降级时会走主题表面；另一条不可用路径有`.94`底色。接手者必须记录实际分支，不能把所有白色都归为同一原因。
 
 底座与胶囊虽然各有下限，但二者会绘制自己的背景采样；**不能仅凭组件嵌套就认定 alpha 必然相乘**。是否重复叠色、采到了父栏或进入不同降级分支，需要以绘制路径与像素观察确认。
@@ -104,7 +104,7 @@
 
 ### 原生运行与收尾
 
-按[原生预览工具说明](../../tools/glass-preview/README.md)及根`AGENTS.md`使用新RunId、独占模拟器和私有ADB；先构建后启动，不复用已清理实例、不使用默认ADB或真实手机。Preview只证明视觉夹具，真实Debug证明实际页面与状态。
+按[原生预览工具说明](../../../tools/glass-preview/README.md)及根`AGENTS.md`使用新RunId、独占模拟器和私有ADB；先构建后启动，不复用已清理实例、不使用默认ADB或真实手机。Preview只证明视觉夹具，真实Debug证明实际页面与状态。
 
 固定每个待测APK的SHA256；保存同场景前后截图、滚动／拖动录像、实际分支日志及有界帧／内存记录。不同APK或不同PID的结果分开，不能把旧截图、Preview或一次采样替代新包真实通过。
 

@@ -175,26 +175,63 @@ class LiquidGlassPolicyTest {
         assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
         assertEquals(11, liquidMaterialPaddingPx(0f, true, 2f))
         assertEquals(0, liquidMaterialPaddingPx(0f, false, 2f))
-        // 模糊留白与折射位移相加：20px 模糊需要 40px，再加折射的 4.6dp×2 + 1px。
+        // 链式采样范围应相加：偏移后的样本仍需要完整模糊核，不能只取两项的最大值。
         assertEquals(51, liquidMaterialPaddingPx(20f, true, 2f))
         assertEquals(40, liquidMaterialPaddingPx(20f, false, 2f))
         // 采样留白必须覆盖最大位移，否则边缘会读到自己的空白 padding。
         assertTrue(liquidMaterialPaddingPx(0f, true, 3f) >= LIQUID_REFRACTION_STRENGTH_DP * 3f)
-        // 真正要守的是"余量"：留白减掉模糊占用的 2 倍半径后仍要覆盖最大位移。
-        // 清晰度约 87 以上半径会小于位移，旧版 max(2r, 位移+1) 正是在那里余量归零；
-        // 只断言 ">= 相加值" 会因 ceil(x) >= x 恒成立而挡不住它。
-        for (density in listOf(2f, 2.75f, 3.5f)) {
-            for (clarity in listOf(0, 60, 85, 90, 95, 100)) {
+        assertEquals(8.64f, liquidRefractionRimDp(48f), .001f)
+        assertEquals(LIQUID_REFRACTION_RIM_DP, liquidRefractionRimDp(100f), .001f)
+    }
+
+    @Test fun refractionCurveIsBoundedAndMeetsTheUnshiftedCenterWithoutAKink() {
+        assertEquals(1f, LiquidRefractionCurve.weightAt(0f), .000001f)
+        assertEquals(0f, LiquidRefractionCurve.weightAt(1f), .000001f)
+        var previous = 1f
+        for (step in 1..1000) {
+            val weight = LiquidRefractionCurve.weightAt(step / 1000f)
+            assertTrue(weight.isFinite() && weight in 0f..1f)
+            assertTrue(weight <= previous)
+            assertTrue(previous - weight < .002f)
+            previous = weight
+        }
+        val centerSlope = LiquidRefractionCurve.LINEAR + 2f * LiquidRefractionCurve.QUADRATIC +
+            3f * LiquidRefractionCurve.CUBIC
+        assertEquals(0f, centerSlope, .000001f)
+        for (density in listOf(1f, 1.5f, 2.75f, 4f)) {
+            for (clarity in 0..100) {
                 val blur = liquidBlurDp(GlassStyle.Toolbar, clarity) * density
+                val padding = liquidMaterialPaddingPx(blur, true, density)
+                // 真正要守的是"余量"：留白减掉模糊占用的 2 倍半径之后，仍要覆盖最大位移，
+                // 否则偏移后的取样点会落进模糊的钳位环。清晰度约 87 以上半径小于位移，
+                // 旧版 max(2r, 位移+1) 正是在这里余量归零；只断言「>= 相加值」会因
+                // ceil(x) >= x 恒成立而挡不住它。
                 assertTrue(
-                    "density=$density clarity=$clarity",
-                    liquidMaterialPaddingPx(blur, true, density) - blur * 2f >=
-                        LIQUID_REFRACTION_STRENGTH_DP * density - .001f
+                    "density=$density clarity=$clarity padding=$padding blur=$blur",
+                    padding - blur * 2f >= LIQUID_REFRACTION_STRENGTH_DP * density - .001f
                 )
             }
         }
-        assertEquals(8.64f, liquidRefractionRimDp(48f), .001f)
-        assertEquals(LIQUID_REFRACTION_RIM_DP, liquidRefractionRimDp(100f), .001f)
+    }
+
+    @Test fun inwardLensMappingStaysInsideTheRimAndNeverFoldsSmallControls() {
+        for (shortSide in listOf(10f, 16f, 24f, 48f, 64f, 240f)) {
+            val rim = liquidRefractionRimDp(shortSide)
+            val strength = liquidRefractionStrengthDp(shortSide)
+            var previous = strength
+            for (step in 0..1000) {
+                val depth = rim * step / 1000f
+                val sampleDepth = depth + strength * LiquidRefractionCurve.weightAt(depth / rim)
+                assertTrue(sampleDepth.isFinite() && sampleDepth >= depth)
+                assertTrue("短边 $shortSide 的采样不能越过影响带", sampleDepth <= rim + .00001f)
+                assertTrue("短边 $shortSide 的透镜映射不能反向折叠", sampleDepth >= previous - .00001f)
+                val t = depth / rim
+                val slope = 1f - strength / rim * (LiquidRefractionCurve.LINEAR +
+                    2f * LiquidRefractionCurve.QUADRATIC * t + 3f * LiquidRefractionCurve.CUBIC * t * t)
+                assertTrue("短边 $shortSide 在 t=$t 的连续映射必须单调", slope > 0f)
+                previous = sampleDepth
+            }
+        }
     }
 
     @Test

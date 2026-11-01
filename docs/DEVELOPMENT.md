@@ -2,7 +2,7 @@
 
 ## 环境
 
-- Android SDK：`platforms;android-36.1`；由 AGP 选择所需构建工具。本机发行签名工具使用 `build-tools;37.0.0`。
+- Android SDK：`platforms;android-36.1`；由 AGP 选择所需构建工具。本机发行签名工具使用已安装的 `build-tools;36.1.0`。
 - Java 21：`gradle/gradle-daemon-jvm.properties` 指定 Daemon JVM 21；首次运行可能由 Gradle 下载对应工具链。
 - 使用仓库中的 Gradle Wrapper，不依赖全局 Gradle。
 - 在本机 `local.properties` 配置 `sdk.dir`，或者配置 `ANDROID_HOME`；不要提交本机路径。
@@ -53,15 +53,19 @@ npm --prefix tools/browser-checks test
 
 ## 正式 APK 签名
 
-正式 APK 必须沿用历史发行证书。签名文件和密码文件都放在仓库外，不上传到 Git 或日志。
+从 1.3.2 开始使用 2026-11-01 重建的发行证书。原密钥已由用户删除，本轮按用户授权重建；新证书不能覆盖安装旧证书版本，不能把该包作为保留旧数据的普通升级包。
 
-本项目的正式证书 SHA-256：
+签名文件在主工作区的本机忽略目录 `artifacts/signing/mirad-reader/`，密钥文件为 `mirad-reader-release-20261101.p12`，密码文件为 `store-password.txt`，alias 为 `mirad-reader-release`。二者必须妥善保管，不上传到 Git、日志或交付的 APK 目录。新克隆不包含签名资料，需要配置已保管的本机路径。
+
+当前发行证书 SHA-256：
 
 ```text
-5AC7DBE93C8D02663FCD563C442A281C32B3D8BCF12411F43C85030A37BAF0B6
+3151FFA59CD9CC59390CBC94EC3EF7DFF4E4DEB893630649EB7F0C17A41A11E7
 ```
 
-在 Windows PowerShell 中设置仓库外的签名文件路径，再调用发行工具：
+旧证书 SHA-256 为 `5AC7DBE93C8D02663FCD563C442A281C32B3D8BCF12411F43C85030A37BAF0B6`，保留此值仅用于识别历史包。卸载旧版会删除其本地数据；项目没有完整设置备份恢复功能，不能承诺自动迁移。
+
+在 Windows PowerShell 中设置本机忽略目录内的签名文件路径，再调用发行工具：
 
 ```powershell
 $env:ANDROID_HOME = '<Android SDK 目录>'

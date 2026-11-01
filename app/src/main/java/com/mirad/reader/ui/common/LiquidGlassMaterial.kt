@@ -239,7 +239,9 @@ private class LiquidEdgeRefraction {
                 distanceToEdge(p+float2(0.5,0.0))-distanceToEdge(p-float2(0.5,0.0)),
                 distanceToEdge(p+float2(0.0,0.5))-distanceToEdge(p-float2(0.0,0.5)));
             float2 normal = gradient / max(length(gradient), 0.001);
-            return content.eval(coord + normal * strength * weight);
+            // 向内取样：RuntimeShader 的输入可能被父裁切限制在材质区域，向外读会在贴边
+            // 产生输入边界的彩色条带。凸轮廓内移保持采样有效，中心和前景仍不移动。
+            return content.eval(coord - normal * strength * weight);
         }
     """.trimIndent())
     private var lastWidth = -1f

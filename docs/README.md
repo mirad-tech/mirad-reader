@@ -7,14 +7,12 @@
 - [精简重构测试计划](plans/simplify-and-split-test-plan.md)
 - [代码精简报告](reports/simplify-and-split-report.md)
 - [阅读玻璃与统一外观](reader-liquid-glass.md)
-- [玻璃边缘优化与日夜背景接入计划](plans/liquid-glass-edge-plan.md)
-- [上下栏磨砂玻璃透色修复计划](plans/glass-bars-white-tint-fix-plan.md)
-- [上下栏磨砂玻璃透色修复报告](reports/glass-bars-white-tint-fix-20261030.md)
 - [文档收尾与归档规则](DEVELOPMENT.md#文档收尾)
 - [安装包归档约定](DEVELOPMENT.md#仓库与发布约定)；本机安装包目录 `artifacts/apk/` 不入 Git。
 
 ## 版本说明
 
+- [1.3.2](releases/1.3.2.md)
 - [1.3.1](releases/1.3.1.md)
 - [1.3.0](releases/1.3.0.md)
 - [1.2.0](releases/1.2.0.md)

@@ -240,8 +240,9 @@ try {
                 $state=Capture "$mode-c$clarity"
                 if($clarity -eq 100) {
                     Check ([double](Metric $state 'blurDp') -eq 0) "$mode 100% clarity takes the explicit no-blur branch"
-                    $readableFloor=if($mode -eq 'DAY'){.92}else{.88}
-                    Check ([double](Metric $state 'baseOpacity') -ge $readableFloor-.001) "$mode clear panels use a uniform readability tint without blurring the foreground"
+                    # 100 档与上下栏共用薄底且零模糊；不能用旧可读性底色把高清晰度改回实心。
+                    $clearTint=if($mode -eq 'DAY'){.08}else{.10}
+                    Check ([Math]::Abs([double](Metric $state 'baseOpacity')-$clearTint) -lt .001) "$mode 100% clear panels keep the shared thin tint without extra readability opacity"
                 } else {
                     Check ([double](Metric $state 'blurDp') -gt 0) "$mode $clarity% clarity keeps a non-zero blur radius"
                 }

@@ -2,9 +2,9 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前版本：1.3.0（versionCode 26）**
+**当前本地版本：1.3.2（versionCode 28）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.0.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.2.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
@@ -12,7 +12,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
-支持 Android 8.0 及以上。正式版本沿用同一发行证书，可覆盖同签名的旧正式版；无需先卸载旧版。
+支持 Android 8.0 及以上。1.3.2 因原密钥丢失而重建发行签名，不能覆盖安装旧证书版本；旧版的设置和阅读数据不会自动迁移。先保留旧安装，不要为尝试更新而直接卸载。此后只有使用同一新证书签名的版本才能正常覆盖更新。
 
 如需核验文件完整性，请对照同一 Release 附带的 `SHA256SUMS.txt`。Debug 包与正式包可能使用不同签名，不能据此假定它们可以互相覆盖安装。
 
@@ -26,7 +26,8 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 - **记录与检索**：书签、划线、笔记、Markdown 导出、全书搜索和阅读统计。
 - **朗读**：使用系统 TTS 引擎，提供语速、音调、句级高亮和通知栏控制。
 - **统一外观**：全应用共享跟随系统、日间、夜间模式；日夜分别记忆阅读配色、背景图片和图片不透明度，阅读弹层与当前模式一致。
-- **玻璃外观**：一级、二级页面使用整条悬浮玻璃顶栏；工具栏、菜单、消息与确认弹窗共享材质。清晰度默认 60%，导航和工具栏在 100% 时零模糊，弹窗的模糊档位上限为 80，底色仍继续减薄；关闭玻璃后使用不透明表面。
+- **玻璃外观**：一级、二级页面使用整条悬浮玻璃顶栏；工具栏、菜单、消息与确认弹窗共享轮廓高光和局部边缘折射。清晰度默认 60%，导航、工具栏和弹窗在 100% 时均为零模糊，关闭玻璃后使用不透明表面。
+- **目录快滚与线条背景**：长目录支持侧边拖动定位列表，点击章节才跳转正文；新增行叶、疏苇两组日夜背景，保留原有背景与默认选择。
 
 ### 阅读设置的作用范围
 
