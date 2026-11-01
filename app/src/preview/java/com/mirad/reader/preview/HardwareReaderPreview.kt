@@ -113,7 +113,8 @@ internal fun HardwareReaderPreview(
     var snapshotStatus by remember { mutableStateOf("idle") }
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
     val chapters = remember {
-        List(6) { ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000) }
+        // 仅预览：章节数要足够多，才能验证目录右侧滚动条"拖动快速定位"而不只是整屏滑动。
+        List(120) { ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000) }
     }
     val percent = ((chapter + offset.toFloat() / textLength.coerceAtLeast(1)) / chapters.size).coerceIn(0f, 1f)
 

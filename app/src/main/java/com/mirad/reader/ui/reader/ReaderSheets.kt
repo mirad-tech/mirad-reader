@@ -1,6 +1,9 @@
 package com.mirad.reader.ui.reader
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,7 +25,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
@@ -79,26 +84,39 @@ fun TocSheet(
         if (filtered.isEmpty()) {
             BouncingSheetEmpty("没有匹配的章节")
         } else {
-            BouncingLazyColumn(state = listState, modifier = Modifier.fillMaxWidth().weight(1f)) {
-                items(filtered, key = { it.index }) { chapter ->
-                    ListRow(
-                        title = chapter.title,
-                        meta = if (chapter.isVolume) "卷" else null,
-                        selected = chapter.index == currentIndex,
-                        titleMaxLines = 1,
-                        modifier = Modifier.padding(start = if (chapter.isVolume) Spacing.xs else Spacing.xl),
-                        trailing = {
-                            if (chapter.index == currentIndex) {
-                                Text(
-                                    text = "当前",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        },
-                        onClick = { onSelect(chapter.index) }
-                    )
+            // 目录可能上千章：右侧常驻可拖动滚动条用于快速定位，滚动条只移动列表，
+            // 不触发跳转；仍然只有点章节行才跳转正文。
+            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                BouncingLazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                ) {
+                    items(filtered, key = { it.index }) { chapter ->
+                        ListRow(
+                            title = chapter.title,
+                            meta = if (chapter.isVolume) "卷" else null,
+                            selected = chapter.index == currentIndex,
+                            titleMaxLines = 1,
+                            modifier = Modifier.padding(start = if (chapter.isVolume) Spacing.xs else Spacing.xl),
+                            trailing = {
+                                if (chapter.index == currentIndex) {
+                                    Text(
+                                        text = "当前",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            },
+                            onClick = { onSelect(chapter.index) }
+                        )
+                    }
                 }
+                TocScrollBar(
+                    listState = listState,
+                    itemCount = filtered.size,
+                    titleAt = { filtered.getOrNull(it)?.title.orEmpty() },
+                    modifier = Modifier.fillMaxHeight().padding(vertical = Spacing.xs)
+                )
             }
         }
     }
