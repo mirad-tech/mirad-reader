@@ -112,9 +112,10 @@ internal fun HardwareReaderPreview(
     var snapshotSerial by remember { mutableIntStateOf(0) }
     var snapshotStatus by remember { mutableStateOf("idle") }
     val imeVisible = WindowInsets.ime.getBottom(density) > 0
+    // 仅预览：章节数可用 --ei chapters N 调大（默认 6），用于验证目录滚动条的长列表行为。
+    val chapterCount = remember { activity.intent.getIntExtra("chapters", 6).coerceIn(1, 2000) }
     val chapters = remember {
-        // 仅预览：章节数要足够多，才能验证目录右侧滚动条"拖动快速定位"而不只是整屏滑动。
-        List(120) { ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000) }
+        List(chapterCount) { ChapterEntity(bookId = 1, index = it, title = "第${it + 1}章 雪夜出城", charCount = 6000) }
     }
     val percent = ((chapter + offset.toFloat() / textLength.coerceAtLeast(1)) / chapters.size).coerceIn(0f, 1f)
 

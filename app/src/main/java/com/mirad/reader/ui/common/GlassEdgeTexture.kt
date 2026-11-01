@@ -19,9 +19,10 @@ import androidx.compose.ui.unit.dp
 val LocalGlassEdgeTexture = staticCompositionLocalOf { true }
 
 /**
- * 只控制硬件路径的背景弯折（RuntimeShader），与 [LocalGlassEdgeTexture] 的描边分开。
- * 预览里两者一起关只能证明"边缘整体有变化"，分不清是描边还是折射；生产恒为 true，
- * 也不进入偏好或持久化。
+ * 硬件路径背景弯折（RuntimeShader）的开关，与 [LocalGlassEdgeTexture] 的描边分开。
+ *
+ * 当前是恒为 true 的接入点：本分支没有任何调用方把它设为 false（预览夹具未包含该命令），
+ * 保留它只是为了将来能单独关掉折射做对照。不进入偏好，也不参与持久化。
  */
 val LocalGlassRefraction = staticCompositionLocalOf { true }
 
