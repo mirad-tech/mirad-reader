@@ -1,5 +1,7 @@
 # Isolated native glass preview
 
+> **强制约定（写在仓库里，便于所有克隆遵守）**：本项目的原生验证只能在下面这套**项目隔离模拟器**上做——每轮新建 RunId、独立 AVD、私有 ADB 端口；不得使用用户真实手机、本机默认 ADB（5037）、Android Studio 已有 AVD 或上一轮遗留实例。每轮测试结束必须执行 `-Action Stop -RunId <本次 RunId>` 清理实例（会核验归属、停模拟器与私有 ADB、释放端口、删除该 RunId 的临时 AVD）；**清理实例不得删除证据**：截图、屏幕录像、logcat、状态 JSON 一律留在本工具运行目录与 `build/verification/<任务目录>/`。归属不清或 Stop 失败时保留数据并如实报告，不触碰其他实例。
+
 当前维护的构建入口为 `debug`、`release` 和 `preview`。独立 GPU 原型已退役；阅读 GPU 检查使用下文 Integrated reader hardware checks 中的生产组件预览。三个单轮修复脚本已从当前树移除，需要追溯时从 Git 历史查看，不再作为常规验收入口。
 
 This driver uses the existing Android Studio runtime, Android SDK, and API 37 image. It does not install dependencies. Each run owns an AVD, Android preferences, logs, captures, and a private ADB server under `build/verification/glass-native-preview/<run-id>/`.

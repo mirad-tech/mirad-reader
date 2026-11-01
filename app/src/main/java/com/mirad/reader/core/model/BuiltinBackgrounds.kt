@@ -33,6 +33,10 @@ object BuiltinBackgrounds {
     const val MIST_PAPER = "mist-paper"
     const val INK_TEAL = "ink-teal"
     const val CHARCOAL = "charcoal"
+    const val LINE_LEAF_DAY = "line-leaf-day"
+    const val LINE_LEAF_NIGHT = "line-leaf-night"
+    const val LINE_REED_DAY = "line-reed-day"
+    const val LINE_REED_NIGHT = "line-reed-night"
 
     val ALL: List<BuiltinBackground> = listOf(
         BuiltinBackground(PAPER, "纸纹", "backgrounds/paper.jpg", false, ThemeKey.PAPER),
@@ -45,7 +49,11 @@ object BuiltinBackgrounds {
         BuiltinBackground(FIBER_PAPER, "纤维纸", "backgrounds/fiber-paper.jpg", false, ThemeKey.PAPER),
         BuiltinBackground(MIST_PAPER, "雾青纸", "backgrounds/mist-paper.jpg", false, ThemeKey.GREEN),
         BuiltinBackground(INK_TEAL, "墨青", "backgrounds/ink-teal.jpg", true, ThemeKey.DARK),
-        BuiltinBackground(CHARCOAL, "炭灰", "backgrounds/charcoal.jpg", true, ThemeKey.DARK)
+        BuiltinBackground(CHARCOAL, "炭灰", "backgrounds/charcoal.jpg", true, ThemeKey.DARK),
+        BuiltinBackground(LINE_LEAF_DAY, "行叶·昼", "backgrounds/line-leaf-day.jpg", false, ThemeKey.PAPER),
+        BuiltinBackground(LINE_REED_DAY, "疏苇·昼", "backgrounds/line-reed-day.jpg", false, ThemeKey.GREEN),
+        BuiltinBackground(LINE_LEAF_NIGHT, "行叶·夜", "backgrounds/line-leaf-night.jpg", true, ThemeKey.DARK),
+        BuiltinBackground(LINE_REED_NIGHT, "疏苇·夜", "backgrounds/line-reed-night.jpg", true, ThemeKey.DARK)
     )
 
     fun byKey(key: String): BuiltinBackground? = ALL.firstOrNull { it.key == key }

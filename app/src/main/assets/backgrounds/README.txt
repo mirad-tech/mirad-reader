@@ -16,3 +16,26 @@ optimize=True，progressive=True，subsampling=0，不增加图案或重绘。
 
 四张图片分别注册独立 builtin: URI，日夜按 isDark 分组。保留原有背景及默认选择；
 深色背景统一建议 DARK 主题，沿用现有日夜外观各自保存方式。
+
+2026-11-01 新增阅读背景（第二批，极简线条穿过中央）：
+
+line-leaf-day.jpg    行叶·昼（日间，纸色主题）
+line-reed-day.jpg    疏苇·昼（日间，护眼绿主题）
+line-leaf-night.jpg  行叶·夜（夜间，深色主题）
+line-reed-night.jpg  疏苇·夜（夜间，深色主题）
+
+素材由内置 image_gen 先出两张日间原图，再以各自原图为编辑输入生成夜间版，
+保留枝叶构图、只调整明暗配色。日间是暖纸色/淡雾绿与细线，夜间是同构图的
+深墨青/炭灰低对比线条。无文字、标记、边框、强阴影或暗角，非透明图片。
+
+这批与上一批的构图约定不同：单枝疏叶或细长疏苇明确穿过画面中央，
+不再要求"中央完全留白"。线条保持低对比、留出大片平整底色，
+正文压在其上仍可辨认；不要在后续处理中把中央线条删掉或改画到边角。
+
+原图 1024×1536；仅以 Pillow Lanczos 缩至 768×1152，JPEG quality=86，
+optimize=True，progressive=True，subsampling=0，不增加纹理、不重绘。
+交接原图与 prompts.json／checks.json 在本机忽略目录 artifacts/backgrounds/line-art-20261101/，
+不随克隆出现。
+
+四张同样各注册独立 builtin: URI（line-leaf-day 等），日夜按 isDark 分组，
+只追加可选背景，不替换原有素材、不改动用户当前的日夜背景选择。

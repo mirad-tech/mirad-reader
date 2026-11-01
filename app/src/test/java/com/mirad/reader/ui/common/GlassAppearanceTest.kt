@@ -103,12 +103,12 @@ class GlassAppearanceTest {
     }
 
     @Test
-    fun composeAndGpuPanelsKeepSofteningAtMaximumClarity() {
+    fun panelAndToolbarShareTheSameClaritySemantics() {
         val panel80 = computeGlassParams(100, GlassStyle.Panel, false, true, null, clarityPercent = 80)
         val panel100 = computeGlassParams(100, GlassStyle.Panel, false, true, null, clarityPercent = 100)
-        assertEquals(panel80.blurRadius, panel100.blurRadius)
-        assertTrue(panel100.blurRadius > 0.dp)
-        assertEquals(liquidBlurDp(GlassStyle.Panel, 80), liquidBlurDp(GlassStyle.Panel, 100), 0f)
+        assertTrue("80 档仍然有柔化", panel80.blurRadius > 0.dp)
+        assertEquals("100 档面板不再封顶到 80，走零模糊分支", 0.dp, panel100.blurRadius)
+        assertEquals(0f, liquidBlurDp(GlassStyle.Panel, 100), 0f)
         assertEquals(0.dp, computeGlassParams(100, GlassStyle.Toolbar, false, true, null, clarityPercent = 100).blurRadius)
         assertEquals(0f, liquidBlurDp(GlassStyle.Toolbar, 100), 0f)
     }

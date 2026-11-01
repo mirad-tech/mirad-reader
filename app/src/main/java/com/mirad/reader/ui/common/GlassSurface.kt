@@ -198,12 +198,11 @@ fun Modifier.glassBackdropSource(): Modifier = composed {
 fun Modifier.glassBackground(
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = RoundedCornerShape(22.dp),
-    minimumTintAlpha: Float = 0f,
     shadowElevation: Dp? = null
 ): Modifier = composed {
     val hardware = LocalHardwareGlassBackdrop.current
     if (hardware != null && Build.VERSION.SDK_INT >= 31) {
-        return@composed this.hardwareGlassBackground(hardware, style, shape, minimumTintAlpha, shadowElevation)
+        return@composed this.hardwareGlassBackground(hardware, style, shape, shadowElevation)
     }
     val source = LocalGlassBackdrop.current
     val view = LocalView.current
@@ -276,11 +275,8 @@ fun Modifier.glassBackground(
         )
     }
 
-    // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色。
-    val targetOpacity = max(
-        if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur),
-        minimumTintAlpha.coerceIn(0f, 1f)
-    )
+    // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色，由公共角色策略决定浓度。
+    val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur, style)
     val animatedOpacity by animateFloatAsState(
         targetValue = targetOpacity,
         animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
@@ -351,12 +347,11 @@ fun GlassSurface(
     modifier: Modifier = Modifier,
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = MaterialTheme.shapes.large,
-    minimumTintAlpha: Float = 0f,
     shadowElevation: Dp? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.glassBackground(style, shape, minimumTintAlpha, shadowElevation),
+        modifier = modifier.glassBackground(style, shape, shadowElevation),
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,

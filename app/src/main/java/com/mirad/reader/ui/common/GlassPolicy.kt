@@ -391,8 +391,8 @@ internal fun computeGlassParams(
         ambientOpacity = requiredPeakAlpha
     }
 
-    // 面板略厚，并按公共角色策略在高档位保留柔化；工具栏 100 走无模糊分支。
-    val clarity = liquidBlurClarity(clarityPercent, style)
+    // 面板略厚，但清晰度语义与工具栏一致：100 档同样零模糊，不再折算回 80 档。
+    val clarity = liquidBlurClarity(clarityPercent)
     val baseBlur = if (style == GlassStyle.Panel) 16f else 13f
     val maxBlur = if (style == GlassStyle.Panel) 24f else 20f
     val complexity = (m.span * 0.6f + m.edgeIntensity * 0.4f).coerceIn(0f, 1f)

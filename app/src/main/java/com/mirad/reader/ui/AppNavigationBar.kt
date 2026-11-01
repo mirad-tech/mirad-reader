@@ -18,7 +18,6 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlin.math.roundToInt
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
@@ -48,7 +47,6 @@ internal fun AppNavigationBar(
         if (dragging) motion?.dragStretch ?: 0f else 0f, label = "navigationStretch")
     val heightScale by androidx.compose.animation.core.animateFloatAsState(
         if (dragging) 1.04f else 1f, label = "navigationPress")
-    val tintFloor = if (MaterialTheme.colorScheme.surface.luminance() < .5f) .78f else .66f
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val latestMotion by rememberUpdatedState(motion)
     val latestEnabled by rememberUpdatedState(enabled)
@@ -62,7 +60,7 @@ internal fun AppNavigationBar(
         .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
         GlassSurface(Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-            minimumTintAlpha = tintFloor, shadowElevation = 1.dp,
+            shadowElevation = 1.dp,
             shape = RoundedCornerShape(29.dp)) {
             Box(Modifier.padding(5.dp)
                 .onSizeChanged { innerSize = it }
@@ -113,10 +111,13 @@ internal fun AppNavigationBar(
                     val visualProgress = if (rtl) AppTab.entries.lastIndex - progress else progress
                     val left = ((visualProgress + .5f) * slot - width / 2f)
                         .coerceIn(0f, (innerSize.width - width).coerceAtLeast(0f))
+                    // 胶囊自己也会采样背后内容并叠一层薄底色，与底座叠加是"选中抬升"的有意设计：
+                    // 底色降到上下栏曲线后两者都只有十几分之一，实测没有双层白胶囊或暗圈。
+                    // 若以后要单独调胶囊，改这里的填充浓度，不要再给材质加不透明度下限。
                     GlassSurface(
                         Modifier.offset { androidx.compose.ui.unit.IntOffset(left.roundToInt(), ((innerSize.height-height)/2).roundToInt()) }
                             .width(with(density) { width.toDp() }).requiredHeight(with(density) { height.toDp() }),
-                        minimumTintAlpha = tintFloor, shadowElevation = 0.dp,
+                        shadowElevation = 0.dp,
                         shape = RoundedCornerShape(50)) {
                         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
                     }
