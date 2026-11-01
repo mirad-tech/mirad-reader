@@ -84,7 +84,14 @@ fun TocSheet(
         } else {
             // 目录可能上千章：右侧常驻可拖动滚动条用于快速定位，滚动条只移动列表，
             // 不触发跳转；仍然只有点章节行才跳转正文。
-            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            // 面板可视边缘比内容框窄，滚动条贴到内容框右缘会被裁掉一半、点不到；
+            // 收进 16dp，让整列落在面板内。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .padding(end = 16.dp)
+            ) {
                 BouncingLazyColumn(
                     state = listState,
                     modifier = Modifier.weight(1f).fillMaxHeight()

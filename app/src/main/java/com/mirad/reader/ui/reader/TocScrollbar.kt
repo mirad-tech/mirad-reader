@@ -28,6 +28,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -104,6 +109,16 @@ internal fun TocScrollBar(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(20.dp)
+                // 语义节点：屏幕阅读器可以按进度直接跳章节，自动化验证也能拿到精确边界
+                // （没有它时只能靠截图估坐标，实测极易把手指放到列表上）。
+                .semantics {
+                    contentDescription = "目录滚动条"
+                    progressBarRangeInfo = ProgressBarRangeInfo(fraction, 0f..1f)
+                    setProgress { value ->
+                        target = tocScrollIndex(value, itemCount)
+                        true
+                    }
+                }
                 .draggable(
                     orientation = Orientation.Vertical,
                     state = rememberDraggableState { delta ->
