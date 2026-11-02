@@ -26,8 +26,8 @@ interface BookDao {
     @Query("SELECT * FROM books ORDER BY isPinned DESC, lastReadAt DESC, addedAt DESC")
     fun observeAll(): Flow<List<BookEntity>>
 
-    @Query("SELECT * FROM books WHERE fileSize = :fileSize AND title = :title LIMIT 1")
-    suspend fun findDuplicate(title: String, fileSize: Long): BookEntity?
+    @Query("SELECT * FROM books WHERE fileSize = :fileSize AND title = :title ORDER BY id ASC")
+    suspend fun findDuplicateCandidates(title: String, fileSize: Long): List<BookEntity>
 
     @Query("UPDATE books SET isPinned = :pinned WHERE id = :id")
     suspend fun setPinned(id: Long, pinned: Boolean)

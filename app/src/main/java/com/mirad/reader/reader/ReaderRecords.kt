@@ -165,12 +165,16 @@ internal class ReaderProgress(
     private val stats = container.stats
     private val progressWrites = Mutex()
     private var saveJob: Job? = null
+    private var sessionRequested = false
     private var sessionStartedAt = 0L
     private var sessionStartAbsolute = 0L
+    private var lastTrustedAbsolute = 0L
 
     fun cancelPendingSave() { saveJob?.cancel() }
 
     fun scheduleProgressSave() {
+        startSessionWhenReady()
+        if (canSave() && _state.value.ready) lastTrustedAbsolute = absoluteOffset()
         saveJob?.cancel()
         saveJob = scope.launch {
             delay(600)
@@ -180,8 +184,9 @@ internal class ReaderProgress(
 
     fun saveProgressNow() {
         val current = _state.value
-        // 半初始化的会话（prepare 失败后被丢弃）没有可信位置，写库会覆盖用户进度。
-        if (!canSave()) return
+        // prepare 完成不代表正文已经恢复；加载中退出不能用默认位置覆盖已有进度。
+        if (!canSave() || !current.ready) return
+        lastTrustedAbsolute = absoluteOffset()
         // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢；
         // 互斥串行化保证快速连续跨章时旧快照不会后写覆盖新位置。
         container.appScope.launch {
@@ -215,16 +220,28 @@ internal class ReaderProgress(
     }
 
     fun startSession() {
+        sessionRequested = true
+        startSessionWhenReady()
+    }
+
+    /** 前台请求可先于正文回报；恢复后的第一个可信位置才是阅读字数的起点。 */
+    private fun startSessionWhenReady() {
+        if (!sessionRequested || sessionStartedAt > 0L || !canSave() || !_state.value.ready) return
         sessionStartedAt = System.currentTimeMillis()
         sessionStartAbsolute = absoluteOffset()
+        lastTrustedAbsolute = sessionStartAbsolute
     }
 
     /** 进入后台或退出阅读时结算统计。 */
     fun endSession() {
+        // 即使首次位置仍在途中，也必须结束前台请求，避免后台回报重新开启统计。
+        sessionRequested = false
         val started = sessionStartedAt
         if (started <= 0L) return
         sessionStartedAt = 0L
-        val chars = (absoluteOffset() - sessionStartAbsolute).coerceAtLeast(0L)
+        // 跨章加载期间state已指向目标章，但尚未显示；此时只结算最后可见的位置。
+        val endAbsolute = if (canSave() && _state.value.ready) absoluteOffset() else lastTrustedAbsolute
+        val chars = (endAbsolute - sessionStartAbsolute).coerceAtLeast(0L)
         val endedAt = System.currentTimeMillis()
         // 同样使用应用级作用域，保证退出时也写入
         container.appScope.launch { stats.record(bookId, started, endedAt, chars) }

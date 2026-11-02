@@ -2,6 +2,8 @@
     <application android:name="android.app.Application" tools:replace="android:name">
         <activity android:name="com.mirad.reader.MainActivity" android:enabled="false" />
         <activity android:name="com.mirad.reader.preview.GlassPreviewActivity" android:exported="true" android:theme="@style/Theme.MiradReader" />
+        <activity android:name="com.mirad.reader.preview.ReaderSecurityPreviewActivity" android:exported="true" android:launchMode="singleTop" android:theme="@style/Theme.MiradReader" />
+        <activity android:name="com.mirad.reader.preview.ShelfInteractionPreviewActivity" android:exported="true" android:theme="@style/Theme.MiradReader" />
         <activity android:name="com.mirad.reader.preview.PatternAcceptanceActivity" android:exported="true" android:theme="@style/Theme.MiradReader" />
         <activity android:name="com.mirad.reader.preview.SettingsImmersionPreviewActivity" android:exported="true" android:theme="@style/Theme.MiradReader" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode|density|fontScale|navigation" />
     </application>

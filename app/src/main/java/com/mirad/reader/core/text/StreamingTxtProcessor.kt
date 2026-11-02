@@ -11,7 +11,7 @@ import java.nio.charset.Charset
  * 大文件 TXT 极速流式转码、分章与内存优化处理器。
  *
  * 核心设计：
- * 1. 严格有界内存：采样阶段只读前 64KB 字符，转码阶段单行设置安全截断上限，即便 64MB 单行文件也不产生 OOM；
+ * 1. 严格有界内存：编码采样只读前 64KB 字节，转码阶段限制单行缓冲，即便长行也不整行读入内存；
  * 2. 真实边界记录：无论是有标题分章还是无标题兜底分节，切片点均在流式写入目标文件时实时捕获确切的 (charOffset, byteOffset)，
  *    杜绝任何除法估算，100% 保证 UTF-8 字符边界对齐，绝不截断多字节编码。
  */
@@ -27,7 +27,6 @@ object StreamingTxtProcessor {
     )
 
     private const val SAMPLE_BYTES = 64 * 1024
-    private const val SAMPLE_CHARS = 64 * 1024
     private const val MAX_LINE_CHARS = 8192
     private const val FALLBACK_CHUNK_CHARS = ChapterSplitter.FALLBACK_CHUNK_CHARS
 
@@ -57,21 +56,7 @@ object StreamingTxtProcessor {
         val decodedSample = TextCodec.decode(sampleBytes, manual = manualEncoding, isPrefix = isPrefix)
         val charset = runCatching { Charset.forName(decodedSample.charsetName) }.getOrDefault(Charsets.UTF_8)
 
-        // 2. 采样探测分章规则（严格只读前 64KB 字符，避免无换行长行导致内存膨胀）
-        val sampleCharBuffer = CharArray(SAMPLE_CHARS)
-        var sampleLen = 0
-        InputStreamReader(FileInputStream(sourceFile), charset).use { reader ->
-            while (sampleLen < sampleCharBuffer.size) {
-                val read = reader.read(sampleCharBuffer, sampleLen, sampleCharBuffer.size - sampleLen)
-                if (read <= 0) break
-                sampleLen += read
-            }
-        }
-        val sampleText = String(sampleCharBuffer, 0, sampleLen)
-        val detection = ChapterDetector.detect(sampleText)
-        val effectiveRule = detection.rule
-
-        // 3. 流式清洗、转码写入并记录真实切片点
+        // 2. 流式清洗、转码写入并记录全书标题候选；不让前 64KB 决定后续章节类型。
         val titleMarks = mutableListOf<ChapterMark>()
         val fallbackPoints = mutableListOf<SplitPoint>()
         // 初始切片点 (0, 0)
@@ -145,26 +130,17 @@ object StreamingTxtProcessor {
                     // 章节标题匹配（超长截断延续行绝不作为标题）
                     if (!wasContinuation) {
                         val trimmed = line.trim()
-                        if (trimmed.isNotEmpty() && trimmed.length <= ChapterRule.MAX_TITLE_CHARS) {
-                            val isVolume = ChapterRules.CN_VOLUME_RULE.matches(trimmed)
-                            val isVolumeOnly = isVolume && !Regex("[章节節回]").containsMatchIn(trimmed)
-                            val matched = (effectiveRule != null && effectiveRule.matches(trimmed)) ||
-                                ChapterRules.CN_GENERIC_RULE.matches(trimmed) ||
-                                ChapterRules.CN_BRACKET_RULE.matches(trimmed) ||
-                                (effectiveRule?.id != ChapterRules.NUMBERED && isVolume)
-
-                            if (matched && plausible(trimmed, effectiveRule?.id == ChapterRules.NUMBERED)) {
-                                writer.flush()
-                                titleMarks.add(
-                                    ChapterMark(
-                                        title = trimmed,
-                                        titleLineChars = line.length + 1,
-                                        startChar = totalChars.toInt(),
-                                        startByte = countingOut.count,
-                                        isVolume = isVolumeOnly
-                                    )
+                        if (ChapterDetector.isTitleCandidate(trimmed)) {
+                            writer.flush()
+                            titleMarks.add(
+                                ChapterMark(
+                                    title = trimmed,
+                                    titleLineChars = line.length + 1,
+                                    startChar = totalChars.toInt(),
+                                    startByte = countingOut.count,
+                                    isVolume = ChapterDetector.isVolumeTitle(trimmed)
                                 )
-                            }
+                            )
                         }
                     }
 
@@ -266,13 +242,10 @@ object StreamingTxtProcessor {
 
         val totalBytes = countingOut.count
 
-        // 4. 构建真实无误差切片
-        // 与「重新分章」同口径的整体可信度校验：全文件匹配出的标题序号若不满足
-        // 单调性（常见于网络文拼凑稿），弃用标题分章、退回篇幅兜底分节，
-        // 否则同一本书导入与重新分章会给出两套不同的章节划分。
-        val marksTrusted = titleMarks.isNotEmpty() && marksAreTrustworthy(titleMarks)
-        val slices = if (marksTrusted) {
-            ChapterSplitter.slicesFromMarks(titleMarks, totalChars.toInt(), totalBytes)
+        // 3. 与重新分章共用规则优先级、强标题合并、弱数字密度和全书序号校验。
+        val detection = ChapterDetector.detectMarks(titleMarks, totalChars.toInt())
+        val slices = if (detection.marks.isNotEmpty()) {
+            ChapterSplitter.slicesFromMarks(detection.marks, totalChars.toInt(), totalBytes)
         } else {
             buildFallbackSlicesFromPoints(fallbackPoints, totalChars.toInt(), totalBytes)
         }
@@ -281,20 +254,10 @@ object StreamingTxtProcessor {
             charset = charset.name(),
             totalChars = totalChars,
             totalBytes = totalBytes,
-            ruleId = if (marksTrusted) effectiveRule?.id else null,
+            ruleId = detection.rule?.id,
             regex = null,
             slices = slices
         )
-    }
-
-    /** 与 ChapterDetector.detect 相同的分组单调性判据，共享实现保证口径一致。 */
-    private fun marksAreTrustworthy(marks: List<ChapterMark>): Boolean {
-        val groups = mutableListOf<MutableList<Int>>(mutableListOf())
-        marks.forEach { mark ->
-            if (mark.isVolume) groups.add(mutableListOf())
-            else ChapterDetector.chapterNumber(mark.title)?.let { groups.last().add(it) }
-        }
-        return groups.none { !ChapterDetector.isMonotonic(it) }
     }
 
     private fun buildFallbackSlicesFromPoints(
@@ -330,16 +293,6 @@ object StreamingTxtProcessor {
         return slices
     }
 
-    private fun plausible(title: String, weak: Boolean): Boolean {
-        if (title.length > ChapterRule.MAX_TITLE_CHARS) return false
-        if (weak) {
-            if (Regex("^[0-9]+[.][0-9]").containsMatchIn(title)) return false
-            if (title.any { it in "。！？；!?;，," }) return false
-        }
-        if (Regex("^第\\s*[0-9０-９零〇一二三四五六七八九十百千万两]+\\s*[章节節回卷部篇集](的|里|中|已经|说到|讲的是)").containsMatchIn(title)) return false
-        if (Regex("^(正文|序章|序言|楔子|引子|前言|后记|尾声|终章|番外|外传)(的|里|中|已经|是)").containsMatchIn(title)) return false
-        return true
-    }
 }
 
 private class CountingOutputStream(private val out: java.io.OutputStream) : java.io.OutputStream() {

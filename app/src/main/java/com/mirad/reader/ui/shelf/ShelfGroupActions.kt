@@ -1,9 +1,69 @@
 package com.mirad.reader.ui.shelf
 
+import com.mirad.reader.data.db.entity.BookEntity
+import com.mirad.reader.data.db.entity.BookFormat
+import com.mirad.reader.data.db.entity.GroupEntity
+import com.mirad.reader.ui.common.ActionItem
+
 /**
- * 书架分组操作与提交协调（生产单元，供 ShelfScreen 与 ShelfEntryTest 共享）。
+ * 书架操作与提交协调；生产页面和内存预览使用同一条动作链。
  */
 object ShelfGroupActions {
+
+    internal fun bookActionItems(
+        book: BookEntity,
+        onOpen: () -> Unit,
+        onUnhide: () -> Unit,
+        onEdit: () -> Unit,
+        onTogglePinned: () -> Unit,
+        onMoveToGroup: () -> Unit,
+        onHide: () -> Unit,
+        onChapters: () -> Unit,
+        onEncoding: () -> Unit,
+        onDelete: () -> Unit,
+        onMultiSelect: () -> Unit
+    ): List<ActionItem> = buildList {
+        add(ActionItem("继续阅读", onClick = onOpen))
+        add(ActionItem("多选", onClick = onMultiSelect))
+        if (book.isHidden) add(ActionItem("取消隐藏", onClick = onUnhide))
+        add(ActionItem("编辑书名 / 作者", onClick = onEdit))
+        add(ActionItem(if (book.isPinned) "取消置顶" else "置顶", onClick = onTogglePinned))
+        add(ActionItem("移入分组", onClick = onMoveToGroup))
+        if (!book.isHidden) add(ActionItem("在书架隐藏", hint = "可在分组栏「已隐藏」或设置中找回", onClick = onHide))
+        if (book.format == BookFormat.TXT) {
+            add(ActionItem("重新识别章节", onClick = onChapters))
+            add(ActionItem("文字乱码？重新识别编码…", hint = "当前识别为 ${book.encoding ?: "未知"}", onClick = onEncoding))
+        }
+        add(ActionItem("删除这本书", danger = true, onClick = onDelete))
+    }
+
+    internal suspend fun commitPinSelected(books: List<BookEntity>, setPinned: suspend (Long, Boolean) -> Unit) {
+        books.forEach { book -> setPinned(book.id, true) }
+    }
+
+    internal fun dismissDeleteSelection(selection: Set<Long>, isSingleBookAction: Boolean): Set<Long> =
+        computeDismissSelection(selection, isSingleBookAction)
+
+    internal suspend fun commitDeleteGroup(
+        groupId: Long,
+        currentSelectedGroupId: () -> Long?,
+        deleteGroup: suspend (Long) -> Unit
+    ): Long? {
+        deleteGroup(groupId)
+        // 删除可能挂起，完成时再读取筛选，不能用提交前的快照覆盖用户的后续选择。
+        return currentSelectedGroupId().takeUnless { it == groupId }
+    }
+
+    internal fun groupActionItems(
+        group: GroupEntity,
+        onSelect: () -> Unit,
+        onRename: () -> Unit,
+        onDelete: () -> Unit
+    ): List<ActionItem> = listOf(
+        ActionItem("只看这个分组", onClick = onSelect),
+        ActionItem("重命名", hint = "当前名称：${group.name}", onClick = onRename),
+        ActionItem("删除分组", hint = "组内书籍会回到「未分组」", danger = true, onClick = onDelete)
+    )
 
     /**
      * 单本或多选分组弹窗关闭时的选择集收敛规则：

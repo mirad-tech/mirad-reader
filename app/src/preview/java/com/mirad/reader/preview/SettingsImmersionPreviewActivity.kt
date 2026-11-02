@@ -138,7 +138,12 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
             var dialog by remember { mutableStateOf(false) }
             val probe = remember {
                 ImmersionReaderProbe().apply {
-                    if (hardwarePreview) outputFile = java.io.File(requireNotNull(getExternalFilesDir(null)), "hardware-reader-state.json")
+                    outputFile = if (hardwarePreview) {
+                        java.io.File(requireNotNull(getExternalFilesDir(null)), "hardware-reader-state.json")
+                    } else {
+                        // 完整诊断不能依赖有单条长度上限的 logcat。
+                        java.io.File(filesDir, "immersion-reader-state.json")
+                    }
                 }
             }
             val configEditor = remember(repo) {

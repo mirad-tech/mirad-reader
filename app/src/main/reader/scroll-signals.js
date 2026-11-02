@@ -113,6 +113,8 @@
     }
 
     function reportState() {
+        // 初始化与换章的中间布局没有可信位置，只发布恢复完成后的正文状态。
+        if (!state.ready) return;
         var b = bridge();
         if (!b) return;
         // 上报前统一收口：滚动模式下页码/页数同源重算，其余模式至少保证 page <= pages-1。

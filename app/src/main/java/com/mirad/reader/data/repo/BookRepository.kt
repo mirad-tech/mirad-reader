@@ -73,7 +73,8 @@ class BookRepository(
 
     suspend fun touchLastRead(id: Long, time: Long = System.currentTimeMillis()) = bookDao.touchLastRead(id, time)
 
-    suspend fun findDuplicate(title: String, fileSize: Long): BookEntity? = bookDao.findDuplicate(title, fileSize)
+    suspend fun findDuplicateCandidates(title: String, fileSize: Long): List<BookEntity> =
+        bookDao.findDuplicateCandidates(title, fileSize)
 
     suspend fun saveChapters(bookId: Long, chapters: List<ChapterEntity>) {
         // 删-插-更新必须同事务：中途崩溃会把一本正常书的章节全部删光。

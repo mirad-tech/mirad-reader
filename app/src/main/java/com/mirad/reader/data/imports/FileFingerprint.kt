@@ -10,13 +10,39 @@ import java.security.MessageDigest
  * （用户在书架里看不到新书，还以为是导入失败）。这里改成内容指纹，
  * 并且只采样首/中/尾各 64KB——不必为了一次去重把几百 MB 读进内存。
  *
- * 已知局限：首中尾之外的差异检测不到；相比旧方案（只采首尾）已消除
- * "中间不同、首尾相同被误判为同一份"的主要误判来源。
+ * 采样仅用于快速排除；相同采样必须再由 [sameContent] 逐字节确认，不能据此直接跳过导入。
  * 指纹不落库、比对时两端现场重算，算法演进无兼容负担。
  */
 object FileFingerprint {
 
     private const val SAMPLE = 64 * 1024
+
+    /** 只有完整读取并逐字节相同时才确认重复；任一端读取失败都保守地允许导入。 */
+    fun sameContent(first: File, second: File): Boolean = runCatching {
+        if (!first.isFile || !second.isFile || first.length() != second.length()) return false
+        val firstSample = of(first) ?: return false
+        if (firstSample != of(second)) return false
+        first.inputStream().use { left ->
+            second.inputStream().use { right ->
+                val leftBytes = ByteArray(SAMPLE)
+                val rightBytes = ByteArray(SAMPLE)
+                var count = left.read(leftBytes)
+                while (count >= 0) {
+                    var read = 0
+                    while (read < count) {
+                        val next = right.read(rightBytes, read, count - read)
+                        if (next <= 0) return false
+                        read += next
+                    }
+                    for (index in 0 until count) {
+                        if (leftBytes[index] != rightBytes[index]) return false
+                    }
+                    count = left.read(leftBytes)
+                }
+                right.read() < 0
+            }
+        }
+    }.getOrDefault(false)
 
     /** 读取文件并计算指纹；文件不存在或读取失败返回 null（调用方据此保守处理，不判定为重复）。 */
     fun of(file: File): String? = runCatching {

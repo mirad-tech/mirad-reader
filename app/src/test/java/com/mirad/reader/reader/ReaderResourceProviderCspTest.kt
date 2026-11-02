@@ -2,6 +2,7 @@ package com.mirad.reader.reader
 
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
@@ -24,15 +25,16 @@ class ReaderResourceProviderCspTest {
     }
 
     @Test
-    fun scriptOnlyFromVirtualOrigin() {
-        assertTrue(
-            "reader.js 必须能从虚拟源加载",
-            policy.contains("script-src ${ReaderResourceProvider.ORIGIN}")
-        )
-        assertFalse(
-            "script-src 绝不能放开内联脚本，否则 EPUB 内的 <script> 仍会执行",
-            policy.contains("script-src 'unsafe-inline'") || policy.contains("script-src 'self' 'unsafe-inline'")
-        )
+    fun scriptDoesNotAuthorizeInlineExecutionOrEval() {
+        val sources = policy.split(';').map(String::trim).single { it.startsWith("script-src ") }
+            .split(' ').drop(1)
+        assertFalse(sources.any { it in setOf("'unsafe-inline'", "'unsafe-eval'", "'self'", "*") })
+    }
+
+    @Test
+    fun scriptsAreLimitedToTheBundledEngineRatherThanTheWholeBookOrigin() {
+        val scriptDirective = policy.split(';').map(String::trim).single { it.startsWith("script-src ") }
+        assertEquals("script-src ${ReaderResourceProvider.ORIGIN}/reader/reader.js", scriptDirective)
     }
 
     @Test

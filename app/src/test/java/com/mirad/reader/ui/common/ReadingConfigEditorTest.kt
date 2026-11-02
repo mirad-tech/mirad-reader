@@ -185,10 +185,10 @@ class ReadingConfigEditorTest {
         editor.resetReading(setOf(ResetScope.LAYOUT_INTERACTION, ResetScope.DAY_STYLE, ResetScope.NIGHT_STYLE))
         hold.complete(Unit)
         advanceUntilIdle()
-        // 三范围全勾：排版恢复默认；五个样式字段按 LAYOUT_INTERACTION 规则保留当前值；外观回到默认（仅保模式）。
+        // 三范围全勾：排版与两组样式都恢复默认；旧键投影最后重置的夜间组，模式保持不变。
         val global = settings.currentGlobal()
         assertEquals(ReaderConfig.DEFAULT.fontSizeSp, global.fontSizeSp)
-        assertEquals(ThemeKey.BLACK, global.theme)
+        assertEquals(ReadingStyle.NIGHT_DEFAULT, ReadingStyle.from(global))
         assertEquals(AppAppearance.DEFAULT.copy(mode = AppThemeMode.NIGHT), settings.currentAppAppearance())
     }
 

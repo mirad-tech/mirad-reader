@@ -2,10 +2,15 @@ package com.mirad.reader.data.repo
 
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
+import com.mirad.reader.data.db.dao.PreferenceDao
+import com.mirad.reader.data.db.entity.PreferenceEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** 一条搜索命中。 */
 data class SearchHit(
@@ -91,8 +96,31 @@ object SearchMatcher {
  */
 class SearchRepository(
     private val textProvider: ChapterTextProvider,
-    private val ftsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null
+    private val ftsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null,
+    private val preferences: PreferenceDao? = null
 ) {
+    private val indexFormatLock = Mutex()
+    private var indexFormatReady = false
+
+    /** 旧折叠值不能继续作为候选过滤器；失效失败时本次退回扫描，下次搜索再尝试。 */
+    private suspend fun ensureIndexFormat(): Boolean {
+        val index = ftsDao ?: return false
+        val metadata = preferences ?: return true
+        return indexFormatLock.withLock {
+            if (indexFormatReady) return@withLock true
+            try {
+                if (metadata.get(KEY_INDEX_FORMAT) != INDEX_FORMAT) {
+                    index.deleteAll()
+                    metadata.put(PreferenceEntity(KEY_INDEX_FORMAT, INDEX_FORMAT, System.currentTimeMillis()))
+                }
+                indexFormatReady = true
+                true
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                false
+            }
+        }
+    }
 
     fun search(
         book: BookEntity,
@@ -106,8 +134,9 @@ class SearchRepository(
             return@flow
         }
 
-        // 1. 只有当整本书的所有章节全部完整录入索引且与当前章节结构、正文抽样指纹一致时，才走极速通道
-        val isFullyIndexed = if (ftsDao != null) {
+        val cacheUsable = ensureIndexFormat()
+        // 1. 只有当前格式的完整索引与章节结构、正文抽样一致时，才使用缓存候选。
+        val isFullyIndexed = if (ftsDao != null && cacheUsable) {
             runCatching {
                 val metas = ftsDao.getIndexedChapters(book.id)
                 if (metas.size != chapters.size) {
@@ -176,7 +205,7 @@ class SearchRepository(
 
         // 2. 索引不完整时，走原有安全流式扫描，并在后台独立补齐完整索引
         val results = ArrayList<SearchHit>()
-        val shouldBuildIndex = ftsDao != null && !isFullyIndexed
+        val shouldBuildIndex = ftsDao != null && cacheUsable && !isFullyIndexed
         val ftsCache = if (shouldBuildIndex) HashMap<Int, String>(chapters.size) else null
         var indexBuildFailed = false
         var failedChapters = 0
@@ -242,18 +271,24 @@ class SearchRepository(
     }.flowOn(Dispatchers.IO)
 
     companion object {
+        private const val KEY_INDEX_FORMAT = "search_index_case_fold_version"
+        private const val INDEX_FORMAT = "2"
+
         /**
-         * 字符级小写规范化：与 Kotlin [CharSequence.indexOf(ignoreCase=true)] 比较逻辑严格对齐。
+         * 与 Kotlin/JVM 忽略大小写匹配一致的单码点折叠，不使用会展开字符的字符串 lowercase。
          *
-         * 避免标准 [String.lowercase] 将 'İ' (U+0130) 展开为 2 字符 "i\u0307" 导致与 SQL LIKE 查询词脱节。
-         * 保持字符一对一映射，保证 SQL LIKE 候选不漏报，且索引前后与扫描前后语义绝对一致。
+         * 先大写再小写才能合并 ς/σ、ı/i、ſ/s；按码点处理还保留补充平面大小写的等价关系。
+         * 原文不改写，折叠不展开字符，命中偏移仍由原文 matcher 计算。
          */
         internal fun normalizeCase(text: String): String {
-            val chars = CharArray(text.length)
-            for (i in 0 until text.length) {
-                chars[i] = text[i].lowercaseChar()
+            val normalized = StringBuilder(text.length)
+            var index = 0
+            while (index < text.length) {
+                val codePoint = Character.codePointAt(text, index)
+                normalized.appendCodePoint(Character.toLowerCase(Character.toUpperCase(codePoint)))
+                index += Character.charCount(codePoint)
             }
-            return String(chars)
+            return normalized.toString()
         }
     }
 

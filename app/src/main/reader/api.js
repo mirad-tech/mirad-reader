@@ -49,8 +49,12 @@
 
     window.MiradReader = {
         /** 首次初始化（页面加载完成后调用）。 */
-        init: function (config) {
+        init: function (config, initialOffset) {
             themeAnchor = null;
+            state.ready = false;
+            if (typeof initialOffset === 'number' && isFinite(initialOffset) && initialOffset >= 0) {
+                pendingRestore = initialOffset;
+            }
             Object.assign(CFG, config || {});
             // 记录应用自己写在 html/body 上的类，换章同步书籍属性时不能把它们覆盖掉
             appBodyBase = (document.body && document.body.className) || '';
@@ -59,17 +63,18 @@
             wrapInitialSection();
             buildInitialModelAndLayout();
             state.ready = true;
+            // 首次位置恢复完成后再发布就绪，避免原生保存章首默认位置或把恢复计入阅读字数。
+            if (pendingRestore >= 0) {
+                var offset = pendingRestore;
+                pendingRestore = -1;
+                window.MiradReader.gotoOffset(offset, false);
+            }
             var b = bridge();
             if (b) {
                 try {
                     b.onReady(state.pages, state.textLength);
                 } catch (e) {
                 }
-            }
-            if (pendingRestore >= 0) {
-                var offset = pendingRestore;
-                pendingRestore = -1;
-                window.MiradReader.gotoOffset(offset, false);
             }
             reportState();
             watchResources();

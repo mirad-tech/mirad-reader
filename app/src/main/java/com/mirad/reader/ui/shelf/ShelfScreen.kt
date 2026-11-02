@@ -39,7 +39,6 @@ import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.imports.ImportSource
 import com.mirad.reader.data.imports.ImportSources
-import com.mirad.reader.ui.common.ActionItem
 import com.mirad.reader.ui.common.ActionSheet
 import com.mirad.reader.ui.design.Sizes
 import kotlinx.coroutines.Dispatchers
@@ -105,6 +104,7 @@ fun ShelfScreen(
     var editTitle by remember { mutableStateOf("") }
     var editAuthor by remember { mutableStateOf("") }
     var confirmDelete by remember { mutableStateOf(false) }
+    var isSingleBookDeleteAction by remember { mutableStateOf(false) }
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
     var chapterBook by remember { mutableStateOf<BookEntity?>(null) }
@@ -168,13 +168,13 @@ fun ShelfScreen(
             onGroupAction = { groupAction = it }, onManageGroups = { showGroupManager = true },
             onSelectAll = { selection = visible.map { it.book.id }.toSet() },
             onPinSelected = { scope.launch {
-                selection.forEach { id ->
-                    val pinned = shelf.firstOrNull { it.book.id == id }?.book?.isPinned == true
-                    container.books.setPinned(id, !pinned)
+                ShelfGroupActions.commitPinSelected(selection.mapNotNull { id -> shelf.firstOrNull { it.book.id == id }?.book }) { id, pinned ->
+                    container.books.setPinned(id, pinned)
                 }
                 selection = emptySet()
             } },
-            onGroupSelected = { isSingleBookGroupAction = false; groupDialog = true }, onDeleteSelected = { confirmDelete = true },
+            onGroupSelected = { isSingleBookGroupAction = false; groupDialog = true },
+            onDeleteSelected = { isSingleBookDeleteAction = false; confirmDelete = true },
             onImportFile = { filePicker.launch(arrayOf("*/*")) },
             onImportFolder = { folderPicker.launch(null) },
             onImportUrl = { showUrlImportDialog = true },
@@ -216,44 +216,40 @@ fun ShelfScreen(
                     }
                 }
             },
-            items = buildList {
-                add(ActionItem("继续阅读") { onOpenBook(book.id) })
-                if (isHidden) {
-                    add(ActionItem("取消隐藏") {
-                        scope.launch { container.books.setHidden(book.id, false); toast = "已恢复《${book.title}》到书架" }
-                    })
-                }
-                add(ActionItem("编辑书名 / 作者") {
+            items = ShelfGroupActions.bookActionItems(
+                book = book,
+                onOpen = { onOpenBook(book.id) },
+                onUnhide = {
+                    scope.launch { container.books.setHidden(book.id, false); toast = "已恢复《${book.title}》到书架" }
+                },
+                onEdit = {
                     editing = book
                     editTitle = book.title
                     editAuthor = book.author.orEmpty()
-                })
-                add(ActionItem(if (book.isPinned) "取消置顶" else "置顶") {
+                },
+                onTogglePinned = {
                     scope.launch { container.books.setPinned(book.id, !book.isPinned) }
-                })
-                add(ActionItem("移入分组") {
+                },
+                onMoveToGroup = {
                     selection = setOf(book.id)
                     isSingleBookGroupAction = true
                     groupDialog = true
-                })
-                if (!isHidden) {
-                    add(ActionItem("在书架隐藏", hint = "可在分组栏「已隐藏」或设置中找回") {
-                        scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏《${book.title}》，可在「已隐藏」中找回" }
-                    })
-                }
-                if (book.format == com.mirad.reader.data.db.entity.BookFormat.TXT) {
-                    add(ActionItem("重新识别章节") { chapterBook = book })
-                    add(ActionItem("文字乱码？重新识别编码…", hint = "当前识别为 ${book.encoding ?: "未知"}") {
-                        encodingBook = book
-                    })
-                }
-                add(ActionItem("删除这本书", danger = true) { selection = setOf(book.id); confirmDelete = true })
-            }
+                },
+                onHide = {
+                    scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏《${book.title}》，可在「已隐藏」中找回" }
+                },
+                onChapters = { chapterBook = book },
+                onEncoding = { encodingBook = book },
+                onDelete = { selection = setOf(book.id); isSingleBookDeleteAction = true; confirmDelete = true },
+                onMultiSelect = { selection = setOf(book.id) }
+            )
         )
     }
 
     if (showGroupManager) {
-        GroupManagerSheet(container = container, onDismiss = { showGroupManager = false })
+        GroupManagerSheet(container = container, onDismiss = { showGroupManager = false },
+            currentSelectedGroupId = { selectedGroup },
+            onSelectedGroupChange = { selectedGroup = it })
     }
 
     chapterBook?.let { book ->
@@ -282,13 +278,14 @@ fun ShelfScreen(
             title = group.name,
             subtitle = "分组 · ${shelf.count { it.book.groupId == group.id }} 本",
             onDismiss = { groupAction = null },
-            items = listOf(
-                ActionItem("只看这个分组") { selectedGroup = group.id; showHidden = false },
-                ActionItem("重命名", hint = "当前名称：${group.name}") {
+            items = ShelfGroupActions.groupActionItems(
+                group = group,
+                onSelect = { selectedGroup = group.id; showHidden = false },
+                onRename = {
                     groupRenameTarget = group
                     groupRenameDraft = group.name
                 },
-                ActionItem("删除分组", hint = "组内书籍会回到「未分组」", danger = true) {
+                onDelete = {
                     groupAction = null
                     groupDeleteTarget = group
                 }
@@ -405,8 +402,9 @@ fun ShelfScreen(
             confirmButton = {
                 MiradTextButton(danger = true, onClick = {
                     scope.launch {
-                        container.groups.delete(target)
-                        if (selectedGroup == target.id) selectedGroup = null
+                        selectedGroup = ShelfGroupActions.commitDeleteGroup(target.id, { selectedGroup }) {
+                            container.groups.delete(target)
+                        }
                         groupDeleteTarget = null
                         toast = "已删除分组「${target.name}」"
                     }
@@ -446,10 +444,15 @@ fun ShelfScreen(
     }
 
     if (confirmDelete) {
+        val dismissDelete = {
+            selection = ShelfGroupActions.dismissDeleteSelection(selection, isSingleBookDeleteAction)
+            isSingleBookDeleteAction = false
+            confirmDelete = false
+        }
         val targetBook = if (selection.size == 1) shelf.firstOrNull { it.book.id in selection }?.book else null
         val targetTitle = targetBook?.let { "《${it.title}》" }
         AlertDialog(
-            onDismissRequest = { confirmDelete = false },
+            onDismissRequest = dismissDelete,
             title = { Text(if (targetTitle != null) "删除$targetTitle" else "删除 ${selection.size} 本书籍") },
             text = { Text("将删除${if (targetTitle != null) targetTitle else "所选 ${selection.size} 本书"}及其阅读记录、书签与笔记，无法恢复。") },
             confirmButton = {
@@ -458,12 +461,12 @@ fun ShelfScreen(
                         val count = selection.size
                         val name = targetBook?.title
                         selection.forEach { id -> container.books.getBook(id)?.let { container.books.deleteBook(it) } }
-                        selection = emptySet(); confirmDelete = false
+                        selection = emptySet(); confirmDelete = false; isSingleBookDeleteAction = false
                         toast = if (name != null) "已删除《$name》" else "已删除 $count 本书籍"
                     }
                 }) { Text("删除") }
             },
-            dismissButton = { MiradTextButton(onClick = { confirmDelete = false }) { Text("取消") } }
+            dismissButton = { MiradTextButton(onClick = dismissDelete) { Text("取消") } }
         )
     }
 

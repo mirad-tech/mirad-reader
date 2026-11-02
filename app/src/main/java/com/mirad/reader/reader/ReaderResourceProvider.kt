@@ -9,6 +9,8 @@ import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.repo.ChapterTextProvider
+import org.jsoup.Jsoup
+import org.jsoup.parser.Parser
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
@@ -124,14 +126,14 @@ class ReaderResourceProvider(
          * `<script>` / `<iframe>` / `on*` 属性都会以 `mirad.local` 同源身份执行，能直接调用
          * `MiradBridge` 的回调伪造进度与标注。这里用 CSP 在渲染层兜底，与是否消毒无关：
          *
-         * - `script-src` 只放行虚拟源里的 reader.js（EPUB 内联脚本无源可用）；
+         * - `script-src` 仅放行固定内置 reader.js；同源的 EPUB 资产也不可信；
          * - `connect-src` 必须保留本机虚拟源：滚动模式的补章走 `fetch(fragmentUrl)`；
          * - `style-src` 保留 `unsafe-inline`：内置样式、EPUB 自带 `<style>` 与 style 属性都靠它；
          * - 图片/字体允许 `data:`，部分 EPUB 用 data URI 内嵌图片与字体。
          */
         internal val CONTENT_SECURITY_POLICY = listOf(
             "default-src 'none'",
-            "script-src $ORIGIN",
+            "script-src $ORIGIN/reader/reader.js",
             "style-src 'unsafe-inline' $ORIGIN",
             "img-src $ORIGIN data:",
             "font-src $ORIGIN data:",
@@ -308,37 +310,29 @@ class ReaderResourceProvider(
         return WebResourceResponse(guessMime(path), null, file.inputStream())
     }
     private fun injectHead(html: String, baseHref: String?): String {
+        // 只借解析器定位真实 head，不重新序列化正文：否则 pre/listing 的首行换行会被消费两次。
+        // 隐式 head 也有源位置；在它创建的位置显式打开 head，使 meta 先于任何书内脚本。
+        val head = Jsoup.parse(html, Parser.htmlParser().setTrackPosition(true)).head()
+        val opening = head.sourceRange()
+        val start = if (opening.isImplicit) opening.startPos() else opening.endPos()
+        val end = head.endSourceRange().startPos()
+        val policy = "<meta http-equiv=\"Content-Security-Policy\" content=\"$CONTENT_SECURITY_POLICY\">"
         val extra = StringBuilder(512)
-        // 与响应头同源的双保险：不同 WebView 版本对 shouldInterceptRequest 响应头的处理不完全一致，
-        // 文档内的 meta 版本在任何版本都生效。策略只有一份常量，两条通道不会漂移。
-        // （meta 形式不支持 frame-ancestors / report-uri / sandbox，这里都没用到。）
-        extra.append("<meta http-equiv=\"Content-Security-Policy\" content=\"")
-            .append(CONTENT_SECURITY_POLICY)
-            .append("\">")
         extra.append("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no\">")
-        if (!baseHref.isNullOrBlank()) {
-            extra.append("<base href=\"").append(baseHref).append("\">")
-        }
         extra.append("<link rel=\"stylesheet\" href=\"").append(ORIGIN).append("/reader/reader.css\">")
-        // 主题样式放在带 id 的 style 里，阅读中改设置时由 reader.js 直接替换内容，无需重载章节
+        // 保留原先的样式覆盖顺序和相对资源基址；正文字符与原书属性原样保留。
         extra.append("<style id=\"mirad-theme\">").append(themeCss).append("</style>")
         extra.append("<script src=\"").append(ORIGIN).append("/reader/reader.js\"></script>")
-
-        val headClose = Regex("(?is)</head\\s*>").find(html)
-        if (headClose != null) {
-            return html.substring(0, headClose.range.first) + extra + html.substring(headClose.range.first)
+        return buildString(html.length + policy.length + extra.length + 6) {
+            append(html, 0, start)
+            if (opening.isImplicit) append("<head>")
+            append(policy)
+            // 基址必须先于原书的 link/style；解析后再添加会把字体/CSS请求发往chapter目录。
+            if (!baseHref.isNullOrBlank()) append("<base href=\"").append(baseHref).append("\">")
+            append(html, start, end)
+            append(extra)
+            append(html, end, html.length)
         }
-        val headOpen = Regex("(?is)<head\\b[^>]*>").find(html)
-        if (headOpen != null) {
-            val at = headOpen.range.last + 1
-            return html.substring(0, at) + extra + html.substring(at)
-        }
-        val htmlOpen = Regex("(?is)<html\\b[^>]*>").find(html)
-        if (htmlOpen != null) {
-            val at = htmlOpen.range.last + 1
-            return html.substring(0, at) + "<head>" + extra + "</head>" + html.substring(at)
-        }
-        return "<head>" + extra + "</head>" + html
     }
 
     private fun guessMime(path: String?): String = when (path?.substringAfterLast('.', "")?.lowercase()) {

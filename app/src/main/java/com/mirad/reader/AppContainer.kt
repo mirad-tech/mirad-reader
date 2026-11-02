@@ -56,12 +56,7 @@ class AppContainer(app: Application) {
             // 由仓库在持久化成功后回调：只删应用背景目录内的文件，且删除动作不阻塞保存路径
             val dir = paths.backgroundsDir
             appScope.launch {
-                uris.forEach { uri ->
-                    runCatching {
-                        val file = java.io.File(uri)
-                        if (file.parentFile == dir) file.delete()
-                    }
-                }
+                deleteDroppedBackgroundImages(dir, uris)
             }
         }
     )
@@ -92,7 +87,7 @@ class AppContainer(app: Application) {
 
     val fonts: FontManager = FontManager(app, paths)
 
-    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao())
+    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao(), database.preferenceDao())
 
     val importer: ImportPipeline = ImportPipeline(
         context = app,
@@ -125,4 +120,14 @@ class AppContainer(app: Application) {
         networkAvailable = { BookDownloadScheduler.isNetworkAvailable(app) }
     )
     val bookDownloads: BookDownloads get() = downloadManager
+}
+
+/** 与隔离文件回归共用真实清理消费者，仓库已核对新旧配置的引用。 */
+internal fun deleteDroppedBackgroundImages(directory: File, uris: List<String>) {
+    uris.forEach { uri ->
+        runCatching {
+            val file = File(uri)
+            if (file.parentFile == directory) file.delete()
+        }
+    }
 }

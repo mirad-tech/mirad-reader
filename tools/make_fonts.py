@@ -13,6 +13,7 @@
 import os
 import shutil
 import sys
+import tempfile
 import urllib.request
 import zipfile
 
@@ -25,14 +26,47 @@ LXGW_URL = "https://github.com/lxgw/LxgwWenKai/releases/download/v1.522/LXGWWenK
 NOTO_ZIP_URL = "https://github.com/notofonts/noto-cjk/releases/download/Serif2.003/14_NotoSerifSC.zip"
 
 
+def validate_download(path, target):
+    """校验完整归档/字体，旧实现遗留的非空半文件不能被当作缓存。"""
+    is_archive = os.fspath(target).lower().endswith(".zip")
+    if not is_archive:
+        from fontTools.ttLib import TTFont
+    try:
+        if is_archive:
+            with zipfile.ZipFile(path) as archive:
+                if archive.testzip() is not None:
+                    raise ValueError("压缩包校验失败")
+        else:
+            with TTFont(path, lazy=False, checkChecksums=2) as font:
+                font.ensureDecompiled()
+    except Exception as error:
+        raise ValueError("下载文件不完整或格式无效：%s" % os.path.basename(target)) from error
+
+
 def download(url, target):
-    if os.path.exists(target) and os.path.getsize(target) > 0:
-        print("  已存在，跳过下载：%s" % os.path.basename(target))
-        return target
-    os.makedirs(os.path.dirname(target), exist_ok=True)
+    if os.path.isfile(target):
+        try:
+            validate_download(target, target)
+        except ValueError:
+            pass
+        else:
+            print("  已存在，跳过下载：%s" % os.path.basename(target))
+            return target
+    directory = os.path.dirname(os.path.abspath(target))
+    os.makedirs(directory, exist_ok=True)
     print("  下载 %s ..." % url.split("/")[-1])
-    with urllib.request.urlopen(url, timeout=180) as resp, open(target, "wb") as out:
-        shutil.copyfileobj(resp, out)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=directory, prefix=os.path.basename(target) + ".", suffix=".part", delete=False) as out:
+            temporary = out.name
+            with urllib.request.urlopen(url, timeout=180) as resp:
+                shutil.copyfileobj(resp, out)
+        validate_download(temporary, target)
+        os.replace(temporary, target)
+    finally:
+        # 唯一临时路径由本次调用创建；失败不覆盖最终缓存，也不清理其他下载的文件。
+        if temporary is not None and os.path.exists(temporary):
+            os.remove(temporary)
     print("  完成 %.1f MB" % (os.path.getsize(target) / 1048576.0))
     return target
 

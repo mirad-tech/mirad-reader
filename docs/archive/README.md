@@ -4,6 +4,8 @@
 
 ## 计划
 
+- [全仓审计问题修复（2026-11-02，14项已验收）](plans/repo-audit-goal-fix-plan-20261102.md)
+
 - [玻璃边缘优化与日夜背景接入（2026-11-01）](plans/liquid-glass-edge-plan.md)
 - [上下栏磨砂玻璃透色修复（2026-10-30）](plans/glass-bars-white-tint-fix-plan.md)
 - [阅读外观与交互修复（2026-10-26）](plans/reading-appearance-interaction-fix-plan-2026-10-26.md)

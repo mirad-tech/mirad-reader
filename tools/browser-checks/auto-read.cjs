@@ -19,7 +19,7 @@ const { chromium } = require('playwright')
 const root = path.resolve(__dirname, '../..')
 const readerJs = require('./reader-source.cjs')()
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8')
-const outDir = path.join(root, 'build/verification/auto-read')
+const outDir = process.env.MIRAD_BROWSER_EVIDENCE_DIR ? path.join(process.env.MIRAD_BROWSER_EVIDENCE_DIR, 'auto-read') : path.join(root, 'build/verification/auto-read')
 fs.mkdirSync(outDir, { recursive: true })
 
 const viewport = { width: 412, height: 760 }

@@ -49,6 +49,7 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -355,7 +356,7 @@ fun ChoiceChip(
             )
             .heightIn(min = 40.dp)
             .padding(horizontal = 14.dp, vertical = 8.dp)
-            .semantics { contentDescription = text },
+            .semantics { contentDescription = text; this.selected = selected },
         contentAlignment = Alignment.Center
     ) {
         Text(
@@ -400,7 +401,7 @@ fun <T> SegmentedRow(
                     .heightIn(min = 40.dp)
                     .clickable { onSelect(value) }
                     .padding(horizontal = 6.dp, vertical = 8.dp)
-                    .semantics { contentDescription = text },
+                    .semantics { contentDescription = text; this.selected = isSelected },
                 contentAlignment = Alignment.Center
             ) {
                 Text(

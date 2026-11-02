@@ -320,49 +320,26 @@ class NetworkBookDownloader(
      * 轻量启发式网页长文/小说抽取：提取正文、清洗广告、过滤非正文标签。
      */
     private fun parseWebArticle(html: String, fallbackTitle: String): ParsedArticle {
-        // 1. 抽取标题
-        val titleRegex = Regex("<title[^>]*>(.*?)</title>", RegexOption.IGNORE_CASE)
-        val rawTitle = titleRegex.find(html)?.groupValues?.get(1)?.trim().orEmpty()
-        val cleanTitle = rawTitle
+        val document = org.jsoup.Jsoup.parse(html)
+        val cleanTitle = document.title()
             .replace(Regex("[_\\-|].*?(小说|阅读|无弹窗|笔趣阁|书院|全文).*"), "")
             .trim()
             .ifBlank { fallbackTitle.substringBeforeLast('.') }
 
-        // 2. 剔除 script, style, nav, footer, header
-        var sanitized = html
-            .replace(Regex("(?is)<script[^>]*>.*?</script>"), "")
-            .replace(Regex("(?is)<style[^>]*>.*?</style>"), "")
-            .replace(Regex("(?is)<header[^>]*>.*?</header>"), "")
-            .replace(Regex("(?is)<footer[^>]*>.*?</footer>"), "")
-            .replace(Regex("(?is)<nav[^>]*>.*?</nav>"), "")
-
-        // 3. 提取段落内容
-        val pRegex = Regex("<p[^>]*>(.*?)</p>", RegexOption.IGNORE_CASE)
-        val paragraphs = mutableListOf<String>()
-        pRegex.findAll(sanitized).forEach { match ->
-            val pText = match.groupValues[1]
-                .replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
-                .replace(Regex("<[^>]+>"), "")
-                .replace("&nbsp;", " ")
-                .replace("&lt;", "<")
-                .replace("&gt;", ">")
-                .replace("&amp;", "&")
-                .trim()
-            if (pText.length > 5 && !pText.contains("广告") && !pText.contains("点击下载")) {
-                paragraphs.add(pText)
-            }
-        }
-
+        // DOM 解析保留跨源码换行、嵌套标签和实体；wholeText 继续保留 <br> 的换行。
+        document.select("script, style, nav, footer, header").remove()
+        val bodyElement = document.body()
+        val paragraphs = bodyElement.select("p")
+            .map { it.wholeText().replace('\u00A0', ' ').trim() }
+            .filter { it.length > 5 && !it.contains("广告") && !it.contains("点击下载") }
         val body = if (paragraphs.isNotEmpty()) {
             paragraphs.joinToString("\n\n")
         } else {
-            // 兜底去除所有标签
-            sanitized.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "\n")
-                .replace(Regex("<[^>]+>"), "")
-                .trim()
+            bodyElement.wholeText().replace('\u00A0', ' ').trim()
         }
 
-        val finalContent = "$cleanTitle\n\n$body"
+        // 页面标题不是正文；只有 title/script/style 的页面必须让调用方报告解析失败。
+        val finalContent = if (body.isBlank()) "" else "$cleanTitle\n\n$body"
         return ParsedArticle(cleanTitle, finalContent)
     }
 

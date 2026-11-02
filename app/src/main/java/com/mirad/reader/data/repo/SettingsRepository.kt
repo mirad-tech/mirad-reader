@@ -72,15 +72,17 @@ class SettingsRepository @JvmOverloads constructor(
         scope.launch { persistGlobal() }
     }
 
-    private suspend fun persistGlobal() = globalWrites.withLock {
-        val value = pendingGlobal.value ?: return@withLock
-        // 失败不抛（防抖 job 无人接异常会崩进程）：lastPersistedGlobal 不更新意味着
-        // "兼容键仍有未确认成功的写入"，背景清理继续推迟，待下次 flush 重试。
-        runCatching {
-            dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(value), System.currentTimeMillis()))
-        }.onSuccess {
-            lastPersistedGlobal = value
-            maybeNotifyBackgroundCleanup()
+    private suspend fun persistGlobal() = withContext(NonCancellable) {
+        globalWrites.withLock {
+            val value = pendingGlobal.value ?: return@withLock
+            // 失败不抛（防抖 job 无人接异常会崩进程）：lastPersistedGlobal 不更新意味着
+            // "兼容键仍有未确认成功的写入"，背景清理继续推迟，待下次 flush 重试。
+            runCatching {
+                dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(value), System.currentTimeMillis()))
+            }.onSuccess {
+                lastPersistedGlobal = value
+                maybeNotifyBackgroundCleanup()
+            }
         }
     }
 
@@ -90,12 +92,14 @@ class SettingsRepository @JvmOverloads constructor(
 
     suspend fun currentGlobal(): ReaderConfig = pendingGlobal.value ?: ReaderConfigJson.decode(dao.get(KEY_GLOBAL))
 
-    suspend fun saveGlobal(config: ReaderConfig) = globalWrites.withLock {
-        // 先更新缓存再落库：写入完成前的窗口里 global 流也不能回退到旧库值。
-        pendingGlobal.value = config
-        dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(config), System.currentTimeMillis()))
-        lastPersistedGlobal = config
-        maybeNotifyBackgroundCleanup()
+    suspend fun saveGlobal(config: ReaderConfig) = withContext(NonCancellable) {
+        globalWrites.withLock {
+            // 先更新缓存再落库：写入完成前的窗口里 global 流也不能回退到旧库值。
+            pendingGlobal.value = config
+            dao.put(PreferenceEntity(KEY_GLOBAL, ReaderConfigJson.encode(config), System.currentTimeMillis()))
+            lastPersistedGlobal = config
+            maybeNotifyBackgroundCleanup()
+        }
     }
 
     private data class AppearanceSnapshot(val generation: Long, val value: AppAppearance)
@@ -275,8 +279,8 @@ class SettingsRepository @JvmOverloads constructor(
         return before.filter { it !in after && BuiltinBackgrounds.fromUri(it) == null }.distinct()
     }
 
-    /** 最近一次成功落库的外观；只在 appearanceWrites 临界区内读写。 */
-    private var lastPersistedAppearance: AppAppearance? = null
+    /** 写入仍由 appearanceWrites 串行化，兼容键成功时也会读取它核对清理引用。 */
+    @Volatile private var lastPersistedAppearance: AppAppearance? = null
 
     /**
      * 背景清理的双键协调：新外观键与旧兼容键（reader_config_global）都确认成功落库后，
@@ -288,13 +292,31 @@ class SettingsRepository @JvmOverloads constructor(
     /** 最近一次成功落库的兼容配置；与当前排队值一致视为"兼容键已确认成功"。 */
     @Volatile private var lastPersistedGlobal: ReaderConfig? = null
 
-    private fun maybeNotifyBackgroundCleanup() {
+    private suspend fun maybeNotifyBackgroundCleanup() {
+        if (synchronized(cleanupLock) { pendingBackgroundCleanup.isEmpty() }) return
+        // 新外观加载不依赖旧键读取；只有确有删除候选时才补齐尚未知的持久兼容值。
+        if (lastPersistedGlobal == null) {
+            val loaded = globalWrites.withLock {
+                if (lastPersistedGlobal != null) true else runCatching {
+                    lastPersistedGlobal = ReaderConfigJson.decode(dao.get(KEY_GLOBAL))
+                }.isSuccess
+            }
+            if (!loaded) return // 无法核实引用时保留文件，后续成功保存会重试。
+        }
         val batch = synchronized(cleanupLock) {
             // 兼容键仍有未确认成功的写入（阻塞/失败/排队中）：推迟清理
-            if (pendingGlobal.value !== lastPersistedGlobal) return
+            val pending = pendingGlobal.value
+            if (pending != null && pending != lastPersistedGlobal) return
             if (pendingBackgroundCleanup.isEmpty()) return
-            val uris = pendingBackgroundCleanup.toList()
-            pendingBackgroundCleanup.clear()
+            val current = appearanceState.value
+            val persisted = lastPersistedAppearance
+            val referenced = setOfNotNull(
+                current?.day?.backgroundImageUri, current?.night?.backgroundImageUri,
+                persisted?.day?.backgroundImageUri, persisted?.night?.backgroundImageUri,
+                pending?.backgroundImageUri, lastPersistedGlobal?.backgroundImageUri
+            )
+            val uris = pendingBackgroundCleanup.filter { it !in referenced }.distinct()
+            pendingBackgroundCleanup.removeAll(uris.toSet())
             uris
         }
         if (batch.isNotEmpty()) runCatching { onBackgroundImageDropped(batch) }

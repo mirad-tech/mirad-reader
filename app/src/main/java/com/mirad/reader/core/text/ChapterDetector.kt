@@ -9,14 +9,40 @@ data class ChapterDetection(
 
 object ChapterDetector {
     fun detect(text: String, rules: List<ChapterRule> = ChapterRules.ALL): ChapterDetection {
+        val marks = mutableListOf<ChapterMark>()
+        var pos = 0
+        var bytes = 0L
+        while (pos < text.length) {
+            var end = pos
+            while (end < text.length && text[end] != '\r' && text[end] != '\n') end++
+            var next = end
+            if (next < text.length) {
+                if (text[next++] == '\r' && next < text.length && text[next] == '\n') next++
+            }
+            val title = text.substring(pos, end).trim()
+            if (isTitleCandidate(title, rules)) {
+                marks.add(ChapterMark(title, next - pos, pos, bytes, isVolumeTitle(title)))
+            }
+            bytes += TextNormalizer.utf8Length(text, pos, next)
+            pos = next
+        }
+        return detectMarks(marks, text.length, rules)
+    }
+
+    /** 导入在流式写入时记录候选和真实边界，重识别也使用同一套全书规则选择。 */
+    internal fun detectMarks(
+        candidates: List<ChapterMark>,
+        totalChars: Int,
+        rules: List<ChapterRule> = ChapterRules.ALL
+    ): ChapterDetection {
         val priority = listOf(ChapterRules.CN_GENERIC, ChapterRules.CN_WITH_BRACKET, ChapterRules.ENGLISH,
             ChapterRules.SPECIAL, ChapterRules.NUMBERED, ChapterRules.CN_VOLUME_ONLY)
         val ordered = rules.sortedBy { rule -> priority.indexOf(rule.id).let { if (it < 0) priority.size else it } }
         for (rule in ordered) {
-            val marks = scan(text, rule)
-            if (marks.isEmpty()) continue
+            val marks = candidates.filter { matchesRule(it.title, rule) }
+            if (marks.none { rule.matches(it.title) }) continue
             val weak = rule.id == ChapterRules.NUMBERED
-            val spans = marks.mapIndexed { i, mark -> (marks.getOrNull(i + 1)?.startChar ?: text.length) - mark.startChar }
+            val spans = marks.mapIndexed { i, mark -> (marks.getOrNull(i + 1)?.startChar ?: totalChars) - mark.startChar }
             if (weak) {
                 if (marks.size < 3) continue
                 // 弱数字标题（如 "1 初见"）真正的判据是"连续编号 + 篇幅大体均匀"，
@@ -35,50 +61,26 @@ object ChapterDetector {
                 else chapterNumber(mark.title)?.let { groups.last().add(it) }
             }
             if (groups.any { !isMonotonic(it) }) continue
-            val avg = text.length / marks.size
+            val avg = totalChars / marks.size
             return ChapterDetection(rule, marks.size, avg, marks.take(5).map { it.title },
                 "${rule.name}：${marks.size} 章，平均 $avg 字", marks)
         }
         return ChapterDetection(null, 0, 0, emptyList(), "没有找到可靠的章节标记，按篇幅自动分节")
     }
 
-    private fun scan(text: String, rule: ChapterRule): List<ChapterMark> {
-        val marks = mutableListOf<ChapterMark>()
-        var pos = 0
-        var bytes = 0L
+    internal fun isTitleCandidate(title: String, rules: List<ChapterRule> = ChapterRules.ALL): Boolean =
+        title.isNotEmpty() && title.length <= ChapterRule.MAX_TITLE_CHARS && rules.any { matchesRule(title, it) }
+
+    internal fun isVolumeTitle(title: String): Boolean =
+        ChapterRules.CN_VOLUME_RULE.matches(title) && !Regex("[章节節回]").containsMatchIn(title)
+
+    private fun matchesRule(title: String, rule: ChapterRule): Boolean {
         val combineStrong = rule.id in setOf(ChapterRules.CN_GENERIC, ChapterRules.CN_WITH_BRACKET, ChapterRules.ENGLISH, ChapterRules.SPECIAL)
-        var ownMatch = false
-        while (pos < text.length) {
-            var end = pos
-            while (end < text.length && text[end] != '\r' && text[end] != '\n') {
-                end++
-            }
-            var next = end
-            if (next < text.length) {
-                if (text[next] == '\r') {
-                    next++
-                    if (next < text.length && text[next] == '\n') {
-                        next++
-                    }
-                } else if (text[next] == '\n') {
-                    next++
-                }
-            }
-            val title = text.substring(pos, end).trim()
-            val volume = ChapterRules.CN_VOLUME_RULE.matches(title)
-            val volumeOnly = volume && !Regex("[章节節回]").containsMatchIn(title)
-            val own = rule.matches(title)
-            val matched = own || (combineStrong &&
-                (ChapterRules.CN_GENERIC_RULE.matches(title) || ChapterRules.CN_BRACKET_RULE.matches(title) ||
-                 ChapterRules.SPECIAL_RULE.matches(title) || ChapterRules.ENGLISH_RULE.matches(title))) || (rule.id != ChapterRules.NUMBERED && volume)
-            if (matched && plausible(title, rule.id == ChapterRules.NUMBERED)) {
-                marks.add(ChapterMark(title, next - pos, pos, bytes, volumeOnly))
-                if (own) ownMatch = true
-            }
-            bytes += TextNormalizer.utf8Length(text, pos, next)
-            pos = next
-        }
-        return if (!ownMatch) emptyList() else marks
+        val matched = rule.matches(title) || (combineStrong &&
+            (ChapterRules.CN_GENERIC_RULE.matches(title) || ChapterRules.CN_BRACKET_RULE.matches(title) ||
+                ChapterRules.SPECIAL_RULE.matches(title) || ChapterRules.ENGLISH_RULE.matches(title))) ||
+            (rule.id != ChapterRules.NUMBERED && ChapterRules.CN_VOLUME_RULE.matches(title))
+        return matched && plausible(title, rule.id == ChapterRules.NUMBERED)
     }
 
     private fun plausible(title: String, weak: Boolean): Boolean {

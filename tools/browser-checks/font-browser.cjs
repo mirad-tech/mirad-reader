@@ -4,7 +4,7 @@ const assert = require('assert');
 const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
-const dir = path.join(root, 'build/verification/font-browser');
+const dir = process.env.MIRAD_BROWSER_EVIDENCE_DIR ? path.join(process.env.MIRAD_BROWSER_EVIDENCE_DIR, 'font-browser') : path.join(root, 'build/verification/font-browser');
 const fixtureDir = path.join(__dirname, 'fixtures');
 const js = require('./reader-source.cjs')();
 const structural = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');

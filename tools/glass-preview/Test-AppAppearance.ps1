@@ -45,18 +45,23 @@ function Command([string]$Operation, [string[]]$Extra=@()) {
 function Dump {
     $script:counter++
     $label="$prefix-$script:counter"
+    $lastReadError = ''
     for($attempt=0; $attempt -lt 4; $attempt++) {
         Command 'dump' @('--es','label',$label)
-        $logs=Device @('logcat','-d','-s','ImmersionPreview:I','*:S')
-        $rows=@($logs -split "`n" | Where-Object { $_.Contains('"label":"'+$label+'"') -and $_ -match 'dump (\{.+\})' })
-        if($rows.Count -gt 0) {
-            $json=[regex]::Match($rows[-1],'dump (\{.+\})').Groups[1].Value
-            $json | Set-Content -LiteralPath (Join-Path $output "state-$script:counter.json") -Encoding utf8
-            return ($json | ConvertFrom-Json)
+        try {
+            $json=Device @('shell','run-as',$package,'cat','files/immersion-reader-state.json')
+            $state=$json | ConvertFrom-Json
+            if ($state.label -eq $label) {
+                $json | Set-Content -LiteralPath (Join-Path $output "state-$script:counter.json") -Encoding utf8
+                return $state
+            }
+        } catch {
+            # JS快照异步完成；只在本轮同一实例等待完整、对应label的文件，不截断或放宽断言。
+            $lastReadError=$_.Exception.Message
         }
         Start-Sleep -Milliseconds 200
     }
-    throw "Missing appearance state dump $label"
+    throw "Missing complete appearance state dump ${label}: $lastReadError"
 }
 function ReadUi {
     $script:uiCounter++
@@ -193,8 +198,12 @@ try {
         }
     }
     }
-    $files=Device @('shell','run-as',$package,'ls')
-    Check (-not (@($files -split '\s+') -contains 'databases')) 'the fixture has not created a business database directory'
+    $files=Device @('shell','run-as',$package,'find','.','-maxdepth','3','-type','f')
+    $files | Set-Content -LiteralPath (Join-Path $output 'private-file-names.txt') -Encoding utf8
+    # 框架可创建空databases目录；业务Room会在其中创建实际数据库/WAL文件。
+    # no_backup中的WorkManager与WebView持久文件另行记录，不冒充业务库或完全无持久化。
+    $businessFiles=@($files -split "`n" | Where-Object { $_.Trim() -match '^\./databases/' })
+    Check ($businessFiles.Count -eq 0) 'the fixture has not created business database files'
     $processId=(Device @('shell','pidof',$package)).Trim()
     $crashes=Device @('logcat','-d','--pid',$processId,'-s','AndroidRuntime:E','*:S')
     $crashes | Set-Content -LiteralPath (Join-Path $output 'android-runtime.log') -Encoding utf8

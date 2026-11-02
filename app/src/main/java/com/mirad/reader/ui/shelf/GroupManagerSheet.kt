@@ -16,6 +16,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.mirad.reader.AppContainer
@@ -36,16 +37,25 @@ import kotlinx.coroutines.launch
 @Composable
 fun GroupManagerSheet(
     container: AppContainer,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    currentSelectedGroupId: () -> Long? = { null },
+    onSelectedGroupChange: (Long?) -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
+    val selectedGroupNow by rememberUpdatedState(currentSelectedGroupId)
+    val selectionChanged by rememberUpdatedState(onSelectedGroupChange)
     val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
     val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
     GroupManagerContent(
         groups = groups,
         bookCounts = groups.associate { group -> group.id to shelf.count { it.book.groupId == group.id } },
         onRename = { group, name -> scope.launch { container.groups.rename(group, name) } },
-        onDelete = { group -> scope.launch { container.groups.delete(group) } },
+        onDelete = { group -> scope.launch {
+            val nextSelection = ShelfGroupActions.commitDeleteGroup(group.id, { selectedGroupNow() }) {
+                container.groups.delete(group)
+            }
+            selectionChanged(nextSelection)
+        } },
         onDismiss = onDismiss
     )
 }

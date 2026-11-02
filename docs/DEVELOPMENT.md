@@ -47,6 +47,9 @@ npm --prefix tools/browser-checks test
 - 字体脚本使用保存的主题 CSS 夹具，覆盖分页、单章滚动和连续滚动中的非首章；通过独立的 DOM 字符矩形检查字号往返定位、导航后的锚点更新、标记和布局。分页要求原字符仍可见，滚动允许最多 1 CSS px 的坐标舍入误差。
 - 现代阅读器脚本覆盖部分 CFI、TextQuote 和短章场景；裁剪用例通过真实滚动事件和生产延时裁剪路径检查章节集合、正文位置与下方保留高度。
 - 锚点回归覆盖常用字号往返、12/60 字号及零间距的列边界、延迟图片触发的真实重排，以及字号调整与连续滚动裁剪、前插章节交错。定时用例使用 Playwright 时钟执行生产回调，并检查补偿后正常导航仍会更新锚点。
+- 初次恢复回归覆盖分页、单章/窗口滚动、旧调用兼容及初始化前的中间布局，断言首次位置回报已完成恢复。
+- CSP 回归默认直接读取当前生产策略；完整安全验收还应在运行 `ReaderDocumentSecurityTest` 前设置 `MIRAD_CSP_FIXTURE_DIR` 为本轮独立目录，再保持该变量运行 `test:csp`。该 JVM 测试导出实际生产 HTML 与源码摘要，浏览器拒绝陈旧夹具，并覆盖响应头/meta、资源与正文字符保真。普通 npm 回归仍不依赖 Android 构建。
+- 需保留每轮证据时，`MIRAD_BROWSER_EVIDENCE_DIR` 指定自动阅读/字体/分页恢复的共同输出根目录；锚点、安全和初次恢复分别支持 `MIRAD_ANCHOR_EVIDENCE_DIR`、`MIRAD_CSP_EVIDENCE_DIR`、`MIRAD_INITIAL_RESTORE_EVIDENCE_DIR`。使用新目录，不覆盖历史结果。
 - 上述浏览器检查不是 Compose、Android WebView、Room 迁移或真实触摸手势的设备测试。
 
 `fixtures/theme-14.css`、`theme-30.css` 是当前字体夹具；`fixtures/baseline/` 下的同名文件保留历史 CSS 的提前闭合括号。`font-browser.cjs` 分别读取两组作字体变更对照，它们不是重复副本，不应合并。

@@ -89,18 +89,24 @@ internal class ReadingConfigEditor(
         scopes: Set<ResetScope>,
         onApplied: (ReaderConfig, AppAppearance) -> Unit = { _, _ -> }
     ): Job = enqueue(onApplied) {
-        val current = settings.currentGlobal()
+        var current = settings.currentGlobal()
+        // 先完成一次性迁移，再排队兼容投影，不能用本次重置污染旧值迁移来源。
+        settings.currentAppAppearance()
         if (ResetScope.LAYOUT_INTERACTION in scopes) {
-            settings.saveGlobal(ReadingStyle.from(current).applyTo(ReaderConfig.DEFAULT))
+            current = ReadingStyle.from(current).applyTo(ReaderConfig.DEFAULT)
         }
-        var appearance = settings.currentAppAppearance()
         if (ResetScope.DAY_STYLE in scopes) {
-            appearance = appearance.withReadingStyle(false, ReadingStyle.DAY_DEFAULT)
-            settings.saveAppAppearance(appearance)
+            current = ReadingStyle.DAY_DEFAULT.applyTo(current)
+            settings.queueReadingConfig(current, false, applicationScope)
         }
         if (ResetScope.NIGHT_STYLE in scopes) {
-            appearance = appearance.withReadingStyle(true, ReadingStyle.NIGHT_DEFAULT)
-            settings.saveAppAppearance(appearance)
+            current = ReadingStyle.NIGHT_DEFAULT.applyTo(current)
+            settings.queueReadingConfig(current, true, applicationScope)
+        }
+        if (ResetScope.DAY_STYLE in scopes || ResetScope.NIGHT_STYLE in scopes) {
+            settings.flushReadingConfig(applicationScope)
+        } else if (ResetScope.LAYOUT_INTERACTION in scopes) {
+            settings.saveGlobal(current)
         }
         settings.currentGlobal()
     }

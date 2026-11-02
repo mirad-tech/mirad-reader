@@ -18,6 +18,10 @@ interface SearchFtsDao {
     @Query("DELETE FROM chapters_fts WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Long)
 
+    /** 只清理可重建的搜索缓存，格式升级不触碰业务表。 */
+    @Query("DELETE FROM chapters_fts")
+    suspend fun deleteAll()
+
     @Query(
         """
         SELECT rowid, bookId, chapterIndex, chapterTitle, content, contentLower FROM chapters_fts 

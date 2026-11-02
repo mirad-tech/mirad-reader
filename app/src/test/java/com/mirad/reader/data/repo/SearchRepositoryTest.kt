@@ -124,6 +124,8 @@ class SearchRepositoryFlowTest {
             storage.removeAll { it.bookId == bookId }
         }
 
+        override suspend fun deleteAll() { storage.clear() }
+
         override suspend fun search(
             bookId: Long,
             escapedQuery: String,

@@ -128,9 +128,13 @@ class ReaderSession(
 
     private val bridge = ReaderJsBridge(
         onReady = { pages, textLength ->
-            _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength, ready = true) }
+            if (prepared && chapterRendered) {
+                // 脚本就绪仅提供度量；首个可信位置由onState打开保存和统计门槛。
+                _state.update { it.copy(pages = pages.coerceAtLeast(1), textLength = textLength) }
+            }
         },
         onState = state@{ page, pages, offset, textLength ->
+            if (!prepared || !chapterRendered) return@state
             val current = _state.value
             // 跨章只有两个显式入口：侧滑/点按的 turnPage(+1)，以及 JS 的原地换章
             // （成功后回调 onChapterChanged，失败后回调 onRequestNextChapter）。
@@ -202,7 +206,7 @@ class ReaderSession(
         updateConfig(config)
         val progress = withContext(Dispatchers.IO) { books.getProgress(book.id) }
         val chapterIndex = (progress?.chapterIndex ?: 0).coerceIn(0, (chapters.size - 1).coerceAtLeast(0))
-        restoreOffset = progress?.charOffset ?: 0
+        restoreOffset = (progress?.charOffset ?: 0).coerceAtLeast(0)
         val highlightCount = withContext(Dispatchers.IO) {
             notes.highlightsForChapter(book.id, chapterIndex).size
         }
@@ -211,6 +215,8 @@ class ReaderSession(
                 chapterCount = chapters.size,
                 chapterIndex = chapterIndex,
                 chapterTitle = chapters.getOrNull(chapterIndex)?.title.orEmpty(),
+                offset = restoreOffset,
+                percent = ProgressMath.percent(chapterCharCounts, chapterIndex, restoreOffset),
                 highlightCount = highlightCount
             )
         }
@@ -271,7 +277,8 @@ class ReaderSession(
                 chapterRendered = true
                 val configJson = jsConfig()
                 val offset = restoreOffset.coerceAtLeast(0)
-                evaluate("MiradReader.init($configJson); MiradReader.gotoOffset($offset, false); true;")
+                // 初始化和恢复是同一次位置发布，不能先把章首默认值交给进度/统计。
+                evaluate("MiradReader.init($configJson, $offset); true;")
                 _renderedChapter.value = _state.value.chapterIndex
                 renderHighlights()
                 scope.launch { annotations.refreshBookmarkFlagNow() }
@@ -584,6 +591,7 @@ class ReaderSession(
         progressTracker.cancelPendingSave()
         saveProgressNow()
         endSession()
+        prepared = false
         // 只清理本会话注册的 handler，避免音量键继续驱动已销毁的会话。
         if (ReaderKeys.pager === volumeKeyHandler) ReaderKeys.pager = null
         webView?.let { view ->

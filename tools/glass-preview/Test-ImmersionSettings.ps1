@@ -55,17 +55,21 @@ function Dump {
     $script:dumpNumber++
     $label = "$prefix-$script:dumpNumber"
     Command 'dump' @('--es','label',$label)
+    $lastReadError = ''
     for ($attempt=0; $attempt -lt 3; $attempt++) {
-        $logs = Device @('logcat','-d','-s','ImmersionPreview:I','*:S')
-        $match = @($logs -split "`n" | Where-Object { $_ -match 'dump (\{.+\})' -and $_.Contains('"label":"'+$label+'"') })
-        if ($match.Count -gt 0) {
-            $json = [regex]::Match($match[-1], 'dump (\{.+\})').Groups[1].Value
-            $json | Set-Content -LiteralPath (Join-Path $output "state-$script:dumpNumber.json") -Encoding utf8
-            return ($json | ConvertFrom-Json)
+        try {
+            $json = Device @('shell','run-as','com.mirad.reader.preview','cat','files/immersion-reader-state.json')
+            $state = $json | ConvertFrom-Json
+            if ($state.label -eq $label) {
+                $json | Set-Content -LiteralPath (Join-Path $output "state-$script:dumpNumber.json") -Encoding utf8
+                return $state
+            }
+        } catch {
+            $lastReadError = $_.Exception.Message
         }
         Start-Sleep -Milliseconds 250
     }
-    throw "Missing native state dump $label"
+    throw "Missing complete native state dump ${label}: $lastReadError"
 }
 function ReadUi([bool]$DismissedTutorial = $false) {
     $script:uiNumber++
@@ -282,6 +286,7 @@ try {
         Tap '图片背景';$state=Dump
         Check ([Math]::Abs($state.config.backgroundImageAlpha-.37) -lt .001 -and $state.config.backgroundImageUri -eq 'builtin:parchment') 'return to image mode preserves image and opacity'
         [void](Capture 'theme-system-image' 'settings' '夜间样式')
+        Tap '衬底配色'
         Tap '自定义浅色';[void](Capture 'theme-custom' 'settings' '自定义浅色')
         # legacy 模式（scene≠appearance）没有应用模式控件；自定义主题演示完成后恢复 SYSTEM 主题，
         # 与旧 UI 中"Tap 跟随系统"步骤等价，供后续 system light/dark 段使用。
