@@ -21,13 +21,13 @@ class TtsPlaylistTest {
     @Before
     fun setUp() {
         TtsBus.reset()
-        TtsBus.clearPlaylist()
+        TtsBus.clearPlaylist(TtsBus.playlist?.token)
     }
 
     @After
     fun tearDown() {
         TtsBus.reset()
-        TtsBus.clearPlaylist()
+        TtsBus.clearPlaylist(TtsBus.playlist?.token)
     }
 
     private fun playlist(token: String = "t1") = TtsBus.Playlist(
@@ -53,7 +53,7 @@ class TtsPlaylistTest {
     @Test
     fun clearedPlaylistIsNotResolvable() {
         TtsBus.playlist = playlist()
-        TtsBus.clearPlaylist()
+        TtsBus.clearPlaylist("t1")
 
         assertNull("停止后旧的播放请求必须失效", TtsBus.resolvePlaylist("t1"))
     }

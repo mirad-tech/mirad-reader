@@ -15,7 +15,6 @@ fun ReadingSettingsHost(
     config: ReaderConfig,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
     fonts: List<ReadingFont> = emptyList(),
-    onImportFont: () -> Unit = {},
     onDeleteFont: (ReadingFont) -> Unit = {},
     onPickImage: (dark: Boolean) -> Unit = {},
     isEpub: Boolean? = null,
@@ -24,9 +23,10 @@ fun ReadingSettingsHost(
     when (page) {
         ReadingSettingsPage.TYPOGRAPHY -> TypographySection(
             config = config, onChange = onChange, fonts = fonts,
-            onImportFont = onImportFont, onDeleteFont = onDeleteFont,
+            onDeleteFont = onDeleteFont,
             isEpub = isEpub, onOpenPage = onOpenPage
         )
+        ReadingSettingsPage.LAYOUT -> LayoutSection(config, onChange, isEpub, onOpenPage)
         ReadingSettingsPage.THEME -> ThemeSection(config, onChange, onPickImage)
         ReadingSettingsPage.INTERACTION -> InteractionSection(config, onChange)
         ReadingSettingsPage.SCREEN -> ScreenSection(config, onChange)

@@ -437,10 +437,7 @@ private fun ReaderPreview(
         onDispose { WindowInsetsControllerCompat(activity.window, activity.window.decorView).show(WindowInsetsCompat.Type.systemBars()) }
     }
     var config by remember { mutableStateOf(ReaderConfig.DEFAULT.copy(theme = if (dark) ThemeKey.DARK else ThemeKey.PAPER, pageMode = PageMode.SCROLL, fullScreen = fullScreen)) }
-    val fonts = remember { mutableStateListOf(
-        ReadingFont("霞鹜文楷", assetName = ReadingFonts.BUNDLED_WENKAI),
-        ReadingFont("思源宋体", assetName = ReadingFonts.BUNDLED_SERIF)
-    ) }
+    val fonts = remember { previewReadingFonts() }
     var view by remember { mutableStateOf<ReaderWebView?>(null) }
     var ready by remember { mutableIntStateOf(0) }
     var chrome by remember { mutableStateOf(true) }
@@ -549,14 +546,7 @@ private fun ReaderPreview(
             onOpenAutoRead = {}, onResetGlobal = { config = ReaderConfig.DEFAULT },
             onDismiss = { settings = false; Log.i("GlassPreview", "sheetDismiss") },
             // 阅读面板只承载阅读级页面；reader-appearance 场景落在面板首页。
-            initialPage = if (typography) ReadingSettingsPage.TYPOGRAPHY else null,
-            onDeleteFont = { font ->
-                fonts.remove(font)
-                if (config.customFontPath == font.filePath && font.filePath != null) {
-                    config = config.copy(fontFamily = FontFamilyKey.SYSTEM, customFontPath = null, customFontAsset = null)
-                }
-                Log.i("GlassPreview", "fontDeleted current=${config.fontFamily}")
-            }
+            initialPage = if (typography) ReadingSettingsPage.TYPOGRAPHY else null
         )
         if (dialog) MiradDialog(
             onDismissRequest = { dialog = false },

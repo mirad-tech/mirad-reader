@@ -62,7 +62,7 @@ fun ReaderSettingsSheet(
 ) {
     val scope = rememberCoroutineScope()
     val appearanceController = LocalAppAppearanceController.current
-    val fontActions = rememberReadingFonts(container, scope, onChange)
+    val fontActions = rememberReadingFonts(container, scope)
 
     val pickImage = rememberReadingBackgroundPicker(container)
 
@@ -74,7 +74,6 @@ fun ReaderSettingsSheet(
             config = config, fonts = fontActions.fonts, isEpub = isEpub,
             onChange = onChange, onOpenAutoRead = onOpenAutoRead,
             onResetGlobal = onResetGlobal, onDismiss = onDismiss,
-            onImportFont = fontActions.importFont,
             onDeleteFont = fontActions.deleteFont,
             onPickImage = pickImage
         )
@@ -91,7 +90,6 @@ internal fun ReaderSettingsPanel(
     onOpenAutoRead: () -> Unit,
     onResetGlobal: () -> Unit,
     onDismiss: () -> Unit,
-    onImportFont: () -> Unit = {},
     onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
     onPickImage: (dark: Boolean) -> Unit = {},
     initialPage: ReadingSettingsPage? = null
@@ -99,15 +97,16 @@ internal fun ReaderSettingsPanel(
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(initialPage) }
     val scrollStates = ReadingSettingsPage.entries.associateWith { rememberScrollState() }
     val homeScroll = rememberScrollState()
-    androidx.activity.compose.BackHandler(page != null) { page = null }
     SheetScaffold(
         title = page?.title ?: "阅读设置",
         subtitle = "全书通用",
         onDismiss = onDismiss,
         fillHeight = true,
         maxHeightFraction = 0.62f,
-        actions = { if (page != null) SheetActionButton("返回", { page = null }) }
+        actions = { if (page != null) SheetActionButton("返回", { page = page?.parent }) }
     ) {
+        // 在弹层自己的返回分发器中处理子页，避免 ModalBottomSheet 先收缩或关闭。
+        androidx.activity.compose.BackHandler(page != null) { page = page?.parent }
         Column(Modifier.fillMaxWidth().bouncingVerticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
             val selected = page
             if (selected == null) {
@@ -139,7 +138,6 @@ internal fun ReaderSettingsPanel(
                 MiradOutlinedButton(onClick = onResetGlobal, modifier = Modifier.fillMaxWidth()) { Text("恢复阅读默认设置") }
             } else {
                 ReadingSettingsHost(page = selected, config = config, onChange = onChange, fonts = fonts,
-                    onImportFont = onImportFont,
                     onDeleteFont = onDeleteFont,
                     onPickImage = onPickImage,
                     isEpub = isEpub,

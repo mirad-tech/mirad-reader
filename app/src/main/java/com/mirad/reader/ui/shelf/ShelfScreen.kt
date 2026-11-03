@@ -44,7 +44,6 @@ import com.mirad.reader.ui.design.Sizes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 enum class ShelfSort(val label: String) {
     RECENT("最近阅读"),
@@ -177,12 +176,7 @@ fun ShelfScreen(
             onDeleteSelected = { isSingleBookDeleteAction = false; confirmDelete = true },
             onImportFile = { filePicker.launch(arrayOf("*/*")) },
             onImportFolder = { folderPicker.launch(null) },
-            onImportUrl = { showUrlImportDialog = true },
-            onImportSamples = { scope.launch {
-                val sources = withContext(Dispatchers.IO) { scanSamples(container) }
-                if (sources.isNotEmpty()) container.importer.import(sources)
-                else toast = "未找到调试样书"
-            } }
+            onImportUrl = { showUrlImportDialog = true }
         ),
         snackbarHost = { com.mirad.reader.ui.common.FeedbackHost(feedback, Modifier.imePadding()) }
     )
@@ -511,15 +505,4 @@ fun ShelfScreen(
 private fun isSupported(name: String): Boolean {
     val lower = name.lowercase()
     return lower.endsWith(".txt") || lower.endsWith(".epub")
-}
-
-private fun scanSamples(container: AppContainer): List<ImportSource> {
-    val candidates = listOf(container.paths.samplesDir, File(container.paths.root, "samples"))
-    for (dir in candidates) {
-        val files = dir.listFiles()?.filter { it.isFile && isSupported(it.name) }.orEmpty()
-        if (files.isNotEmpty()) {
-            return files.map { ImportSource.FromFile(it) }
-        }
-    }
-    return emptyList()
 }

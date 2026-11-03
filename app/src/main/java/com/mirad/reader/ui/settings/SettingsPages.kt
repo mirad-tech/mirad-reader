@@ -6,12 +6,16 @@ import com.mirad.reader.core.model.ReaderConfig
 /** 阅读设置分类：全书通用，设置页与阅读面板共用同一组 Section。 */
 enum class ReadingSettingsPage(val title: String) {
     TYPOGRAPHY("字体与排版"),
+    LAYOUT("排版设置"),
     THEME("阅读主题与背景"),
     INTERACTION("翻页与交互"),
     SCREEN("屏幕"),
     HEADER_FOOTER("页眉页脚"),
     EPUB("EPUB"),
-    TTS("朗读")
+    TTS("朗读");
+
+    val parent: ReadingSettingsPage?
+        get() = if (this == LAYOUT) TYPOGRAPHY else null
 }
 
 /** 应用级设置分类：只出现在设置页，不进入阅读面板。 */
@@ -50,7 +54,7 @@ sealed interface SettingsRoute {
 
 /** null 表示全局设置页：它同时决定以后打开 EPUB 时的配置，所以始终显示 EPUB 分类。 */
 internal fun readingSettingsPages(isEpub: Boolean? = null): List<ReadingSettingsPage> =
-    ReadingSettingsPage.entries.filter { isEpub != false || it != ReadingSettingsPage.EPUB }
+    ReadingSettingsPage.entries.filter { it.parent == null && (isEpub != false || it != ReadingSettingsPage.EPUB) }
 
 internal val appSettingsPages: List<AppSettingsPage> = AppSettingsPage.entries
 

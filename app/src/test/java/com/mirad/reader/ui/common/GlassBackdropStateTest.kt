@@ -122,7 +122,7 @@ class GlassBackdropStateTest {
             syntheticSampleProvider = {
                 if (simulateInFlightZeroSwitch) {
                     // Simulate user switching transparency to 0% while a snapshot is in flight
-                    state.clearAndStop("switched_to_zero_in_flight")
+                    state.clearAndStop()
                 }
                 SyntheticSample(width = 270, height = 600, fingerprint = currentFingerprint)
             }

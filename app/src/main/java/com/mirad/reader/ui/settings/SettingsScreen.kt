@@ -76,7 +76,7 @@ fun SettingsScreen(
         appearanceController?.updateReadingConfig(isDark, transform)
     }
 
-    val fontActions = rememberReadingFonts(container, scope, update, ready = config != null)
+    val fontActions = rememberReadingFonts(container, scope, ready = config != null)
 
     if (config == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
@@ -94,7 +94,6 @@ fun SettingsScreen(
         config = config, fonts = fontActions.fonts, shelf = shelf,
         route = route, onBack = onBack, onOpenRoute = onOpenRoute,
         onOpenHidden = onOpenHidden, onOpenStats = onOpenStats, onChange = { update(it) },
-        onImportFont = fontActions.importFont,
         onDeleteFont = fontActions.deleteFont,
         onPickImage = pickImage,
         groupCount = groups.size,
@@ -131,7 +130,6 @@ internal fun SettingsContent(
     onOpenHidden: () -> Unit = {},
     onOpenStats: () -> Unit = {},
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit = {},
-    onImportFont: () -> Unit = {},
     onDeleteFont: (com.mirad.reader.core.model.ReadingFont) -> Unit = {},
     onPickImage: (dark: Boolean) -> Unit = {},
     groupCount: Int = 0,
@@ -175,7 +173,7 @@ internal fun SettingsContent(
             } else when (route) {
                 is SettingsRoute.Reading -> ReadingSettingsHost(
                     page = route.page, config = config, onChange = onChange, fonts = fonts,
-                    onImportFont = onImportFont, onDeleteFont = onDeleteFont, onPickImage = onPickImage,
+                    onDeleteFont = onDeleteFont, onPickImage = onPickImage,
                     onOpenPage = { onOpenRoute(SettingsRoute.Reading(it)) }
                 )
                 is SettingsRoute.App -> when (route.page) {

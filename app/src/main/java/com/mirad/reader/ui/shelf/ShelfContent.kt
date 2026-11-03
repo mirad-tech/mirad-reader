@@ -60,7 +60,6 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.mirad.reader.BuildConfig
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.imports.ImportItem
 import com.mirad.reader.data.imports.ImportStage
@@ -260,8 +259,7 @@ internal data class ShelfContentActions(
     val onImportFolder: () -> Unit = {},
     val onImportUrl: () -> Unit = {},
     val onOnlineSearch: () -> Unit = {},
-    val onSourceManager: () -> Unit = {},
-    val onImportSamples: () -> Unit = {}
+    val onSourceManager: () -> Unit = {}
 )
 
 @Composable
@@ -449,8 +447,6 @@ internal fun ShelfContent(
                                 onClick = { importMenu = false; actions.onImportFolder() })
                             DropdownMenuItem(text = { Text("网址导入") },
                                 onClick = { importMenu = false; actions.onImportUrl() })
-                            if (BuildConfig.DEBUG) DropdownMenuItem(text = { Text("导入调试样书（samples 目录）") },
-                                onClick = { importMenu = false; actions.onImportSamples() })
                         }
                     }
                 }

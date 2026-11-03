@@ -102,6 +102,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
         )
         val initialChrome = intent.getBooleanExtra("chrome", false)
         setContent {
+            val fonts = remember { previewReadingFonts() }
             val systemDark = isSystemInDarkTheme()
             val scope = rememberCoroutineScope()
             val bounceProbe = remember { PreviewBounceDiagnostics() }
@@ -293,9 +294,12 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                         if (scene == "settings") {
                             if (unifiedAppearance) ApplyReaderWindowPolicy(window, ReaderWindowPolicy(false, appDark))
                             PageSurface("settings:$category:$navigationGeneration", bounded = true, animate = false) {
-                            SettingsContent(config = config, route = category, onChange = change,
+                            SettingsContent(config = config, route = category, onChange = change, fonts = fonts,
                                 onOpenRoute = { category = it },
-                                onBack = { if (category != null) category = null else scene = "reader" })
+                                onBack = {
+                                    if (category != null) category = (category as? SettingsRoute.Reading)?.page?.parent?.let { SettingsRoute.Reading(it) }
+                                    else scene = "reader"
+                                })
                             }
                         } else {
                              if (hardwarePreview) {
@@ -305,7 +309,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                                      onSettings = { category = null; scene = "reader-settings" },
                                      onDismissSettings = { scene = "reader" }, onBack = { scene = "settings" })
                              } else {
-                            ImmersionReader(config, if (unifiedAppearance) appDark else systemDark, isEpub, scene == "reader-settings", category.readerPage(), navigationGeneration,
+                            ImmersionReader(config, if (unifiedAppearance) appDark else systemDark, isEpub, scene == "reader-settings", category.readerPage(), navigationGeneration, fonts,
                                 chrome, dialog, probe, change,
                                 onChrome = { chrome = it }, onDialog = { dialog = it },
                                 onSettings = { category = null; scene = "reader-settings" },
@@ -410,7 +414,7 @@ internal class ImmersionReaderProbe {
 @Composable
 private fun ImmersionReader(
     config: ReaderConfig, systemDark: Boolean, isEpub: Boolean, settings: Boolean,
-    page: ReadingSettingsPage?, navigationGeneration: Int, chrome: Boolean, dialog: Boolean, probe: ImmersionReaderProbe,
+    page: ReadingSettingsPage?, navigationGeneration: Int, fonts: List<ReadingFont>, chrome: Boolean, dialog: Boolean, probe: ImmersionReaderProbe,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit, onChrome: (Boolean) -> Unit,
     onDialog: (Boolean) -> Unit, onSettings: () -> Unit, onDismissSettings: () -> Unit,
     onBack: () -> Unit, unifiedAppearance: Boolean = false
@@ -495,7 +499,7 @@ private fun ImmersionReader(
                 }
             }
             if (settings) key(page, navigationGeneration) {
-                ReaderSettingsPanel(config = config, isEpub = isEpub, onChange = onChange,
+                ReaderSettingsPanel(config = config, isEpub = isEpub, onChange = onChange, fonts = fonts,
                     onOpenAutoRead = { autoSettings = true }, onResetGlobal = {
                         if (unifiedAppearance) {
                             appearanceController?.resetReadingConfig(

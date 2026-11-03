@@ -64,11 +64,6 @@ object TtsBus {
     internal fun resolvePlaylist(token: String?): Playlist? =
         playlist?.takeIf { token != null && it.token == token }
 
-    /** 仅测试与停止路径使用：释放可能很大的句子列表。 */
-    internal fun clearPlaylist() {
-        playlist = null
-    }
-
     /** 旧服务销毁或旧请求启动失败时，不得释放后来发布的新负载。 */
     internal fun clearPlaylist(token: String?): Boolean {
         val current = playlistReference.get()

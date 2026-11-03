@@ -58,13 +58,6 @@ function Launch([string]$Scene) {
     }
 }
 function Logs { Device @('logcat','-d','--pid',$script:previewProcessId,'-s','GlassPreview') }
-function RevealCustomFont {
-    $font = (Ui).SelectSingleNode("//node[@text='霞鹜文楷']")
-    $rect = Bounds $font
-    $y = [int](($rect.Top+$rect.Bottom)/2)
-    Device @('shell','input','swipe','940',"$y",'150',"$y",'450') | Out-Null
-    Start-Sleep -Milliseconds 350
-}
 try {
     Device @('shell','wm','size','reset') | Out-Null
     Device @('shell','wm','density','reset') | Out-Null
@@ -101,27 +94,15 @@ try {
     Check 'foreground refreshes backdrop' ($events[-1] -match 'backdropFrame=')
 
     Launch 'reader-typography'
-    TapNode ((Ui).SelectSingleNode("//node[@text='霞鹜文楷']")) 'wenkai'
-    Check 'current custom font shows catalog label' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：霞鹜文楷']"))
-    RevealCustomFont
-    $document = Ui
-    # 2026-11-03 移除了预览夹具字体（原 BarlowCondensed-Bold 指向并不存在的 preview-only.ttf），
-    # 删除/回退断言改用内置思源宋体；同时去掉只对超长字体名有意义的那条断言。
-    $delete = $document.SelectSingleNode("//node[@content-desc='删除字体：思源宋体']/ancestor-or-self::node[@clickable='true'][1]")
-    $rect = Bounds $delete 'delete'
-    Check 'font delete has independent 48dp hit area' (($rect.Right-$rect.Left) -ge 132 -and ($rect.Bottom-$rect.Top) -ge 132)
-    TapNode $delete 'delete-tap'
-    Check 'deleting unselected font preserves selection' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：霞鹜文楷']"))
-    Check 'deleted font removed from in-memory list' ($null -eq (Ui).SelectSingleNode("//node[@text='思源宋体']"))
-
-    Launch 'reader-typography'
-    RevealCustomFont
-    TapNode ((Ui).SelectSingleNode("//node[@text='思源宋体']")) 'serif'
-    Check 'selected imported font shows catalog label' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：思源宋体']"))
-    TapNode ((Ui).SelectSingleNode("//node[@content-desc='删除字体：思源宋体']")) 'delete-serif'
-    Check 'deleting current font keeps existing system fallback' ((Logs) -match 'fontDeleted current=SYSTEM')
-    Check 'fallback clears custom font label' ($null -eq (Ui).SelectSingleNode("//node[starts-with(@text,'当前使用：')]"))
-    (Logs) | Set-Content -LiteralPath (Join-Path $logRoot 'font-delete-events.txt') -Encoding utf8
+    foreach ($label in @('霞鹜文楷', '思源宋体', 'Noto 黑体', '朱雀仿宋')) {
+        $document = Ui
+        $font = $document.SelectSingleNode("//node[@text='$label']")
+        Check "bundled font is visible: $label" ($null -ne $font)
+        Check "bundled font has no delete action: $label" ($null -eq $document.SelectSingleNode("//node[@content-desc='删除字体：$label']"))
+        TapNode $font "select-$label"
+        Check "selected font shows catalog label: $label" ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：$label']"))
+    }
+    (Logs) | Set-Content -LiteralPath (Join-Path $logRoot 'font-selection-events.txt') -Encoding utf8
 } finally {
     $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $logRoot 'reader-fix-interactions.json') -Encoding utf8
 }

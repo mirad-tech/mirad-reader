@@ -95,7 +95,7 @@ fun GlassBackdropHost(content: @Composable () -> Unit) {
     // R4：当透明度切为 0% 或能力降级时立即停止并清空；当从 0% 恢复为非零时重新捕获最新背景
     LaunchedEffect(blurAllowed, activePercent) {
         if (!blurAllowed || activePercent <= 0) {
-            source.clearAndStop(if (activePercent <= 0) "transparency_zero" else "blur_disabled")
+            source.clearAndStop()
         } else {
             view.invalidate()
             source.notifySourceChanged(activePercent, force = true)
@@ -106,7 +106,7 @@ fun GlassBackdropHost(content: @Composable () -> Unit) {
     DisposableEffect(lifecycle, source) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> source.clearAndStop("lifecycle_on_stop")
+                Lifecycle.Event.ON_STOP -> source.clearAndStop()
                 Lifecycle.Event.ON_START -> {
                     if (source.enabled && source.activeTransparencyPercent > 0) {
                         view.invalidate()
@@ -119,7 +119,7 @@ fun GlassBackdropHost(content: @Composable () -> Unit) {
         lifecycle.addObserver(observer)
         onDispose {
             lifecycle.removeObserver(observer)
-            source.clearAndStop("host_disposed")
+            source.clearAndStop()
         }
     }
 
@@ -144,7 +144,7 @@ fun Modifier.glassBackdropSource(): Modifier = composed {
                 source.sampleLayer = null
                 source.sampleLayerReady = false
                 source.recorded = false
-                source.clearAndStop("source_disposed")
+                source.clearAndStop()
             }
         }
     }

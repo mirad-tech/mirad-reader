@@ -1,16 +1,15 @@
 package com.mirad.reader.data
 
 import android.content.Context
-import android.net.Uri
+import android.util.Log
 import com.mirad.reader.core.model.ReadingFont
 import com.mirad.reader.core.model.ReadingFonts
 import java.io.File
 import java.util.Locale
 
 /**
- * 字体文件管理：内置（assets/fonts）+ 用户导入（filesDir/fonts）。
- *
- * 中文字体文件很大，不便全部内置，因此把「导入自己的字体」作为一等功能。
+ * 字体文件管理：内置（assets/fonts）+ 历史已导入（filesDir/fonts）。
+ * 不再接收新字体导入，保留旧文件的读取和删除。
  */
 class FontManager(
     private val context: Context,
@@ -41,7 +40,8 @@ class FontManager(
     fun imported(): List<ReadingFont> {
         val dir = paths.fontsDir
         val files = dir.listFiles()?.filter {
-            it.isFile && it.extension.lowercase(Locale.ROOT) in supportedExtensions
+            it.isFile && it.extension.lowercase(Locale.ROOT) in supportedExtensions &&
+                !ReadingFonts.isRetiredPreviewFont(it.name)
         }.orEmpty()
         return files.sortedBy { it.name.lowercase(Locale.ROOT) }.map { file ->
             ReadingFont(
@@ -52,56 +52,10 @@ class FontManager(
         }
     }
 
-    /** 把 SAF 选中的字体复制到私有目录，返回可用的 [ReadingFont]。 */
-    fun import(uri: Uri): ReadingFont? {
-        val displayName = queryDisplayName(uri) ?: "font-${System.currentTimeMillis()}.ttf"
-        val extension = displayName.substringAfterLast('.', "ttf").lowercase(Locale.ROOT)
-        if (extension !in supportedExtensions) return null
-        val safeName = sanitize(displayName.substringBeforeLast('.')) + "." + extension
-        val target = File(paths.fontsDir, uniqueName(safeName))
-        val ok = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
-            } != null
-        }.getOrDefault(false)
-        if (!ok || target.length() == 0L) {
-            runCatching { target.delete() }
-            return null
-        }
-        return ReadingFont(
-            label = target.nameWithoutExtension,
-            filePath = target.absolutePath,
-            note = "已导入 · ${formatSize(target.length())}"
-        )
-    }
-
     fun delete(font: ReadingFont): Boolean {
         val path = font.filePath ?: return false
         return runCatching { File(path).delete() }.getOrDefault(false)
     }
-
-    private fun uniqueName(name: String): String {
-        var candidate = name
-        var index = 1
-        while (File(paths.fontsDir, candidate).exists()) {
-            candidate = name.substringBeforeLast('.') + "-$index." + name.substringAfterLast('.')
-            index++
-        }
-        return candidate
-    }
-
-    private fun sanitize(name: String): String {
-        val cleaned = name.map { if (it.isLetterOrDigit() || it == '-' || it == '_') it else '_' }.joinToString("")
-        return cleaned.ifBlank { "font" }.take(48)
-    }
-
-    private fun queryDisplayName(uri: Uri): String? = runCatching {
-        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
-            ?.use { cursor ->
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
-            }
-    }.getOrNull()
 
     private fun formatSize(bytes: Long): String = when {
         bytes < 1024 -> "$bytes B"
@@ -112,4 +66,13 @@ class FontManager(
     companion object {
         const val BUNDLED_DIR = "fonts"
     }
+}
+
+/** 应用启动时在 IO 线程清理指定的历史测试字体，其他文件及子目录保持原样。 */
+internal fun removeRetiredPreviewFonts(directory: File) {
+    directory.listFiles().orEmpty()
+        .filter { it.isFile && ReadingFonts.isRetiredPreviewFont(it.name) }
+        .forEach { file ->
+            if (!file.delete()) Log.w("FontManager", "历史测试字体删除失败：${file.name}")
+        }
 }

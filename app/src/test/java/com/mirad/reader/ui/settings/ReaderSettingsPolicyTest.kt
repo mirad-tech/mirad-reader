@@ -31,6 +31,14 @@ class ReaderSettingsPolicyTest {
         assertNull(SettingsRoute.parse("NO_SUCH_PAGE"))
     }
 
+    @Test fun layoutIsAChildOfTypographyAndDoesNotAppearInTheTopLevelMenu() {
+        assertEquals(ReadingSettingsPage.TYPOGRAPHY, ReadingSettingsPage.LAYOUT.parent)
+        assertNull(ReadingSettingsPage.TYPOGRAPHY.parent)
+        assertFalse(ReadingSettingsPage.LAYOUT in readingSettingsPages())
+        assertFalse(ReadingSettingsPage.LAYOUT in readingSettingsPages(isEpub = false))
+        assertEquals(SettingsRoute.Reading(ReadingSettingsPage.LAYOUT), SettingsRoute.parse("LAYOUT"))
+    }
+
     @Test fun txtReaderHidesOnlyEpubAndRetainsSpeechSettings() {
         val pages = readingSettingsPages(isEpub = false)
         assertEquals(readingSettingsPages().filterNot { it == ReadingSettingsPage.EPUB }, pages)

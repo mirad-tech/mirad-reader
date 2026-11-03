@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.FontManager
+import com.mirad.reader.data.removeRetiredPreviewFonts
 import com.mirad.reader.data.db.AppDatabase
 import com.mirad.reader.data.imports.ImportPipeline
 import com.mirad.reader.data.repo.BookMaintenance
@@ -86,6 +87,10 @@ class AppContainer(app: Application) {
     val maintenance: BookMaintenance = BookMaintenance(books, paths, database)
 
     val fonts: FontManager = FontManager(app, paths)
+
+    init {
+        appScope.launch { removeRetiredPreviewFonts(paths.fontsDir) }
+    }
 
     val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao(), database.preferenceDao())
 

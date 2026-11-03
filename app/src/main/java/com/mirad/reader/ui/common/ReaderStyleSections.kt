@@ -66,9 +66,6 @@ import kotlinx.coroutines.withContext
 import com.mirad.reader.AppContainer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.runtime.rememberUpdatedState
 
 /** 内置背景缩略图缓存。 */
 private object BackgroundThumbs {
@@ -119,82 +116,50 @@ private object BackgroundThumbs {
     }
 }
 
-/** 字体选择：系统预设 + 内置/已导入字体。 */
+/** 文件字体统一显示，保留内置字体和历史导入字体，过滤已移除的测试字体。 */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun FontSection(
     config: ReaderConfig,
     customFonts: List<ReadingFont>,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
-    onImport: () -> Unit,
-    onDelete: (ReadingFont) -> Unit,
+    onDelete: ((ReadingFont) -> Unit)?,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier.fillMaxWidth()) {
-        SettingCard(title = "字体") {
+        SettingCard(title = "系统字体") {
+            val fonts = customFonts.filterNot {
+                ReadingFonts.isRetiredPreviewFont(it.label) ||
+                    ReadingFonts.isRetiredPreviewFont(it.filePath?.substringAfterLast('/'))
+            }
             FlowRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 maxItemsInEachRow = 4
             ) {
-                ReadingFonts.PRESETS.forEach { font ->
+                fonts.forEach { font ->
+                    val selected = config.fontFamily == FontFamilyKey.CUSTOM &&
+                        ((font.assetName != null && config.customFontAsset == font.assetName) ||
+                            (font.filePath != null && config.customFontPath == font.filePath))
                     FontChoiceChip(
                         font = font,
-                        selected = config.fontFamily == font.systemKey,
-                        onSelect = { onChange { it.copy(fontFamily = font.systemKey ?: FontFamilyKey.SYSTEM) } },
-                        onDelete = null
+                        selected = selected,
+                        onSelect = {
+                            onChange {
+                                it.copy(
+                                    fontFamily = FontFamilyKey.CUSTOM,
+                                    customFontAsset = font.assetName,
+                                    customFontPath = font.filePath
+                                )
+                            }
+                        },
+                        onDelete = if (font.filePath != null && onDelete != null) ({ onDelete(font) }) else null
                     )
                 }
             }
-
-            CardDivider()
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "我的字体",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                if (customFonts.isEmpty()) {
-                    Text(
-                        text = "还没有导入",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            if (customFonts.isNotEmpty()) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(customFonts, key = { it.filePath ?: it.assetName ?: it.label }) { font ->
-                        val selected = config.fontFamily == FontFamilyKey.CUSTOM &&
-                            ((font.assetName != null && config.customFontAsset == font.assetName) ||
-                                (font.filePath != null && config.customFontPath == font.filePath))
-                        FontChoiceChip(
-                            font = font,
-                            selected = selected,
-                            onSelect = {
-                                onChange {
-                                    it.copy(
-                                        fontFamily = FontFamilyKey.CUSTOM,
-                                        customFontAsset = font.assetName,
-                                        customFontPath = font.filePath
-                                    )
-                                }
-                            },
-                            onDelete = if (font.filePath != null) ({ onDelete(font) }) else null
-                        )
-                    }
-                }
-            }
-            MiradOutlinedButton(onClick = onImport, modifier = Modifier.fillMaxWidth()) {
-                Text("导入字体文件（.ttf / .otf / .ttc）")
-            }
+            if (fonts.isEmpty()) Text("暂无字体", style = MaterialTheme.typography.labelSmall)
             if (config.fontFamily == FontFamilyKey.CUSTOM) {
-                val currentFont = customFonts.firstOrNull { font ->
+                val currentFont = fonts.firstOrNull { font ->
                     (font.assetName != null && font.assetName == config.customFontAsset) ||
                         (font.filePath != null && font.filePath == config.customFontPath)
                 }
@@ -526,10 +491,9 @@ private fun BackgroundPresetTile(
 }
 
 
-/** 两个设置入口共用字体导入、列表刷新和删除；配置加载期间仍只预取列表。 */
+/** 两个设置入口共用字体列表和历史导入字体的删除；配置加载期间仍只预取列表。 */
 internal class ReadingFontActions(
     val fonts: List<ReadingFont>,
-    val importFont: () -> Unit = {},
     val deleteFont: (ReadingFont) -> Unit = {}
 )
 
@@ -537,7 +501,6 @@ internal class ReadingFontActions(
 internal fun rememberReadingFonts(
     container: AppContainer,
     scope: CoroutineScope,
-    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
     ready: Boolean = true
 ): ReadingFontActions {
     var fonts by remember { mutableStateOf(emptyList<ReadingFont>()) }
@@ -545,25 +508,8 @@ internal fun rememberReadingFonts(
         fonts = withContext(Dispatchers.IO) { container.fonts.available() }
     }
     if (!ready) return ReadingFontActions(fonts)
-    val latestChange by rememberUpdatedState(onChange)
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) scope.launch {
-            val imported = withContext(Dispatchers.IO) { container.fonts.import(uri) }
-            if (imported != null) {
-                fonts = withContext(Dispatchers.IO) { container.fonts.available() }
-                latestChange {
-                    it.copy(
-                        fontFamily = FontFamilyKey.CUSTOM,
-                        customFontAsset = null,
-                        customFontPath = imported.filePath
-                    )
-                }
-            }
-        }
-    }
     return ReadingFontActions(
         fonts = fonts,
-        importFont = { picker.launch(arrayOf("*/*")) },
         deleteFont = { font -> scope.launch {
             withContext(Dispatchers.IO) { container.fonts.delete(font) }
             fonts = withContext(Dispatchers.IO) { container.fonts.available() }

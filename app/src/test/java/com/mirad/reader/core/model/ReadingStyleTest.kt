@@ -11,13 +11,12 @@ import java.io.File
 class ReadingFontsTest {
 
     @Test
-    fun everyPresetHasADistinctKeyAndAStack() {
-        val keys = ReadingFonts.PRESETS.mapNotNull { it.systemKey }
-        assertEquals(keys.size, keys.toSet().size)
-        assertEquals(ReadingFonts.PRESETS.size, keys.size)
-        for (font in ReadingFonts.PRESETS) {
-            val stack = ReadingFonts.stackOf(font.systemKey!!, null)
-            assertTrue("${font.label} 的字体栈不应为空", stack.isNotBlank())
+    fun legacyFontFamilyKeysStillHaveReadableFallbackStacks() {
+        val keys = listOf(FontFamilyKey.SYSTEM, FontFamilyKey.SERIF, FontFamilyKey.SANS,
+            FontFamilyKey.KAITI, FontFamilyKey.FANGSONG, FontFamilyKey.ROUND, FontFamilyKey.LIGHT, FontFamilyKey.MONO)
+        for (key in keys) {
+            val stack = ReadingFonts.stackOf(key, null)
+            assertTrue("$key 的字体栈不应为空", stack.isNotBlank())
             assertTrue("字体栈应以通用族结尾", stack.endsWith("sans-serif") || stack.endsWith("serif") || stack.endsWith("monospace"))
         }
     }
@@ -49,9 +48,50 @@ class ReadingFontsTest {
     }
 
     @Test
-    fun presetLabelLookup() {
-        assertEquals("楷体", ReadingFonts.presetLabel(FontFamilyKey.KAITI))
-        assertEquals("自定义", ReadingFonts.presetLabel("SOMETHING_ELSE"))
+    fun retiredPreviewFontFallsBackWithoutChangingOtherReadingSettings() {
+        for (name in listOf("BarlowCondensed-Bold", "BarlowCondensed-Bold.ttf", "BarlowCondensed-Bold-2.OTF")) {
+            val config = ReaderConfig.DEFAULT.copy(
+                customFontAsset = null,
+                customFontPath = "/data/user/0/com.mirad.reader/files/fonts/$name",
+                fontSizeSp = 31f,
+                pageMode = PageMode.SCROLL
+            )
+            assertEquals(
+                config.copy(customFontPath = null, customFontAsset = ReadingFonts.DEFAULT_CUSTOM_FONT),
+                ReaderConfigJson.decode(ReaderConfigJson.encode(config))
+            )
+        }
+    }
+
+    @Test
+    fun retiredFontDisplayNamesAreFilteredWithoutMatchingOtherFonts() {
+        assertTrue(ReadingFonts.isRetiredPreviewFont("BarlowCondensed-Bold"))
+        assertTrue(ReadingFonts.isRetiredPreviewFont("barlowcondensed-bold-2"))
+        assertTrue(!ReadingFonts.isRetiredPreviewFont("BarlowCondensed-BoldItalic"))
+        assertTrue(!ReadingFonts.isRetiredPreviewFont("思源宋体"))
+    }
+
+    @Test
+    fun otherImportedFontsAndSelectedSystemFontsKeepTheirSettings() {
+        val imported = ReaderConfig.DEFAULT.copy(
+            customFontAsset = null,
+            customFontPath = "/data/user/0/com.mirad.reader/files/fonts/BarlowCondensed-BoldItalic.ttf"
+        )
+        assertEquals(imported, ReaderConfigJson.decode(ReaderConfigJson.encode(imported)))
+        val system = imported.copy(
+            fontFamily = FontFamilyKey.SERIF,
+            customFontPath = "/data/user/0/com.mirad.reader/files/fonts/BarlowCondensed-Bold.ttf"
+        )
+        val decoded = ReaderConfigJson.decode(ReaderConfigJson.encode(system))
+        assertEquals(FontFamilyKey.SERIF, decoded.fontFamily)
+        assertNull(decoded.customFontPath)
+    }
+
+    @Test
+    fun bundledLabelLookup() {
+        assertEquals("霞鹜文楷", ReadingFonts.bundledLabel("lxgw-wenkai-regular.woff2"))
+        assertEquals("思源宋体", ReadingFonts.bundledLabel("noto-serif-sc-regular.woff2"))
+        assertEquals("OtherFont", ReadingFonts.bundledLabel("OtherFont.ttf"))
     }
 
     @Test

@@ -65,7 +65,7 @@ internal fun WebViewGlassBackdrop(view: ReaderWebView?, visible: Boolean, revisi
         if (!needsGlass || !capable) {
             binding?.stopImmediately()
             if (!needsGlass) {
-                source?.clearAndStop("webview_transparency_zero")
+                source?.clearAndStop()
             }
         } else {
             binding?.setEnabled(

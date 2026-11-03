@@ -39,14 +39,13 @@ fun FontSizeControl(config: ReaderConfig, onChange: ((ReaderConfig) -> ReaderCon
 
 /**
  * 「字体与排版」分类页。EPUB 保留原书时字体与文字排版由原书决定：
- * 卡片照常显示但整体置灰停用（页边距与版心仍可用），并保留跳转到 EPUB 的入口。
+ * 字体与字号在此页，其他排版设置进入子页。
  */
 @Composable
 fun TypographySection(
     config: ReaderConfig,
     onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
     fonts: List<ReadingFont> = emptyList(),
-    onImportFont: () -> Unit = {},
     onDeleteFont: (ReadingFont) -> Unit = {},
     isEpub: Boolean? = null,
     onOpenPage: (ReadingSettingsPage) -> Unit = {}
@@ -55,14 +54,9 @@ fun TypographySection(
     val disabledAlpha = if (editableTypography) 1f else 0.45f
     val gatedChange: ((ReaderConfig) -> ReaderConfig) -> Unit =
         if (editableTypography) onChange else remember { { } }
-    // 置灰必须连导入/删除字体一起停用：字体卡片里的按钮同样属于被原书版式接管的区域。
-    val gatedImport: () -> Unit =
-        if (editableTypography) onImportFont else remember { { } }
-    val gatedDelete: (ReadingFont) -> Unit =
-        if (editableTypography) onDeleteFont else remember { { } }
     Column(Modifier.fillMaxWidth()) {
         Box(Modifier.alpha(disabledAlpha)) {
-            FontSection(config, fonts, gatedChange, gatedImport, gatedDelete)
+            FontSection(config, fonts, gatedChange, onDelete = onDeleteFont.takeIf { editableTypography })
         }
         if (!editableTypography) {
             SettingCard {
@@ -72,8 +66,35 @@ fun TypographySection(
             }
         }
         SettingCard(title = "排版") {
+            Box(Modifier.alpha(disabledAlpha)) { FontSizeControl(config, gatedChange) }
+            CardDivider()
+            SettingNavRow("排版设置", onClick = { onOpenPage(ReadingSettingsPage.LAYOUT) })
+        }
+    }
+}
+
+/** 字体与排版的子页：间距、缩进与版面选项共用原有配置编辑链路。 */
+@Composable
+fun LayoutSection(
+    config: ReaderConfig,
+    onChange: ((ReaderConfig) -> ReaderConfig) -> Unit,
+    isEpub: Boolean? = null,
+    onOpenPage: (ReadingSettingsPage) -> Unit = {}
+) {
+    val editableTypography = canEditReaderTypography(config, isEpub)
+    val disabledAlpha = if (editableTypography) 1f else 0.45f
+    val gatedChange: ((ReaderConfig) -> ReaderConfig) -> Unit =
+        if (editableTypography) onChange else remember { { } }
+    Column(Modifier.fillMaxWidth()) {
+        if (!editableTypography) {
+            SettingCard {
+                SettingNavRow("EPUB 排版", value = "保留原书",
+                    subtitle = "原书版式下仅保留页边距与版心设置",
+                    onClick = { onOpenPage(ReadingSettingsPage.EPUB) })
+            }
+        }
+        SettingCard {
             Column(Modifier.alpha(disabledAlpha)) {
-                FontSizeControl(config, gatedChange)
                 LabeledSlider(
                     label = "行距",
                     value = config.lineHeightMultiplier,

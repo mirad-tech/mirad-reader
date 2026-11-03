@@ -46,8 +46,6 @@ data class GlassAppearance(
             }
         }
 
-        /** 兼容旧调用：把百分比当成清晰度读（仅用于历史测试与预览参数）。 */
-        fun parse(raw: String?): GlassAppearance = fromLegacyPercent(raw)
     }
 }
 

@@ -162,7 +162,14 @@ object ReaderConfigJson {
         val config = runCatching { json.decodeFromString(ReaderConfig.serializer(), text) }
             .getOrElse { return ReaderConfig.DEFAULT }
         // 历史版本存在已删除的翻页动画（如 CURL）：解码时收敛到合法值，避免旧数据卡住阅读。
-        return if (config.pageAnim in ANIMS) config else config.copy(pageAnim = PageAnim.SLIDE)
+        val normalized = if (config.pageAnim in ANIMS) config else config.copy(pageAnim = PageAnim.SLIDE)
+        // 旧测试字体已移除：全局和单书配置统一回退，其他已导入字体照常保留。
+        return if (ReadingFonts.isRetiredPreviewFont(normalized.customFontPath?.substringAfterLast('/'))) {
+            normalized.copy(
+                customFontPath = null,
+                customFontAsset = normalized.customFontAsset ?: ReadingFonts.DEFAULT_CUSTOM_FONT
+            )
+        } else normalized
     }
 
     private val ANIMS = listOf(PageAnim.NONE, PageAnim.SLIDE, PageAnim.COVER)

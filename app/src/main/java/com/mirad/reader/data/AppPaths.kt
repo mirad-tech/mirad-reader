@@ -16,9 +16,6 @@ class AppPaths(private val context: Context) {
 
     val backgroundsDir: File get() = ensure(File(root, "backgrounds"))
 
-    /** 只读目录，调试用样书扫描。 */
-    val samplesDir: File get() = ensure(File(context.getExternalFilesDir(null) ?: root, "samples"))
-
     fun bookDir(token: String): File = ensure(File(booksDir, token))
 
     fun originalFile(token: String, extension: String): File = File(bookDir(token), "original.$extension")

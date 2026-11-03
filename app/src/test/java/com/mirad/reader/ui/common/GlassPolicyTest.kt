@@ -37,16 +37,16 @@ class GlassPolicyTest {
         assertEquals(60, GlassAppearance.DEFAULT.transparencyPercent)
         assertEquals(0.6f, GlassAppearance.DEFAULT.transparencyFraction, 0.001f)
 
-        assertEquals(60, GlassAppearance.parse(null).transparencyPercent)
-        assertEquals(60, GlassAppearance.parse("").transparencyPercent)
-        assertEquals(60, GlassAppearance.parse("not-a-number").transparencyPercent)
+        assertEquals(60, GlassAppearance.fromLegacyPercent(null).transparencyPercent)
+        assertEquals(60, GlassAppearance.fromLegacyPercent("").transparencyPercent)
+        assertEquals(60, GlassAppearance.fromLegacyPercent("not-a-number").transparencyPercent)
 
-        assertEquals(0, GlassAppearance.parse("0").transparencyPercent)
-        assertEquals(45, GlassAppearance.parse("45").transparencyPercent)
-        assertEquals(100, GlassAppearance.parse("100").transparencyPercent)
+        assertEquals(0, GlassAppearance.fromLegacyPercent("0").transparencyPercent)
+        assertEquals(45, GlassAppearance.fromLegacyPercent("45").transparencyPercent)
+        assertEquals(100, GlassAppearance.fromLegacyPercent("100").transparencyPercent)
 
-        assertEquals(0, GlassAppearance.parse("-15").transparencyPercent)
-        assertEquals(100, GlassAppearance.parse("250").transparencyPercent)
+        assertEquals(0, GlassAppearance.fromLegacyPercent("-15").transparencyPercent)
+        assertEquals(100, GlassAppearance.fromLegacyPercent("250").transparencyPercent)
     }
 
     @Test fun zeroTransparencySkipsBlurAndYieldsOpaque() {

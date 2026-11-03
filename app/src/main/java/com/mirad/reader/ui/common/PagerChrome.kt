@@ -38,10 +38,6 @@ internal class PagerChrome {
         val origin = IntArray(2); root.getLocationInWindow(origin)
         val position = progress()
         val viewportWidth = if (root is GlassBackdropView) root.contentLayer.width else root.width
-        if (com.mirad.reader.BuildConfig.DEBUG) android.util.Log.d("PagerComposite", "p=$position rootRecord=${if (root is GlassBackdropView) root.contentRecords else -1} root=${root.width}x${root.height} canvas=${canvas.clipBounds} bodies=" + bodies.map { (v, i) ->
-            val at = IntArray(2); v.getLocationInWindow(at)
-            "$i:${v.width}x${v.height}/node=${v.contentLayer.width}x${v.contentLayer.height}/shown=${v.isShown}/ready=${v.contentLayer.hasDisplayList()}/at=${at.toList()}/records=${v.contentRecords}"
-        })
         bodies.forEach { (view, page) ->
             if (abs(page - position) < 1f && view.contentLayer.hasDisplayList()) {
                 val at = IntArray(2); view.getLocationInWindow(at)

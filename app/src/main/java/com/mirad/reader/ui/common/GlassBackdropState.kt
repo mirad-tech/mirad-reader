@@ -102,7 +102,7 @@ class GlassBackdropState @JvmOverloads internal constructor(
 
     fun setImage(image: ImageBitmap?, size: IntSize = this.size, origin: Offset = this.origin) {
         if (image != null && (!enabled || activeTransparencyPercent <= 0)) {
-            clearAndStop("setImage_while_disabled_or_zero")
+            clearAndStop()
             return
         }
         if (image == null) {
@@ -131,7 +131,7 @@ class GlassBackdropState @JvmOverloads internal constructor(
      * R4：当透明度切到 0%、组件失活、进入后台或能力降级时，
      * 取消所有排队采样、使在途代次失效，并立即清空缓存位图与状态。
      */
-    fun clearAndStop(reason: String = "stopped") {
+    fun clearAndStop() {
         generation++
         pendingSnapshot = false
         snapshotInFlight = false
@@ -140,16 +140,10 @@ class GlassBackdropState @JvmOverloads internal constructor(
         activeCaptureJob = null
         trailingJob?.cancel()
         trailingJob = null
-        val hadData = image != null || sharedSnapshot != null || analysisBitmap != null
         image = null
         sharedSnapshot = null
         analysisBitmap = null
         lastSampleFingerprint = 0L
-        if (hadData) {
-            runCatching {
-                android.util.Log.i("GlassPreview", "glassCleared reason=$reason ${statsSummary()}")
-            }
-        }
     }
 
     /**
@@ -171,7 +165,7 @@ class GlassBackdropState @JvmOverloads internal constructor(
     ) {
         activeTransparencyPercent = transparencyPercent
         if (!enabled || transparencyPercent <= 0) {
-            clearAndStop("notify_zero_or_disabled")
+            clearAndStop()
             return
         }
         val scope = hostScope ?: return
@@ -218,7 +212,7 @@ class GlassBackdropState @JvmOverloads internal constructor(
     ) {
         activeTransparencyPercent = transparencyPercent
         if (transparencyPercent <= 0 || !enabled) {
-            clearAndStop("request_zero_or_disabled")
+            clearAndStop()
             return
         }
         if (image != null) {
@@ -378,9 +372,6 @@ class GlassBackdropState @JvmOverloads internal constructor(
                 recorded = true
             }
             drawVersion++
-            runCatching {
-                android.util.Log.i("GlassPreview", "glassSampleReadback ${statsSummary()}")
-            }
         } finally {
             if (generation == token) {
                 snapshotInFlight = false

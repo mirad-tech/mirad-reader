@@ -61,7 +61,7 @@ The reader repair also has two focused checks:
 & './tools/glass-preview/Test-ReaderGlassFix.ps1' -RunId glass-fix-20261022
 ```
 
-The backdrop probe compares the sampled viewport with independent Window PixelCopy pixels after small/large scrolls, cross-chapter transitions, continuous painting and delayed image/font loads. It checks idle/hidden behavior, reopening, full-screen and visible system bars on real sheet/dialog windows, and unchanged viewport/reading position. The timed legacy draw comparison executes the former no-scroll-transform capture on the same WebView; it is not a historical app timing measurement. `Test-ReaderGlassFix` verifies toolbar touch isolation, foreground/background transitions, complete font semantics and independent deletion targets using only in-memory fixtures.
+The backdrop probe compares the sampled viewport with independent Window PixelCopy pixels after small/large scrolls, cross-chapter transitions, continuous painting and delayed image/font loads. It checks idle/hidden behavior, reopening, full-screen and visible system bars on real sheet/dialog windows, and unchanged viewport/reading position. The timed legacy draw comparison executes the former no-scroll-transform capture on the same WebView; it is not a historical app timing measurement. `Test-ReaderGlassFix` verifies toolbar touch isolation, foreground/background transitions, selection of the four real bundled fonts and the absence of delete actions for bundled fonts.
 
 The matrix includes `font-{narrow,wide}-{light,dark}-{10,13,16}` for typography at 1.0/1.3/1.6 font scale, plus `reader-dialog-fullscreen`, `reader-dialog-system-bars` and `reader-settings-fullscreen`. These scene/intent switches only exist in the preview variant.
 
