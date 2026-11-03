@@ -105,19 +105,20 @@ try {
     Check 'current custom font shows catalog label' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：霞鹜文楷']"))
     RevealCustomFont
     $document = Ui
-    Check 'long font retains complete accessibility text' ($null -ne $document.SelectSingleNode("//node[@text='BarlowCondensed-Bold']"))
-    $delete = $document.SelectSingleNode("//node[@content-desc='删除字体：BarlowCondensed-Bold']/ancestor-or-self::node[@clickable='true'][1]")
+    # 2026-11-03 移除了预览夹具字体（原 BarlowCondensed-Bold 指向并不存在的 preview-only.ttf），
+    # 删除/回退断言改用内置思源宋体；同时去掉只对超长字体名有意义的那条断言。
+    $delete = $document.SelectSingleNode("//node[@content-desc='删除字体：思源宋体']/ancestor-or-self::node[@clickable='true'][1]")
     $rect = Bounds $delete 'delete'
     Check 'font delete has independent 48dp hit area' (($rect.Right-$rect.Left) -ge 132 -and ($rect.Bottom-$rect.Top) -ge 132)
     TapNode $delete 'delete-tap'
     Check 'deleting unselected font preserves selection' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：霞鹜文楷']"))
-    Check 'deleted font removed from in-memory list' ($null -eq (Ui).SelectSingleNode("//node[@text='BarlowCondensed-Bold']"))
+    Check 'deleted font removed from in-memory list' ($null -eq (Ui).SelectSingleNode("//node[@text='思源宋体']"))
 
     Launch 'reader-typography'
     RevealCustomFont
-    TapNode ((Ui).SelectSingleNode("//node[@text='BarlowCondensed-Bold']")) 'barlow'
-    Check 'selected imported font shows catalog label' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：BarlowCondensed-Bold']"))
-    TapNode ((Ui).SelectSingleNode("//node[@content-desc='删除字体：BarlowCondensed-Bold']")) 'delete-barlow'
+    TapNode ((Ui).SelectSingleNode("//node[@text='思源宋体']")) 'serif'
+    Check 'selected imported font shows catalog label' ($null -ne (Ui).SelectSingleNode("//node[@text='当前使用：思源宋体']"))
+    TapNode ((Ui).SelectSingleNode("//node[@content-desc='删除字体：思源宋体']")) 'delete-serif'
     Check 'deleting current font keeps existing system fallback' ((Logs) -match 'fontDeleted current=SYSTEM')
     Check 'fallback clears custom font label' ($null -eq (Ui).SelectSingleNode("//node[starts-with(@text,'当前使用：')]"))
     (Logs) | Set-Content -LiteralPath (Join-Path $logRoot 'font-delete-events.txt') -Encoding utf8

@@ -439,8 +439,7 @@ private fun ReaderPreview(
     var config by remember { mutableStateOf(ReaderConfig.DEFAULT.copy(theme = if (dark) ThemeKey.DARK else ThemeKey.PAPER, pageMode = PageMode.SCROLL, fullScreen = fullScreen)) }
     val fonts = remember { mutableStateListOf(
         ReadingFont("霞鹜文楷", assetName = ReadingFonts.BUNDLED_WENKAI),
-        ReadingFont("思源宋体", assetName = ReadingFonts.BUNDLED_SERIF),
-        ReadingFont("BarlowCondensed-Bold", filePath = "preview-only.ttf")
+        ReadingFont("思源宋体", assetName = ReadingFonts.BUNDLED_SERIF)
     ) }
     var view by remember { mutableStateOf<ReaderWebView?>(null) }
     var ready by remember { mutableIntStateOf(0) }
