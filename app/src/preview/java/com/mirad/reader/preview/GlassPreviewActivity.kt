@@ -153,7 +153,6 @@ class GlassPreviewActivity : ComponentActivity() {
                 val glassSaveFailed by previewSettingsRepo.glassSaveFailed.collectAsState(initial = false)
                 val savedRaw by inMemoryDao.savedGlassFlow.collectAsState(initial = initialGlass.transparencyPercent.toString())
                 val bounceProbe = remember { PreviewBounceDiagnostics() }
-                var edgeEnabled by remember { mutableStateOf(intent.getBooleanExtra("edge", true)) }
 
                 val controller = remember(previewSettingsRepo, repoScope) {
                     object : GlassAppearanceController {
@@ -194,14 +193,12 @@ class GlassPreviewActivity : ComponentActivity() {
                     LocalGlassAppearance provides glassAppearance,
                     LocalGlassAppearanceController provides controller,
                     LocalGlassSaveFailed provides glassSaveFailed,
-                    LocalGlassEdgeTexture provides edgeEnabled,
                     LocalEdgeBounceObserver provides bounceProbe::record
                 ) {
                     GlassBackdropHost {
                         PreviewDiagnosticsReceiver(
                             controller = controller,
                             bounceProbe = bounceProbe,
-                            onSetEdge = { edgeEnabled = it },
                             onSetSaveFailMode = { fail ->
                                 inMemoryDao.failWrites = fail
                                 Log.i("GlassPreview", "previewSaveFailMode=$fail")
@@ -238,7 +235,6 @@ class GlassPreviewActivity : ComponentActivity() {
 private fun PreviewDiagnosticsReceiver(
     controller: GlassAppearanceController,
     bounceProbe: PreviewBounceDiagnostics,
-    onSetEdge: (Boolean) -> Unit,
     onSetSaveFailMode: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
@@ -247,7 +243,6 @@ private fun PreviewDiagnosticsReceiver(
     val saveFailed = LocalGlassSaveFailed.current
     val currentPercent by rememberUpdatedState(appearance.transparencyPercent)
     val currentAppearance by rememberUpdatedState(appearance)
-    val currentSetEdge by rememberUpdatedState(onSetEdge)
     val currentSaveFailed by rememberUpdatedState(saveFailed)
     DisposableEffect(context, backdrop, controller) {
         val receiver = object : android.content.BroadcastReceiver() {
@@ -269,7 +264,6 @@ private fun PreviewDiagnosticsReceiver(
                         controller.update(GlassAppearance(enabled = intent.getBooleanExtra("enabled", true), clarityPercent = pct))
                         controller.commit()
                     }
-                    "com.mirad.reader.preview.ACTION_SET_EDGE" -> currentSetEdge(intent.getBooleanExtra("enabled", true))
                     "com.mirad.reader.preview.ACTION_RESET_BOUNCE" -> bounceProbe.resetPeaks()
                     "com.mirad.reader.preview.ACTION_SET_SAVE_FAIL_MODE" -> {
                         val fail = intent.getBooleanExtra("fail", false)
@@ -286,7 +280,6 @@ private fun PreviewDiagnosticsReceiver(
             addAction("com.mirad.reader.preview.ACTION_SET_TRANSPARENCY")
             addAction("com.mirad.reader.preview.ACTION_SET_SAVE_FAIL_MODE")
             addAction("com.mirad.reader.preview.ACTION_RETRY_SAVE")
-            addAction("com.mirad.reader.preview.ACTION_SET_EDGE")
             addAction("com.mirad.reader.preview.ACTION_RESET_BOUNCE")
         }
         if (android.os.Build.VERSION.SDK_INT >= 33) {

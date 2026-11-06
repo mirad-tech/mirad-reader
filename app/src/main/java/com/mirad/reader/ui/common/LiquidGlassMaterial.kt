@@ -3,9 +3,7 @@ package com.mirad.reader.ui.common
 import android.graphics.Canvas
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
-import android.graphics.RuntimeShader
 import android.graphics.Shader
-import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -16,9 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.luminance
@@ -27,27 +23,18 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
 import kotlin.math.ceil
 
 /**
- * Material and foreground have independent hardware layers; only the material is refracted.
- *
- * 底色只由公共角色策略决定：调用点不再能传入整栏不透明度下限。
+ * 背景在独立的硬件层中模糊，按材质角色叠加底色后再绘制前景。
  */
 @RequiresApi(31)
 internal fun Modifier.hardwareGlassBackground(
-    source: HardwareGlassBackdrop, style: GlassStyle, shape: Shape,
-    shadowElevation: Dp? = null
+    source: HardwareGlassBackdrop, style: GlassStyle, shape: Shape
 ): Modifier = composed {
     val appearance = LocalGlassAppearance.current
     val percent = appearance.transparencyPercent
-    // 关闭时 percent=0 走稳定表面；工具栏 100 时零模糊，面板按公共策略保留柔化。
     val clarity = appearance.clarityPercent
-    val edgeTexture = LocalGlassEdgeTexture.current
-    // 折射与描边分开开关：预览可只关弯折或只关描边，生产两者都是 true。
-    val refraction = LocalGlassRefraction.current
     val surface = MaterialTheme.colorScheme.surface
     val baseOpacity by animateFloatAsState(
         liquidSurfaceOpacity(clarity, surface.luminance() < .5f, style),
@@ -62,7 +49,7 @@ internal fun Modifier.hardwareGlassBackground(
         onDispose { source.removeConsumer(renderer); renderer.release() }
     }
 
-    this.shadow(shadowElevation ?: if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false).onGloballyPositioned {
+    this.onGloballyPositioned {
         coordinates = it
         // LayoutCoordinates identity usually survives a drag. Publish its position separately so
         // changing only the outer placement also invalidates this material's cached display list.
@@ -90,7 +77,6 @@ internal fun Modifier.hardwareGlassBackground(
             renderer.pause()
             source.recordGuard(renderer, reason, active, currentActive, positioned, hasNode, null)
             drawOutline(outline, surface)
-            if (edgeTexture && appearance.enabled) drawGlassEdgeTexture(outline, surface, clarity, 1f, topSheen = false)
             drawContent()
             return@drawWithContent
         }
@@ -101,24 +87,21 @@ internal fun Modifier.hardwareGlassBackground(
                 host.getLocationInWindow(renderer.hostLocation)
                 renderer.draw(canvas.nativeCanvas, node,
                     position.x - renderer.hostLocation[0], position.y - renderer.hostLocation[1],
-                    size.width, size.height, density, blurDp, outline, edgeTexture, refraction)
+                    size.width, size.height, blurDp * density)
             }
         }
         if (!hardware) {
             renderer.pause()
             source.recordGuard(renderer, "software-canvas", active, currentActive, positioned, hasNode, false)
             drawOutline(outline, surface)
-            if (edgeTexture && appearance.enabled) drawGlassEdgeTexture(outline, surface, clarity, 1f, topSheen = false)
             drawContent()
             return@drawWithContent
         }
         source.recordGuard(renderer, "none", active, currentActive, positioned, hasNode, true)
         drawOutline(outline, surface.copy(alpha = baseOpacity))
-        if (edgeTexture) drawGlassEdgeTexture(outline, surface, clarity, baseOpacity, topSheen = true)
         drawContent()
 
         source.recordMaterial(baseOpacity, 0f, blurDp,
-            edgeTexture && refraction && Build.VERSION.SDK_INT >= 33 && outline !is Outline.Generic,
             renderer.materialReady, renderer.materialRecords, renderer.materialRecoveries)
     }
 }
@@ -135,9 +118,6 @@ private class LiquidBackdropRenderer {
     private var previousPadding = -1
     private var lastBlurRadius = -1f
     private var blur: RenderEffect? = null
-    private val refraction by lazy(LazyThreadSafetyMode.NONE) {
-        if (Build.VERSION.SDK_INT >= 33) LiquidEdgeRefraction() else null
-    }
     private var appliedMaterialEffect: RenderEffect? = null
     private var participating = false
     val materialReady: Boolean get() = material.hasDisplayList()
@@ -147,18 +127,14 @@ private class LiquidBackdropRenderer {
         private set
 
     fun draw(canvas: Canvas, content: RenderNode, x: Float, y: Float, width: Float, height: Float,
-        density: Float, blurDp: Float, outline: Outline, edgeEnabled: Boolean, refractionEnabled: Boolean) {
-        val radius = blurDp * density
-        // 清晰度 100% 会传 0：createBlurEffect 不接受 0 半径，必须明确走"无模糊"分支，
-        // 而不是把 0 传给要求有效半径的路径。
-        val hasBlur = radius > 0.01f
-        val hasRefraction = edgeEnabled && refractionEnabled &&
-            Build.VERSION.SDK_INT >= 33 && outline !is Outline.Generic
-        val padding = liquidMaterialPaddingPx(radius, hasRefraction, density)
+        blurRadiusPx: Float) {
+        // 清晰度 100% 时半径为 0，直接绘制背景节点。
+        val hasBlur = blurRadiusPx > 0.01f
+        val padding = liquidMaterialPaddingPx(blurRadiusPx)
         participating = true
-        if (hasBlur && radius != lastBlurRadius) {
-            lastBlurRadius = radius
-            blur = RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP)
+        if (hasBlur && blurRadiusPx != lastBlurRadius) {
+            lastBlurRadius = blurRadiusPx
+            blur = RenderEffect.createBlurEffect(blurRadiusPx, blurRadiusPx, Shader.TileMode.CLAMP)
         }
         // A detached native child may lose its display list even though its Java wrapper and
         // geometry cache survive a 0%/fallback interval. Re-establish both list and effect on return.
@@ -179,11 +155,7 @@ private class LiquidBackdropRenderer {
             previousWidth = width; previousHeight = height; previousPadding = padding
             materialRecords++
         }
-        val effect = when {
-            hasRefraction -> refraction?.effect(width, height, outline, padding.toFloat(), density, if (hasBlur) blur else null)
-            hasBlur -> blur
-            else -> null
-        }
+        val effect = if (hasBlur) blur else null
         if (record || effect !== appliedMaterialEffect) {
             material.setRenderEffect(effect)
             appliedMaterialEffect = effect
@@ -205,78 +177,4 @@ private class LiquidBackdropRenderer {
     }
 
     fun release() { pause(); material.discardDisplayList() }
-}
-
-@RequiresApi(33)
-private class LiquidEdgeRefraction {
-    private val shader = RuntimeShader("""
-        uniform shader content;
-        uniform float2 size;
-        uniform float4 corners;
-        uniform float padding;
-        uniform float rim;
-        uniform float strength;
-        float distanceToEdge(float2 p) {
-            float r = p.x < size.x * 0.5 ?
-                (p.y < size.y * 0.5 ? corners.x : corners.w) :
-                (p.y < size.y * 0.5 ? corners.y : corners.z);
-            float2 q = abs(p - size * 0.5) - (size * 0.5 - r);
-            return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-        }
-        half4 main(float2 coord) {
-            float2 p = coord - padding;
-            float d = distanceToEdge(p);
-            // 连续曲面：t=0 在轮廓上，t=1 到影响带内沿。贴边用窄而强的"透镜"项，
-            // 内侧叠一层宽而缓的过渡项，两者都在 t=1 处归零，因此不会在带内出现台阶，
-            // 也不会把中心区域的磨砂挪动。inside 让轮廓外（padding 区）原样返回，
-            // 这里用乘法而不是分支，避免 shader 里出现提前 return。
-            float inside = step(d, 0.0);
-            float t = clamp(-d / max(rim, 0.001), 0.0, 1.0);
-            // 与 LiquidRefractionCurve 同一组系数：0.8/1.4/-1.2，t=1 处斜率为 0。
-            float shift = 0.8 * t + 1.4 * t * t - 1.2 * t * t * t;
-            float weight = (1.0 - clamp(shift, 0.0, 1.0)) * inside;
-            float2 gradient = float2(
-                distanceToEdge(p+float2(0.5,0.0))-distanceToEdge(p-float2(0.5,0.0)),
-                distanceToEdge(p+float2(0.0,0.5))-distanceToEdge(p-float2(0.0,0.5)));
-            float2 normal = gradient / max(length(gradient), 0.001);
-            // 向内取样：RuntimeShader 的输入可能被父裁切限制在材质区域，向外读会在贴边
-            // 产生输入边界的彩色条带。凸轮廓内移保持采样有效，中心和前景仍不移动。
-            return content.eval(coord - normal * strength * weight);
-        }
-    """.trimIndent())
-    private var lastWidth = -1f
-    private var lastHeight = -1f
-    private var lastPadding = -1f
-    private var lastDensity = -1f
-    private var lastTopLeft = -1f
-    private var lastTopRight = -1f
-    private var lastBottomRight = -1f
-    private var lastBottomLeft = -1f
-    private var lastBlur: RenderEffect? = null
-    private var cached: RenderEffect? = null
-
-    fun effect(width: Float, height: Float, outline: Outline, padding: Float, density: Float, blur: RenderEffect?): RenderEffect {
-        val rect = (outline as? Outline.Rounded)?.roundRect
-        val topLeft = rect?.topLeftCornerRadius?.x ?: 0f
-        val topRight = rect?.topRightCornerRadius?.x ?: 0f
-        val bottomRight = rect?.bottomRightCornerRadius?.x ?: 0f
-        val bottomLeft = rect?.bottomLeftCornerRadius?.x ?: 0f
-        if (width == lastWidth && height == lastHeight && padding == lastPadding && density == lastDensity &&
-            topLeft == lastTopLeft && topRight == lastTopRight && bottomRight == lastBottomRight &&
-            bottomLeft == lastBottomLeft && blur === lastBlur) cached?.let { return it }
-        shader.setFloatUniform("size", width, height)
-        shader.setFloatUniform("corners", topLeft, topRight, bottomRight, bottomLeft)
-        shader.setFloatUniform("padding", padding)
-        val shortSideDp = minOf(width, height) / density
-        shader.setFloatUniform("rim", liquidRefractionRimDp(shortSideDp) * density)
-        shader.setFloatUniform("strength", liquidRefractionStrengthDp(shortSideDp) * density)
-        // RuntimeShader uniforms are snapshotted when the effect is created.
-        val edge = RenderEffect.createRuntimeShaderEffect(shader, "content")
-        val effect = if (blur == null) edge else RenderEffect.createChainEffect(edge, blur)
-        lastWidth = width; lastHeight = height; lastPadding = padding; lastDensity = density
-        lastTopLeft = topLeft; lastTopRight = topRight; lastBottomRight = bottomRight; lastBottomLeft = bottomLeft
-        lastBlur = blur
-        cached = effect
-        return effect
-    }
 }

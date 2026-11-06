@@ -35,8 +35,7 @@ fun ScreenHeader(
             .padding(horizontal = 12.dp, vertical = 6.dp)) {
             GlassSurface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                shadowElevation = 1.dp
+                shape = RoundedCornerShape(24.dp)
             ) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,

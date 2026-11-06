@@ -114,9 +114,9 @@ Integration diagnostics include a zero CPU display-capture counter, analysis dim
 
 `Test-ReaderMaterialPixels.ps1` 使用相同的 `RunId`、固定 APK 和全新证据目录；固定清晰度为 60，显式关闭再开启玻璃，对比工具栏前景之外的像素区及未遮挡正文。清晰度 0 不是关闭、100 不包含模糊，因此不再使用旧的 100→0→100 作为模糊恢复测试。默认取样区由标题与书签的原生语义边界决定，也可用 `CropRectangle` 事先指定；前景排除、纹理强度和高频抑制阈值保持不变。`layout` 还核对真实输入法上方的可编辑区域及关闭键盘后的实际草稿保存，不能仅凭输入法出现判定可用。
 
-## 边缘光学与导航运动夹具
+## 磨砂材质与导航运动夹具
 
-`SettingsImmersionPreviewActivity` 的硬件阅读场景支持 `pattern` 指令（`stripes/light/dark/none`），图案放在真实正文容器并随正文滚动。`refraction` 指令的 `enabled` 只切换背景弯折，保留相同光影；原 `edge` 仍同时控制两者。对照时只改一个开关，固定主题、清晰度和 `scrollY`，核对当前状态标签、包 SHA-256、材质就绪及 fallback，不能只比较平均亮度。
+`SettingsImmersionPreviewActivity` 的硬件阅读场景支持 `pattern` 指令（`stripes/light/dark/none`），图案放在真实正文容器并随正文滚动。可用条纹背景检查圆角附近的取样位置，用现有磨砂玻璃开关和清晰度验证模糊与底色。对照时固定主题和 `scrollY`，核对包 SHA-256、材质就绪状态及降级标记。
 
 `GlassPreviewActivity --es scene navigation-glass` 复用生产 `AppPagerMotion`、`HorizontalPager`、`PagerChromeHost` 和 `AppNavigationBar`。长按当前胶囊再横向移动、释放，可验证真实运动中的材质；各页仍复用书架内存夹具，不用于证明其他入口的业务流程。广播 `com.mirad.reader.preview.ACTION_DUMP_NAVIGATION`（可附 `--es label`）将进度、拖动状态及内层硬件材质摘要写入预览应用的 `navigation-glass-state.json`。
 

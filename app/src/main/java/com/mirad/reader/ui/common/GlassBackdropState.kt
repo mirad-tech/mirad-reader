@@ -70,7 +70,6 @@ class GlassBackdropState @JvmOverloads internal constructor(
     internal var lastComputedAmbientOpacity = 1f
     internal var lastComputedPeakOpacity = 1f
     internal var lastComputedBlurDp = 0f
-    internal var lastComputedHighlightAlpha = 0f
     internal var lastProtectedCellCount = 0
 
     // 跨窗口共享快照与 CPU 安全局部采样分析副本（均为有界 <=25% 且 <=640px 的 ARGB_8888 位图，R3）
@@ -97,7 +96,6 @@ class GlassBackdropState @JvmOverloads internal constructor(
             "ambientOpacity=${"%.3f".format(java.util.Locale.US, lastComputedAmbientOpacity)} " +
             "peakOpacity=${"%.3f".format(java.util.Locale.US, lastComputedPeakOpacity)} " +
             "protectedCells=$lastProtectedCellCount blurDp=${"%.1f".format(java.util.Locale.US, lastComputedBlurDp)} " +
-            "highlightAlpha=${"%.3f".format(java.util.Locale.US, lastComputedHighlightAlpha)} " +
             "thread=$lastSampleThreadName durationMs=${lastSampleDurationNanos / 1_000_000.0}"
 
     fun setImage(image: ImageBitmap?, size: IntSize = this.size, origin: Offset = this.origin) {

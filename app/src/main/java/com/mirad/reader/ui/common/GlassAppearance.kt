@@ -8,7 +8,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
  * 玻璃外观。
  *
  * 用户可见语义已从"透明度百分比"改为两个独立控制：
- * - [enabled]：磨砂玻璃开关。关闭后走完全不透明的稳定表面，不再做模糊、折射与背景分析。
+ * - [enabled]：磨砂玻璃开关。关闭后绘制不透明的主题表面。
  * - [clarityPercent]：清晰度，0 = 最朦胧，100 = 最清晰；它实际改变模糊半径，两端都不承担"关闭"含义。
  *
  * [transparencyPercent] 只是给旧版 APK 的兼容投影（关闭写 0，开启按清晰度单调投影 1..100）。

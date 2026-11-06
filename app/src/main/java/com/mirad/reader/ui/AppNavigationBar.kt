@@ -60,7 +60,6 @@ internal fun AppNavigationBar(
         .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
         GlassSurface(Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-            shadowElevation = 1.dp,
             shape = RoundedCornerShape(29.dp)) {
             Box(Modifier.padding(5.dp)
                 .onSizeChanged { innerSize = it }
@@ -117,7 +116,6 @@ internal fun AppNavigationBar(
                     GlassSurface(
                         Modifier.offset { androidx.compose.ui.unit.IntOffset(left.roundToInt(), ((innerSize.height-height)/2).roundToInt()) }
                             .width(with(density) { width.toDp() }).requiredHeight(with(density) { height.toDp() }),
-                        shadowElevation = 0.dp,
                         shape = RoundedCornerShape(50)) {
                         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
                     }

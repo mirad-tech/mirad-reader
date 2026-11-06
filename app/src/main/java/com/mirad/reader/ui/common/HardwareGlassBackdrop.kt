@@ -79,7 +79,6 @@ internal class HardwareGlassBackdrop(
     private var lastBaseOpacity = 1f
     private var lastProtectionOpacity = 0f
     private var lastBlurDp = 0f
-    private var refractionActive = false
     private var previousSampleStarted = 0L
     private var minimumSampleInterval = Long.MAX_VALUE
     private val materialStates = mutableMapOf<Any, String>()
@@ -278,9 +277,9 @@ internal class HardwareGlassBackdrop(
         return true
     }
 
-    internal fun recordMaterial(base: Float, protection: Float, blur: Float, refraction: Boolean,
+    internal fun recordMaterial(base: Float, protection: Float, blur: Float,
         nodeReady: Boolean, records: Long, recoveries: Long) {
-        lastBaseOpacity = base; lastProtectionOpacity = protection; lastBlurDp = blur; refractionActive = refraction
+        lastBaseOpacity = base; lastProtectionOpacity = protection; lastBlurDp = blur
         materialNodeReady = nodeReady; materialNodeRecords = records; materialNodeRecoveries = recoveries
     }
 
@@ -301,7 +300,6 @@ internal class HardwareGlassBackdrop(
             lastBaseOpacity = 1f
             lastProtectionOpacity = 0f
             lastBlurDp = 0f
-            refractionActive = false
             materialNodeReady = false
         }
     }
@@ -312,7 +310,7 @@ internal class HardwareGlassBackdrop(
         "analysisThread=$lastWorker analysisDurationMs=${lastDurationNanos / 1_000_000.0} " +
         "analysisMinIntervalMs=${if (minimumSampleInterval == Long.MAX_VALUE) 0.0 else minimumSampleInterval / 1_000_000.0} " +
         "baseOpacity=$lastBaseOpacity protectionOpacity=$lastProtectionOpacity blurDp=$lastBlurDp " +
-        "refractionActive=$refractionActive cpuDisplayCaptures=0 " +
+        "cpuDisplayCaptures=0 " +
         "materialDraws=$materialDraws materialFallbacks=$materialFallbacks " +
         "readyMaterials=${materialStates.values.count { it == "none" }} " +
         "fallbackMaterials=${materialStates.values.count { it != "none" }} " +

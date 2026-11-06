@@ -84,60 +84,9 @@ internal fun uniformGlassOpacity(
     else -> liquidSurfaceOpacity(appearance.clarityPercent, isDark, style)
 }
 
-/**
- * 边缘折射的最大径向位移。
- *
- * 旧的 2.1dp 在默认 60 档（工具栏模糊 8.5dp）里基本被磨平，边缘只剩一条描边，
- * 用户反馈的"只有磨砂、没有玻璃边缘"首先来自这里：位移小于模糊半径时，
- * 采样偏移只是把已经糊掉的像素再挪一点，看不出弯折。提高到 4.6dp 后，
- * 60 档仍能辨认贴边的压缩/拉伸，100 档（零模糊）则直接读出背景结构的错位。
- * 小控件另由 [liquidRefractionStrengthDp] 按短边限幅，避免整块被拉伸。
- */
-internal const val LIQUID_REFRACTION_STRENGTH_DP = 4.6f
-
-/** 影响带的绝对值上限；旧的 6dp 太窄，厚度没有过渡空间。 */
-internal const val LIQUID_REFRACTION_RIM_DP = 9.5f
-
-/** 影响带同时受短边限幅，小胶囊里不会把整个表面都变成折射区。 */
-internal fun liquidRefractionRimDp(shortSideDp: Float): Float =
-    min(LIQUID_REFRACTION_RIM_DP, shortSideDp.coerceAtLeast(0f) * .18f)
-
-/** 位移按短边限幅：胶囊/小面板上取短边的 9%，大栏与大面板才用满 [LIQUID_REFRACTION_STRENGTH_DP]。 */
-internal fun liquidRefractionStrengthDp(shortSideDp: Float): Float =
-    min(LIQUID_REFRACTION_STRENGTH_DP, shortSideDp.coerceAtLeast(0f) * .09f)
-
-/**
- * 材质离屏节点的外扩留白（像素）。
- *
- * 两段需求是叠加的：模糊要在四周留够 2 倍半径，折射还要在轮廓之外再多取一段最大位移。
- * 相加后节点内侧始终有 `半径 + 位移 + 1` 的安全余量，采样点不会落进模糊的钳位环；
- * 若像旧版那样取较大者，高清晰档（半径变小）会出现 `半径 < 位移` 的区间，
- * 贴边就会读到被钳位的边缘像素。
- */
-internal fun liquidMaterialPaddingPx(blurRadiusPx: Float, refraction: Boolean, density: Float): Int {
-    val blurPad = blurRadiusPx.coerceAtLeast(0f) * 2f
-    val refractionPad = if (refraction) LIQUID_REFRACTION_STRENGTH_DP * density + 1f else 0f
-    return ceil(blurPad + refractionPad).toInt()
-}
-
-/**
- * 折射位移随"离轮廓的距离"变化的曲线，t=0 在轮廓上、t=1 到影响带内沿。
- *
- * 三次多项式，两个端点被钉住：weightAt(0)=1（贴边位移最大），weightAt(1)=0 且该处斜率为 0
- * （与未偏移的中心平滑相接，没有折角）。系数满足 L+Q+C=1 与 L+2Q+3C=0，
- * shader 里用同一组系数，避免两边各写一条曲线。
- */
-internal object LiquidRefractionCurve {
-    const val LINEAR = .8f
-    const val QUADRATIC = 1.4f
-    const val CUBIC = -1.2f
-
-    fun weightAt(t: Float): Float {
-        val x = t.coerceIn(0f, 1f)
-        val shift = LINEAR * x + QUADRATIC * x * x + CUBIC * x * x * x
-        return (1f - shift).coerceIn(0f, 1f)
-    }
-}
+/** 离屏材质四周各扩展两倍模糊半径，给裁切边缘留足背景采样范围。 */
+internal fun liquidMaterialPaddingPx(blurRadiusPx: Float): Int =
+    ceil(blurRadiusPx.coerceAtLeast(0f) * 2f).toInt()
 
 /**
  * GPU 路径的模糊半径。

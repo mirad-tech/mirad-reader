@@ -23,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlurEffect
@@ -40,7 +39,6 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -48,7 +46,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
-import kotlin.math.ceil
 import kotlin.math.max
 
 /** Preview overrides only: neither value is persisted or exposed in the product. */
@@ -197,12 +194,11 @@ fun Modifier.glassBackdropSource(): Modifier = composed {
 /** The effect belongs exclusively to a background layer; children are drawn afterwards. */
 fun Modifier.glassBackground(
     style: GlassStyle = GlassStyle.Toolbar,
-    shape: Shape = RoundedCornerShape(22.dp),
-    shadowElevation: Dp? = null
+    shape: Shape = RoundedCornerShape(22.dp)
 ): Modifier = composed {
     val hardware = LocalHardwareGlassBackdrop.current
     if (hardware != null && Build.VERSION.SDK_INT >= 31) {
-        return@composed this.hardwareGlassBackground(hardware, style, shape, shadowElevation)
+        return@composed this.hardwareGlassBackground(hardware, style, shape)
     }
     val source = LocalGlassBackdrop.current
     val view = LocalView.current
@@ -215,7 +211,6 @@ fun Modifier.glassBackground(
     var glassSize by remember { mutableStateOf(IntSize.Zero) }
     var separateWindow by remember { mutableStateOf(false) }
     val enabled = source?.enabled == true && !legacy
-    val edgeTexture = LocalGlassEdgeTexture.current
     val percent = appearance.transparencyPercent
 
     // 局部背景特征分析：最多 5 次/秒（200ms 节流），仅在采样位图或组件几何实际变化后执行并缓存
@@ -292,11 +287,10 @@ fun Modifier.glassBackground(
             lastComputedAmbientOpacity = targetOpacity
             lastComputedPeakOpacity = targetOpacity
             lastComputedBlurDp = rawParams.blurRadius.value
-            lastComputedHighlightAlpha = 0f
             lastProtectedCellCount = 0
         }
     }
-    this.shadow(shadowElevation ?: if (legacy) 0.dp else if (style == GlassStyle.Panel) 4.dp else 2.dp, shape, clip = false)
+    this
         .onGloballyPositioned { coordinates ->
             val newOrigin = coordinates.positionOnScreen()
             val newSize = coordinates.size
@@ -311,7 +305,7 @@ fun Modifier.glassBackground(
             val hasBackdrop = canBlur && (bitmap != null || live != null)
 
             if (hasBackdrop && source.size.width > 0 && source.size.height > 0) {
-                val padding = ceil(blurPx * 2).toInt()
+                val padding = liquidMaterialPaddingPx(blurPx)
                 val delta = origin - source.origin
                 background.renderEffect = if (blurPx > 0f) BlurEffect(blurPx, blurPx, TileMode.Clamp) else null
                 background.record(size = IntSize(size.width.toInt() + padding * 2, size.height.toInt() + padding * 2)) {
@@ -328,16 +322,6 @@ fun Modifier.glassBackground(
 
             val opacity = if (hasBackdrop) animatedOpacity else if (!appearance.enabled || legacy) 1f else .94f
             drawRect(color.copy(alpha = opacity))
-            if (!legacy && edgeTexture && appearance.enabled) {
-                drawGlassEdgeTexture(
-                    outline = shape.createOutline(size, layoutDirection, this),
-                    surface = color,
-                    clarity = clarity,
-                    tintAlpha = opacity,
-                    topSheen = true
-                )
-            }
-            // 所有材质、边缘均在前景之前完成，文字和图标不被染色。
             drawContent()
         }
 }
@@ -347,11 +331,10 @@ fun GlassSurface(
     modifier: Modifier = Modifier,
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = MaterialTheme.shapes.large,
-    shadowElevation: Dp? = null,
     content: @Composable BoxScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.glassBackground(style, shape, shadowElevation),
+        modifier = modifier.glassBackground(style, shape),
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,

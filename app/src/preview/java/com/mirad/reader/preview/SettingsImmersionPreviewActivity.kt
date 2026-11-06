@@ -133,9 +133,6 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
             var navigationGeneration by remember { mutableIntStateOf(0) }
             var isEpub by remember { mutableStateOf(initialIsEpub) }
             var chrome by remember { mutableStateOf(initialChrome) }
-            // 仅预览：边缘质感开关，用于在同一进程内做"边缘临时禁用"的前后对照。
-            var edgeTexture by remember { mutableStateOf(intent.getBooleanExtra("edge", true)) }
-            var refraction by remember { mutableStateOf(intent.getBooleanExtra("refraction", true)) }
             var dialog by remember { mutableStateOf(false) }
             val probe = remember {
                 ImmersionReaderProbe().apply {
@@ -195,8 +192,6 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                     LocalAppAppearanceSaveFailed provides appearanceSaveFailed,
                     LocalGlassAppearance provides glass,
                     LocalGlassForceFallback provides intent.getBooleanExtra("fallback", false),
-                    LocalGlassEdgeTexture provides edgeTexture,
-                    LocalGlassRefraction provides refraction,
                     LocalEdgeBounceObserver provides bounceProbe::record,
                     LocalGlassAppearanceController provides glassController,
                     LocalSettingsCommit provides { if (unifiedAppearance) appearanceController.commitReadingConfig() else repo.flushGlobalConfig(scope) }
@@ -244,10 +239,6 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                                 "scroll" -> probe.view?.evaluateJavascript("window.scrollTo(0, ${command.getIntExtra("y", 360)});", null)
                                  "panel", "cover", "hide-cover", "chapter", "image", "pattern", "animate", "stop-animation" ->
                                      if (hardwarePreview) probe.hardwareCommand?.invoke(command)
-                                 "edge" -> {
-                                    edgeTexture = command.getBooleanExtra("enabled", true)
-                                }
-                                "refraction" -> refraction = command.getBooleanExtra("enabled", true)
                                 "transparency" -> {
                                      repo.queueGlassAppearance(GlassAppearance(enabled = command.getBooleanExtra("enabled", glass.enabled), clarityPercent = command.getIntExtra("percent", glass.clarityPercent).coerceIn(0, 100)), scope)
                                      repo.flushGlassAppearance(scope)
@@ -263,7 +254,6 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                                          .put("glass", JSONObject().put("enabled", glass.enabled).put("clarityPercent", glass.clarityPercent))
                                          .put("requestId", command.getStringExtra("requestId"))
                                          .put("hardwarePreview", hardwarePreview).put("chrome", chrome)
-                                         .put("edgeTexture", edgeTexture).put("refraction", refraction)
                                          .put("bounce", bounceProbe.snapshot())
                                          .put("imeVisible", insets.isVisible(WindowInsetsCompat.Type.ime()))
                                          .put("imeBottom", insets.getInsets(WindowInsetsCompat.Type.ime()).bottom)
