@@ -405,6 +405,7 @@ private fun ImageBackgroundControls(
         value = style.backgroundImageAlpha,
         valueText = "${(style.backgroundImageAlpha * 100).toInt()}%",
         range = 0.1f..1f,
+        hapticStep = 0.05f,
         onChange = { value -> change { it.copy(backgroundImageAlpha = value) } }
     )
     if (style.backgroundImageAlpha < 1f) {

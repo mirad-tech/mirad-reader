@@ -187,16 +187,16 @@ private fun RowScope.MiradButtonContent(
     }
 }
 
-/**
- * 设置项分组卡片：统一的圆角、描边与内边距。
- */
+internal val LocalSettingCardElevation = staticCompositionLocalOf { 0.dp }
+
+/** 设置项分组卡片：统一的圆角、描边与内边距。 */
 @Composable
 fun SettingCard(
     title: String? = null,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
     itemSpacing: Dp = 10.dp,
-    shadowElevation: Dp = 0.dp,
+    shadowElevation: Dp = LocalSettingCardElevation.current,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
@@ -257,6 +257,7 @@ fun LabeledSlider(
     value: Float,
     valueText: String,
     range: ClosedFloatingPointRange<Float>,
+    hapticStep: Float,
     onChange: (Float) -> Unit,
     onCommit: (() -> Unit)? = null,
     steps: Int = 0,
@@ -277,6 +278,7 @@ fun LabeledSlider(
         }
         MiradSlider(
             value = value.coerceIn(range.start, range.endInclusive),
+            hapticStep = hapticStep,
             onValueChange = onChange,
             onValueChangeFinished = onCommit ?: LocalSettingsCommit.current,
             valueRange = range,

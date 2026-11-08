@@ -25,6 +25,7 @@ fun BrightnessSettings(config: ReaderConfig, onChange: ((ReaderConfig) -> Reader
                 value = config.brightness,
                 valueText = "${(config.brightness * 100).toInt()}%",
                 range = 0.05f..1f,
+                hapticStep = 0.05f,
                 onChange = { value -> onChange { it.copy(brightness = value) } }
             )
         }

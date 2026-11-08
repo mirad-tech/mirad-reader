@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.key.*
@@ -46,6 +47,7 @@ import com.mirad.reader.ui.common.GlassDropdownMenu
 import com.mirad.reader.ui.common.GlassStyle
 import com.mirad.reader.ui.common.glassBackground
 import com.mirad.reader.ui.design.Spacing
+import com.mirad.reader.ui.design.Elevation
 import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
@@ -329,7 +331,7 @@ internal fun GlassInWindowSheet(
                 sheetContainerColor = androidx.compose.ui.graphics.Color.Transparent,
                 sheetContentColor = MaterialTheme.colorScheme.onSurface,
                 sheetTonalElevation = 0.dp,
-                sheetShadowElevation = 0.dp,
+                sheetShadowElevation = Elevation.modal,
                 sheetDragHandle = null,
                 sheetSwipeEnabled = !closing,
                 containerColor = androidx.compose.ui.graphics.Color.Transparent,
@@ -423,6 +425,7 @@ internal fun GlassInWindowDialog(
             }
             Surface(modifier.padding(horizontal = 24.dp, vertical = outerVertical)
                 .widthIn(max = 560.dp).fillMaxWidth().heightIn(max = availableHeight)
+                .shadow(Elevation.modal, MaterialTheme.shapes.extraLarge, clip = false)
                 .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)
                 .semantics { dialog(); isTraversalGroup = true },
                 color = androidx.compose.ui.graphics.Color.Transparent,
@@ -495,6 +498,7 @@ internal fun GlassPortalMenu(
         val bottom = safeInsets.getBottom(density) + margin
         Layout(modifier = Modifier.fillMaxSize().clipToBounds(), content = {
             Surface(modifier.width(IntrinsicSize.Max).widthIn(min = 160.dp, max = 280.dp)
+                .shadow(Elevation.menu, MaterialTheme.shapes.large, clip = false)
                 .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.large)
                 .semantics { paneTitle = "更多"; isTraversalGroup = true },
                 color = androidx.compose.ui.graphics.Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface,

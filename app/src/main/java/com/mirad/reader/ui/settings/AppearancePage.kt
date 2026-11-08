@@ -133,6 +133,7 @@ fun AppearanceSettings() {
                 "${previewClarity.toInt()}%（已关闭）"
             },
             range = 0f..100f,
+            hapticStep = 5f,
             steps = 99,
             enabled = appearance.enabled && !isSimplified,
             onChange = { value ->

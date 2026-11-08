@@ -52,6 +52,8 @@ object Elevation {
     val bookCover = 3.dp
     val settingsGroup = 4.dp
     val floatingBar = 8.dp
+    val menu = 6.dp
+    val modal = 8.dp
 }
 
 @Immutable

@@ -30,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.expand
@@ -41,6 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.design.Sizes
 import com.mirad.reader.ui.design.Spacing
+import com.mirad.reader.ui.design.Elevation
 
 /**
  * 全项目**唯一**的底部弹层封装。
@@ -72,7 +74,9 @@ fun SheetScaffold(
     }
     // 用屏幕高度显式设上限：ModalBottomSheet 传入的约束可能是无界的，
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
-    val maxHeight = LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction
+    val shadowSpace = Elevation.modal
+    val maxHeight = (LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction - shadowSpace).coerceAtLeast(0.dp)
+    val shape = MaterialTheme.shapes.extraLarge
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
     val close: () -> Unit = { scope.launch { sheetState.hide(); onDismiss() }; Unit }
@@ -81,7 +85,7 @@ fun SheetScaffold(
         sheetState = sheetState,
         dragHandle = null,
         sheetMaxWidth = 720.dp,
-        shape = MaterialTheme.shapes.extraLarge,
+        shape = shape,
         containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
@@ -93,7 +97,8 @@ fun SheetScaffold(
         }) {
         // The public ModalBottomSheet modifier precedes its internal offset. Paint
         // inside its content so the background and clip move with the sheet.
-        Column(Modifier.fillMaxWidth().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)) {
+        Column(Modifier.fillMaxWidth().padding(top = shadowSpace)
+            .shadow(Elevation.modal, shape, clip = false).glassBackground(GlassStyle.Panel, shape)) {
             BottomSheetDefaults.DragHandle(
                 modifier = Modifier.align(Alignment.CenterHorizontally)
                     .clickable {

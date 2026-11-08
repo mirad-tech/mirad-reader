@@ -50,6 +50,7 @@ import com.mirad.reader.ui.common.LocalSettingsCommit
 import com.mirad.reader.ui.common.ResetReadingDialog
 import com.mirad.reader.ui.common.ScreenHeader
 import com.mirad.reader.ui.common.SettingCard
+import com.mirad.reader.ui.common.LocalSettingCardElevation
 import com.mirad.reader.ui.common.SettingNavRow
 import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.rememberFeedbackState
@@ -237,26 +238,28 @@ internal fun SettingsContent(
                             }, onClick = { onOpenRoute(SettingsRoute.App(page)) })
                     }
                 }
-            } else when (route) {
-                is SettingsRoute.Reading -> ReadingSettingsHost(
-                    page = route.page, config = config, onChange = onChange, fonts = fonts,
-                    onDeleteFont = onDeleteFont, onPickImage = onPickImage,
-                    onOpenPage = { onOpenRoute(SettingsRoute.Reading(it)) }
-                )
-                is SettingsRoute.App -> when (route.page) {
-                    AppSettingsPage.APPEARANCE -> AppearanceSettings()
-                    AppSettingsPage.SHELF -> ShelfManagementSection(
-                        hiddenCount = hiddenCount, groupCount = groupCount,
-                        onOpenHidden = onOpenHidden, onManageGroups = onManageGroups
+            } else CompositionLocalProvider(LocalSettingCardElevation provides Elevation.settingsGroup) {
+                when (route) {
+                    is SettingsRoute.Reading -> ReadingSettingsHost(
+                        page = route.page, config = config, onChange = onChange, fonts = fonts,
+                        onDeleteFont = onDeleteFont, onPickImage = onPickImage,
+                        onOpenPage = { onOpenRoute(SettingsRoute.Reading(it)) }
                     )
-                    AppSettingsPage.ABOUT -> SettingCard(title = "关于") {
-                        Text(
-                            text = buildAnnotatedString {
-                                withStyle(SpanStyle(fontFamily = MiradSerif)) { append("墨读") }
-                                append(" v${BuildConfig.VERSION_NAME}")
-                            },
-                            style = MaterialTheme.typography.bodyMedium
+                    is SettingsRoute.App -> when (route.page) {
+                        AppSettingsPage.APPEARANCE -> AppearanceSettings()
+                        AppSettingsPage.SHELF -> ShelfManagementSection(
+                            hiddenCount = hiddenCount, groupCount = groupCount,
+                            onOpenHidden = onOpenHidden, onManageGroups = onManageGroups
                         )
+                        AppSettingsPage.ABOUT -> SettingCard(title = "关于") {
+                            Text(
+                                text = buildAnnotatedString {
+                                    withStyle(SpanStyle(fontFamily = MiradSerif)) { append("墨读") }
+                                    append(" v${BuildConfig.VERSION_NAME}")
+                                },
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
                     }
                 }
             }

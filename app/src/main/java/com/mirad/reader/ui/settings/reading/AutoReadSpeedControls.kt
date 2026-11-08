@@ -25,6 +25,7 @@ fun AutoReadSpeedControls(
             value = speed.toFloat(),
             valueText = "$speed 秒/屏",
             range = range,
+            hapticStep = 5f,
             steps = steps,
             onChange = { value ->
                 onChange { it.copy(autoScrollSecondsPerScreen = AutoReadSpeed.clamp(value.roundToInt())) }
@@ -36,6 +37,7 @@ fun AutoReadSpeedControls(
             value = speed.toFloat(),
             valueText = "$speed 秒/页",
             range = range,
+            hapticStep = 5f,
             steps = steps,
             onChange = { value ->
                 onChange { it.copy(autoPageSeconds = AutoReadSpeed.clamp(value.roundToInt())) }

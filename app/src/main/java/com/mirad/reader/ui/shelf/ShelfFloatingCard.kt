@@ -53,6 +53,7 @@ import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.ui.common.GlassStyle
 import com.mirad.reader.ui.common.GlassSurface
 import com.mirad.reader.ui.common.MiradLinearProgress
+import com.mirad.reader.ui.design.Elevation
 import kotlinx.coroutines.delay
 
 private sealed interface ShelfCardPresentation {
@@ -128,7 +129,8 @@ internal fun ShelfFloatingCard(
                     }
                 },
             style = GlassStyle.Panel,
-            shape = MaterialTheme.shapes.large
+            shape = MaterialTheme.shapes.large,
+            shadowElevation = Elevation.floatingBar
         ) {
             if (card is ShelfCardPresentation.Import) {
                 val task = card.task

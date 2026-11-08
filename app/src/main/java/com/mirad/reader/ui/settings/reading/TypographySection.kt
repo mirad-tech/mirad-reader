@@ -26,14 +26,14 @@ import com.mirad.reader.ui.settings.canEditReaderTypography
 
 /** 字号快捷控件：阅读面板首页与「字体与排版」页共用。 */
 @Composable
-fun FontSizeControl(config: ReaderConfig, onChange: ((ReaderConfig) -> ReaderConfig) -> Unit) {
+fun FontSizeControl(config: ReaderConfig, onChange: ((ReaderConfig) -> ReaderConfig) -> Unit, enabled: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp - 1f).coerceAtLeast(12f)) } }, enabled = config.fontSizeSp > 12f) { Text("减小") }
+        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp - 1f).coerceAtLeast(12f)) } }, enabled = enabled && config.fontSizeSp > 12f) { Text("减小") }
         Column(Modifier.weight(1f)) {
-            LabeledSlider("字号", config.fontSizeSp, "${config.fontSizeSp.toInt()} px", 12f..60f,
-                onChange = { value -> onChange { it.copy(fontSizeSp = value) } }, steps = 47)
+            LabeledSlider("字号", config.fontSizeSp, "${config.fontSizeSp.toInt()} px", 12f..60f, hapticStep = 5f,
+                onChange = { value -> onChange { it.copy(fontSizeSp = value) } }, steps = 47, enabled = enabled)
         }
-        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp + 1f).coerceAtMost(60f)) } }, enabled = config.fontSizeSp < 60f) { Text("增大") }
+        MiradTextButton(onClick = { onChange { it.copy(fontSizeSp = (it.fontSizeSp + 1f).coerceAtMost(60f)) } }, enabled = enabled && config.fontSizeSp < 60f) { Text("增大") }
     }
 }
 
@@ -66,7 +66,7 @@ fun TypographySection(
             }
         }
         SettingCard(title = "排版") {
-            Box(Modifier.alpha(disabledAlpha)) { FontSizeControl(config, gatedChange) }
+            Box(Modifier.alpha(disabledAlpha)) { FontSizeControl(config, gatedChange, enabled = editableTypography) }
             CardDivider()
             SettingNavRow("排版设置", onClick = { onOpenPage(ReadingSettingsPage.LAYOUT) })
         }
@@ -100,6 +100,8 @@ fun LayoutSection(
                     value = config.lineHeightMultiplier,
                     valueText = String.format("%.2f 倍", config.lineHeightMultiplier),
                     range = 1.1f..2.8f,
+                    hapticStep = 0.1f,
+                    enabled = editableTypography,
                     steps = 16,
                     onChange = { value -> gatedChange { it.copy(lineHeightMultiplier = value) } }
                 )
@@ -108,6 +110,8 @@ fun LayoutSection(
                     value = config.paragraphSpacingEm,
                     valueText = String.format("%.2f em", config.paragraphSpacingEm),
                     range = 0f..1.6f,
+                    hapticStep = 0.1f,
+                    enabled = editableTypography,
                     steps = 15,
                     onChange = { value -> gatedChange { it.copy(paragraphSpacingEm = value) } }
                 )
@@ -116,6 +120,8 @@ fun LayoutSection(
                     value = config.firstLineIndentEm,
                     valueText = String.format("%.1f 字", config.firstLineIndentEm),
                     range = 0f..3f,
+                    hapticStep = 0.5f,
+                    enabled = editableTypography,
                     steps = 5,
                     onChange = { value -> gatedChange { it.copy(firstLineIndentEm = value) } }
                 )
@@ -124,6 +130,8 @@ fun LayoutSection(
                     value = config.letterSpacingEm,
                     valueText = String.format("%.2f em", config.letterSpacingEm),
                     range = 0f..0.30f,
+                    hapticStep = 0.02f,
+                    enabled = editableTypography,
                     steps = 14,
                     onChange = { value -> gatedChange { it.copy(letterSpacingEm = value) } }
                 )
@@ -133,6 +141,7 @@ fun LayoutSection(
                 value = config.horizontalPaddingDp.toFloat(),
                 valueText = "${config.horizontalPaddingDp} dp",
                 range = 6f..40f,
+                hapticStep = 4f,
                 steps = 16,
                 onChange = { value -> onChange { it.copy(horizontalPaddingDp = value.toInt()) } }
             )

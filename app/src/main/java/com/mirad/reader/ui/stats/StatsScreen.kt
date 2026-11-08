@@ -42,6 +42,7 @@ import com.mirad.reader.ui.common.SettingCard
 import com.mirad.reader.ui.common.StatTile
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Spacing
+import com.mirad.reader.ui.design.Elevation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.time.format.DateTimeFormatter
@@ -134,7 +135,7 @@ private fun StatsContent(stats: ReadingStats, contentPadding: PaddingValues) {
 
         Spacer(modifier = Modifier.height(Spacing.lg))
 
-        SettingCard(title = "各时间段") {
+        SettingCard(title = "各时间段", shadowElevation = Elevation.settingsGroup) {
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.md), modifier = Modifier.fillMaxWidth()) {
                 StatTile("本周", StatsMath.formatDuration(stats.weekMs), Modifier.weight(1f))
                 StatTile("本月", StatsMath.formatDuration(stats.monthMs), Modifier.weight(1f))
@@ -145,7 +146,7 @@ private fun StatsContent(stats: ReadingStats, contentPadding: PaddingValues) {
             }
         }
 
-        SettingCard(title = "最近 30 天") {
+        SettingCard(title = "最近 30 天", shadowElevation = Elevation.settingsGroup) {
             DailyChart(stats)
             Text(
                 text = "柱高表示当天阅读时长；单次阅读满 5 秒才计入，单次上限 6 小时。",

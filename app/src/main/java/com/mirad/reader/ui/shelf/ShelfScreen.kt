@@ -291,8 +291,11 @@ fun ShelfScreen(
 
 
     if (showUrlImportDialog) {
+        val downloader = container.networkDownloader
         UrlImportDialog(
-            container = container,
+            progress = downloader.progress,
+            downloadAndImport = downloader::downloadAndImport,
+            resetDownload = downloader::resetState,
             onDismiss = { showUrlImportDialog = false },
             onSuccess = { bookTitle ->
                 toast = "正在将《$bookTitle》加入书架"

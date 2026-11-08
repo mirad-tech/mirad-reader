@@ -22,6 +22,7 @@ fun TtsSection(
             value = config.ttsSpeechRate,
             valueText = String.format("%.2f", config.ttsSpeechRate),
             range = 0.5f..2f,
+            hapticStep = 0.1f,
             onChange = { value -> onChange { it.copy(ttsSpeechRate = value) } }
         )
         LabeledSlider(
@@ -29,6 +30,7 @@ fun TtsSection(
             value = config.ttsPitch,
             valueText = String.format("%.2f", config.ttsPitch),
             range = 0.5f..2f,
+            hapticStep = 0.1f,
             onChange = { value -> onChange { it.copy(ttsPitch = value) } }
         )
         SettingSwitchRow(

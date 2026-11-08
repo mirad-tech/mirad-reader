@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.systemBarsIgnoringVisibility
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.only
@@ -56,6 +57,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.ui.MiradIcons
+import com.mirad.reader.ui.design.Elevation
 import com.mirad.reader.core.model.ThemePalette
 import kotlinx.coroutines.delay
 import java.time.LocalTime
@@ -91,16 +93,23 @@ fun ReaderTopBar(
 ) {
     var menu by remember { mutableStateOf(false) }
     val legacy = LocalGlassLegacy.current
+    val safeInsets = glassSafeInsets()
+    val topInsets = if (LocalReaderWindowPolicy.current?.fullScreen == true && !legacy) {
+        WindowInsets.statusBars.union(WindowInsets.displayCutout).union(WindowInsets(top = 8.dp))
+    } else safeInsets
     Box(Modifier.fillMaxWidth()
-        .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+        .windowInsetsPadding(topInsets.only(WindowInsetsSides.Top).union(safeInsets.only(WindowInsetsSides.Horizontal)))
         .padding(horizontal = if (legacy) 0.dp else 4.dp)) {
-    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
-        // 将原来的外留白纳入同一玻璃表面，控件位置和总高度不变，图片背景也不会出现实色带。
-        Column(Modifier.padding(vertical = if (legacy) 0.dp else 10.dp)) {
+    GlassSurface(
+        Modifier.fillMaxWidth(),
+        shape = if (legacy) RectangleShape else MaterialTheme.shapes.large,
+        shadowElevation = if (legacy) 0.dp else Elevation.floatingBar
+    ) {
+        Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = if (legacy) 8.dp else 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 // 返回 / 文字列 / 右侧操作组之间留 8dp：旧版三组贴在一起，长标题时看着"挤成一团"。
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -110,8 +119,7 @@ fun ReaderTopBar(
                 }
                 Column(
                     modifier = Modifier.weight(1f),
-                    // 两行信息之间留 6dp，空副标题仍不占位。
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(if (legacy) 6.dp else 4.dp)
                 ) {
                     Text(
                         text = title,
@@ -184,7 +192,11 @@ fun ReaderBottomBar(
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = if (legacy) 0.dp else 4.dp)) {
-    GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
+    GlassSurface(
+        Modifier.fillMaxWidth(),
+        shape = if (legacy) RectangleShape else MaterialTheme.shapes.large,
+        shadowElevation = if (legacy) 0.dp else Elevation.floatingBar
+    ) {
         Column(Modifier.padding(vertical = if (legacy) 0.dp else 10.dp)) {
             if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             val draftState = androidx.compose.runtime.remember {
@@ -192,6 +204,7 @@ fun ReaderBottomBar(
             }
             MiradSlider(
                 value = (draftState.value ?: percent).coerceIn(0f, 1f),
+                hapticStep = 0.05f,
                 // 拖动中只改本地值，松手才真正跳转：否则每帧都会触发一次定位计算，又卡又飘。
                 onValueChange = { draftState.value = it },
                 onValueChangeFinished = {

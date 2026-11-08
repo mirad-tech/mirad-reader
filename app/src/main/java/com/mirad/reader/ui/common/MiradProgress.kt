@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.common
 
+import android.os.SystemClock
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -8,23 +9,32 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import kotlin.math.ceil
+import kotlin.math.floor
 
 /** Keep Material's touch, keyboard and accessibility handling, with a quieter track. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MiradSlider(
     value: Float,
+    hapticStep: Float,
     onValueChange: (Float) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
@@ -35,14 +45,40 @@ fun MiradSlider(
     val active = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.38f)
     val inactive = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (enabled) 1f else 0.38f)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val interactions = remember { MutableInteractionSource() }
+    val ticks = remember(hapticStep) { SliderHapticTicks(hapticStep) }
+    val haptic = LocalHapticFeedback.current
+    LaunchedEffect(interactions, enabled, ticks) {
+        if (!enabled) return@LaunchedEffect
+        try {
+            interactions.interactions.collect { interaction ->
+                when (interaction) {
+                    is DragInteraction.Start -> ticks.start()
+                    is DragInteraction.Stop, is DragInteraction.Cancel -> ticks.stop()
+                    else -> Unit
+                }
+            }
+        } finally {
+            ticks.stop()
+        }
+    }
     Slider(
         value = value.coerceIn(valueRange),
-        onValueChange = onValueChange,
+        onValueChange = { updated ->
+            if (enabled && ticks.update(updated, SystemClock.elapsedRealtime())) {
+                haptic.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+            }
+            onValueChange(updated)
+        },
         modifier = modifier.fillMaxWidth().heightIn(min = 48.dp),
         enabled = enabled,
         valueRange = valueRange,
         steps = steps,
-        onValueChangeFinished = onValueChangeFinished,
+        onValueChangeFinished = {
+            ticks.stop()
+            onValueChangeFinished?.invoke()
+        },
+        interactionSource = interactions,
         thumb = { Box(Modifier.size(18.dp).background(active, CircleShape)) },
         track = { state ->
             Canvas(Modifier.fillMaxWidth().height(4.dp)) {
@@ -57,6 +93,42 @@ fun MiradSlider(
             }
         }
     )
+}
+
+/** 手势内只记录相邻的滑动值，快速扫过多个刻度时也只触发一次。 */
+internal class SliderHapticTicks(private val step: Float) {
+    private var dragging = false
+    private var previous: Float? = null
+    private var lastTickMillis: Long? = null
+
+    fun start() {
+        dragging = true
+        previous = null
+    }
+
+    fun stop() {
+        dragging = false
+        previous = null
+    }
+
+    fun update(value: Float, nowMillis: Long): Boolean {
+        if (!dragging) return false
+        val prior = previous
+        previous = value
+        if (prior == null || prior == value) return false
+        val from = prior.toDouble() / step
+        val to = value.toDouble() / step
+        // 比较刻度编号时容忍浮点步进误差，落在刻度上算一次，离开该刻度不重复。
+        val tolerance = 0.0001
+        val crossed = if (value > prior) {
+            floor(to + tolerance) > floor(from + tolerance)
+        } else {
+            ceil(to - tolerance) < ceil(from - tolerance)
+        }
+        if (!crossed || lastTickMillis?.let { nowMillis - it < 60L } == true) return false
+        lastTickMillis = nowMillis
+        return true
+    }
 }
 
 @Composable

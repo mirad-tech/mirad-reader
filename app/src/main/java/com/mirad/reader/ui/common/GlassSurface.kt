@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.BlurEffect
@@ -41,7 +42,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.ui.design.Elevation
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -331,10 +334,11 @@ fun GlassSurface(
     modifier: Modifier = Modifier,
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = MaterialTheme.shapes.large,
+    shadowElevation: Dp = 0.dp,
     content: @Composable BoxScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.glassBackground(style, shape),
+        modifier = modifier.shadow(shadowElevation, shape, clip = false).glassBackground(style, shape),
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
@@ -357,11 +361,12 @@ fun GlassDropdownMenu(
         GlassPortalMenu(expanded, onDismissRequest, modifier, content)
         return
     }
+    val shape = MaterialTheme.shapes.large
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
-        modifier = modifier.glassBackground(GlassStyle.Panel, MaterialTheme.shapes.large),
-        shape = MaterialTheme.shapes.large,
+        modifier = modifier.shadow(Elevation.menu, shape, clip = false).glassBackground(GlassStyle.Panel, shape),
+        shape = shape,
         containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,

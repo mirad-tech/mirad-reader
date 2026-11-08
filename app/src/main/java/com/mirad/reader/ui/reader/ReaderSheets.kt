@@ -185,6 +185,7 @@ fun ProgressSheet(
                 }
                 MiradSlider(
                     value = draft,
+                    hapticStep = 0.05f,
                     onValueChange = { draft = it },
                     onValueChangeFinished = { onJump(draft) }
                 )

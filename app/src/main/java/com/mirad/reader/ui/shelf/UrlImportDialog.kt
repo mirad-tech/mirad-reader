@@ -31,10 +31,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import com.mirad.reader.AppContainer
 import com.mirad.reader.data.imports.DownloadProgress
 import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * 输入网络网址导入书籍对话框。
@@ -44,15 +44,17 @@ import kotlinx.coroutines.launch
  * 2. 小说或文章网页长文链接（智能提取正文与标题生成书籍）。
  */
 @Composable
-fun UrlImportDialog(
-    container: AppContainer,
+internal fun UrlImportDialog(
+    progress: StateFlow<DownloadProgress>,
+    downloadAndImport: suspend (String) -> Boolean,
+    resetDownload: () -> Unit,
     onDismiss: () -> Unit,
     onSuccess: (String) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var urlText by remember { mutableStateOf("") }
-    val downloadProgress by container.networkDownloader.progress.collectAsState()
+    val downloadProgress by progress.collectAsState()
 
     // 弹窗打开时尝试自动读取剪贴板中的 http(s) 链接
     LaunchedEffect(Unit) {
@@ -69,7 +71,7 @@ fun UrlImportDialog(
     fun cancelAndDismiss() {
         downloadJob?.cancel()
         downloadJob = null
-        container.networkDownloader.resetState()
+        resetDownload()
         onDismiss()
     }
 
@@ -176,11 +178,11 @@ fun UrlImportDialog(
                     if (urlText.isNotBlank()) {
                         downloadJob = scope.launch {
                             try {
-                                val success = container.networkDownloader.downloadAndImport(urlText)
+                                val success = downloadAndImport(urlText)
                                 if (success) {
-                                    val state = container.networkDownloader.progress.value
+                                    val state = progress.value
                                     val bookTitle = if (state is DownloadProgress.Success) state.title else "书籍"
-                                    container.networkDownloader.resetState()
+                                    resetDownload()
                                     onSuccess(bookTitle)
                                     onDismiss()
                                 }

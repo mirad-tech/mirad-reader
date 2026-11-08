@@ -8,9 +8,11 @@ import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.ui.design.Elevation
 
 /** Shared native dialog geometry; Material owns its window, focus and transition. */
 @Composable
@@ -37,13 +39,15 @@ fun MiradDialog(
         return
     }
     val maxBodyHeight = LocalConfiguration.current.screenHeightDp.dp * .55f
+    val shape = MaterialTheme.shapes.extraLarge
     CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = { ApplyReaderDialogWindowPolicy(); primaryAction() },
         dismissButton = dismissButton, title = title, icon = icon,
-        modifier = modifier.imePadding().glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge),
-        shape = MaterialTheme.shapes.extraLarge,
+        modifier = modifier.imePadding().shadow(Elevation.modal, shape, clip = false)
+            .glassBackground(GlassStyle.Panel, shape),
+        shape = shape,
         containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         text = text?.let { body ->
