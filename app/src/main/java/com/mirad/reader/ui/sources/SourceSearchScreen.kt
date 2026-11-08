@@ -25,6 +25,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.R
 import com.mirad.reader.core.sources.*
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.design.Spacing
@@ -165,10 +166,14 @@ fun SourceSearchScreen(
                 state.message?.let { item { Text(it, style = MaterialTheme.typography.bodyMedium) } }
                 if (sources.none { it.enabled && it.unsupportedReason == null }) item {
                     EmptyState("没有可用的已启用书源", actionText = "管理书源", onAction = onSources,
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp))
-                } else if (state.query.isNotBlank() && !state.running && state.matches.isEmpty()) item {
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp),
+                        illustrationRes = if (loadError == null && !state.running) R.drawable.ic_empty_search else null)
+                } else if (state.query.isNotBlank() && !state.running && state.totalSources > 0 &&
+                    state.completedSources == state.totalSources && state.failures.isEmpty() && state.matches.isEmpty()
+                ) item {
                     EmptyState("没有找到匹配的书籍",
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp))
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp),
+                        illustrationRes = R.drawable.ic_empty_search)
                 }
                 items(state.matches, key = { it.key }) { match ->
                     Column(

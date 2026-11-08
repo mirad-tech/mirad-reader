@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.common
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
@@ -9,13 +10,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.design.Spacing
 
@@ -72,13 +76,24 @@ fun EmptyState(
     modifier: Modifier = Modifier,
     description: String? = null,
     actionText: String? = null,
-    onAction: (() -> Unit)? = null
+    onAction: (() -> Unit)? = null,
+    @DrawableRes illustrationRes: Int? = null,
+    verticalPadding: Dp = Spacing.xxxl
 ) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(Spacing.xxxl)
+            modifier = Modifier.padding(horizontal = Spacing.xxxl, vertical = verticalPadding)
         ) {
+            if (illustrationRes != null) {
+                Icon(
+                    painter = painterResource(illustrationRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(width = 132.dp, height = 110.dp),
+                    tint = MaterialTheme.colorScheme.outline
+                )
+                Spacer(modifier = Modifier.height(Spacing.lg))
+            }
             Text(text = title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             if (description != null) {
                 Spacer(modifier = Modifier.height(Spacing.xs))

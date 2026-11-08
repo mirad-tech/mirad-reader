@@ -93,6 +93,14 @@ object MiradIcons {
         moveTo(8f, 17f); lineTo(8f, 12f); moveTo(13f, 17f); lineTo(13f, 6f)
         moveTo(18f, 17f); lineTo(18f, 9f)
     }
+    val Reset = lineIcon("Reset", mirrored = true) {
+        moveTo(4.5f, 12f)
+        curveTo(4.5f, 16.1f, 7.9f, 19.5f, 12f, 19.5f)
+        curveTo(16.1f, 19.5f, 19.5f, 16.1f, 19.5f, 12f)
+        curveTo(19.5f, 7.9f, 16.1f, 4.5f, 12f, 4.5f)
+        quadTo(8.3f, 4.5f, 5f, 8.8f)
+        moveTo(4.5f, 4.8f); lineTo(4.5f, 9f); lineTo(8.8f, 9f)
+    }
     val Info = lineIcon("Info") {
         moveTo(21f, 12f); curveTo(21f, 17f, 17f, 21f, 12f, 21f)
         curveTo(7f, 21f, 3f, 17f, 3f, 12f); curveTo(3f, 7f, 7f, 3f, 12f, 3f)

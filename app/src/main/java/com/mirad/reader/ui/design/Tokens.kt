@@ -35,6 +35,9 @@ object Sizes {
     /** 列表行最小高度，保证触控目标够大。 */
     val rowMinHeight = 56.dp
 
+    /** 设置首页图标底的尺寸。 */
+    val settingsIconTile = 36.dp
+
     /** 弹层内容最大高度占比。 */
     const val sheetMaxHeightFraction = 0.85f
 
@@ -42,6 +45,13 @@ object Sizes {
     val coverSmallWidth = 44.dp
     val coverSmallHeight = 60.dp
     val coverCorner = 8.dp
+}
+
+/** 浮动栏位于分组卡片和封面之上。 */
+object Elevation {
+    val bookCover = 3.dp
+    val settingsGroup = 4.dp
+    val floatingBar = 8.dp
 }
 
 @Immutable

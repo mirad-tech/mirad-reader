@@ -39,6 +39,7 @@ import com.mirad.reader.ui.theme.MiradSerif
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.FeedbackHost
 import com.mirad.reader.ui.common.LocalAppAppearance
@@ -53,6 +54,8 @@ import com.mirad.reader.ui.common.SettingNavRow
 import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.rememberFeedbackState
 import com.mirad.reader.ui.common.rememberReadingBackgroundPicker
+import com.mirad.reader.ui.design.Elevation
+import com.mirad.reader.ui.design.Sizes
 import com.mirad.reader.ui.design.Spacing
 import com.mirad.reader.ui.settings.reading.ReadingSettingsHost
 import com.mirad.reader.ui.shelf.GroupManagerSheet
@@ -169,12 +172,7 @@ internal fun SettingsContent(
             if (route == null) {
                 val dark = LocalAppDarkTheme.current ?: LocalAppSystemDark.current
                 val fontLabel = if (config.fontFamily == FontFamilyKey.CUSTOM) {
-                    if (config.customFontPath != null) {
-                        fonts.firstOrNull { it.filePath == config.customFontPath }?.label ?: "自定义字体"
-                    } else config.customFontAsset?.let { asset ->
-                        fonts.firstOrNull { it.assetName == asset }?.label
-                            ?: ReadingFonts.bundledLabel(asset.substringAfterLast('/'))
-                    }
+                    ReadingFonts.customLabel(config, fonts) ?: "系统字体"
                 } else when (config.fontFamily) {
                     FontFamilyKey.SERIF -> "宋体"
                     FontFamilyKey.SANS -> "黑体"
@@ -185,10 +183,11 @@ internal fun SettingsContent(
                     FontFamilyKey.MONO -> "等宽"
                     else -> "系统字体"
                 }
-                SettingCard(title = "阅读设置") {
+                val rowDivider = Modifier.padding(start = Sizes.settingsIconTile + Spacing.md)
+                SettingCard(title = "阅读设置", itemSpacing = 0.dp, shadowElevation = Elevation.settingsGroup) {
                     readingSettingsPages().forEach { page ->
                         val summary = when (page) {
-                            ReadingSettingsPage.TYPOGRAPHY -> listOfNotNull(fontLabel, "${config.fontSizeSp.toInt()}\u00A0px").joinToString(" · ")
+                            ReadingSettingsPage.TYPOGRAPHY -> "$fontLabel · ${config.fontSizeSp.toInt()}\u00A0px"
                             ReadingSettingsPage.THEME -> if (config.backgroundType == BackgroundType.IMAGE) "图片背景"
                                 else readingThemeChoices(dark).firstOrNull { it.first == config.theme }?.second
                             ReadingSettingsPage.INTERACTION -> if (config.pageMode == PageMode.SCROLL) "上下滚动" else "左右翻页"
@@ -203,19 +202,20 @@ internal fun SettingsContent(
                             ReadingSettingsPage.EPUB -> MiradIcons.Shelf
                             ReadingSettingsPage.TTS -> MiradIcons.Speech
                         }
-                        SettingNavRow(page.title, value = summary, icon = icon,
+                        SettingNavRow(page.title, value = summary, icon = icon, highlightIcon = true,
                             onClick = { onOpenRoute(SettingsRoute.Reading(page)) })
+                        CardDivider(rowDivider)
                     }
-                    CardDivider()
-                    SettingNavRow("恢复默认", onClick = onResetReading)
+                    SettingNavRow("恢复默认", icon = MiradIcons.Reset, highlightIcon = true, onClick = onResetReading)
                 }
-                SettingCard(title = "阅读记录") {
-                    SettingNavRow("阅读统计", icon = MiradIcons.Stats, onClick = onOpenStats)
+                SettingCard(title = "阅读记录", shadowElevation = Elevation.settingsGroup) {
+                    SettingNavRow("阅读统计", icon = MiradIcons.Stats, highlightIcon = true, onClick = onOpenStats)
                 }
-                SettingCard(title = "应用设置") {
+                SettingCard(title = "应用设置", itemSpacing = 0.dp, shadowElevation = Elevation.settingsGroup) {
                     val appearance = LocalAppAppearance.current
                     val glass = LocalGlassAppearance.current
-                    appSettingsPages.forEach { page ->
+                    appSettingsPages.forEachIndexed { index, page ->
+                        if (index > 0) CardDivider(rowDivider)
                         val summary = when (page) {
                             AppSettingsPage.APPEARANCE -> listOfNotNull(
                                 when (appearance?.mode) {
@@ -229,7 +229,7 @@ internal fun SettingsContent(
                             AppSettingsPage.ABOUT -> BuildConfig.VERSION_NAME
                             else -> null
                         }
-                        SettingNavRow(page.title, value = summary,
+                        SettingNavRow(page.title, value = summary, highlightIcon = true,
                             icon = when (page) {
                                 AppSettingsPage.APPEARANCE -> MiradIcons.Settings
                                 AppSettingsPage.SHELF -> MiradIcons.Shelf

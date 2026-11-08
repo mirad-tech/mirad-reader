@@ -81,6 +81,20 @@ object ReadingFonts {
         return BUNDLED_LABELS[stem.lowercase()] ?: stem
     }
 
+    /** 按阅读器的资源优先顺序取名称，找不到历史字体时由调用方显示回退。 */
+    internal fun customLabel(config: ReaderConfig, available: List<ReadingFont>): String? {
+        val asset = config.customFontAsset?.takeIf { it.isNotBlank() }
+        if (asset != null) {
+            return available.firstOrNull { it.assetName == asset }?.label ?: when (asset) {
+                BUNDLED_WENKAI, BUNDLED_SERIF, BUNDLED_SANS, BUNDLED_FANGSONG ->
+                    bundledLabel(asset.substringAfterLast('/'))
+                else -> null
+            }
+        }
+        val path = config.customFontPath?.takeIf { it.isNotBlank() } ?: return null
+        return available.firstOrNull { it.filePath == path }?.label
+    }
+
     /** 内置字体在「我的字体」里的副标题。 */
     fun bundledNote(fileName: String): String = when (fileName.lowercase()) {
         "lxgw-wenkai-regular.woff2" -> "内置 · 楷体，笔画舒展"

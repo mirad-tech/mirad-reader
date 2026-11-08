@@ -5,10 +5,13 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.File
 
 class ReadingFontsTest {
+    @get:Rule val temporary = TemporaryFolder()
 
     @Test
     fun legacyFontFamilyKeysStillHaveReadableFallbackStacks() {
@@ -45,6 +48,26 @@ class ReadingFontsTest {
 
         val withUrl = ReadingFonts.stackOf(FontFamilyKey.CUSTOM, "https://mirad.local/book/1/font")
         assertTrue(withUrl.startsWith("\"MiradCustom\""))
+    }
+
+    @Test
+    fun configuredImportLosesItsLabelWhenRemovedFromAvailableFonts() {
+        val path = temporary.newFile("LegacyFont.woff2").absolutePath
+        val config = ReaderConfig.DEFAULT.copy(customFontAsset = null, customFontPath = path)
+        val imported = ReadingFont("LegacyFont", filePath = path)
+        assertEquals("LegacyFont", ReadingFonts.customLabel(config, listOf(imported)))
+        assertNull(ReadingFonts.customLabel(config, emptyList()))
+    }
+
+    @Test
+    fun configuredBundledFontTakesPriorityOverAnImportedPath() {
+        val path = temporary.newFile("LegacyFont.woff2").absolutePath
+        val config = ReaderConfig.DEFAULT.copy(customFontAsset = ReadingFonts.BUNDLED_SERIF, customFontPath = path)
+        val imported = ReadingFont("LegacyFont", filePath = path)
+        val bundled = ReadingFont("思源宋体", assetName = ReadingFonts.BUNDLED_SERIF)
+        assertEquals("思源宋体", ReadingFonts.customLabel(config, listOf(imported, bundled)))
+        assertEquals("思源宋体", ReadingFonts.customLabel(config, emptyList()))
+        assertNull(ReadingFonts.customLabel(config.copy(customFontAsset = "fonts/missing.woff2"), listOf(imported)))
     }
 
     @Test

@@ -60,6 +60,7 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.R
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.imports.ImportItem
 import com.mirad.reader.data.imports.ImportStage
@@ -68,6 +69,7 @@ import com.mirad.reader.ui.common.ActionSheet
 import com.mirad.reader.ui.common.ChoiceChip
 import com.mirad.reader.ui.common.EmptyState
 import com.mirad.reader.ui.common.ScreenHeader
+import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------- 顶栏
@@ -170,7 +172,8 @@ private fun EmptyShelf(searching: Boolean, onImport: () -> Unit, hiddenOnly: Boo
             description = "支持 TXT、EPUB 文件",
             actionText = "导入书籍",
             onAction = onImport,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            illustrationRes = R.drawable.ic_empty_bookshelf
         )
     }
 }
@@ -404,10 +407,10 @@ internal fun ShelfContent(
             )
             if (layout == ShelfLayout.GRID) {
                 BouncingLazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 112.dp),
+                    columns = GridCells.Adaptive(minSize = 104.dp),
                     state = gridState, contentPadding = contentPadding,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.sm),
                     modifier = Modifier.fillMaxWidth().weight(1f)
                 ) {
                     item(key = "shelf-controls", span = { GridItemSpan(maxLineSpan) }) { controls() }

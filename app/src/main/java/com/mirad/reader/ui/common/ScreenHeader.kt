@@ -10,11 +10,14 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.theme.MiradTextStyles
 import com.mirad.reader.ui.MiradIcons
+import com.mirad.reader.ui.design.Elevation
+import com.mirad.reader.ui.design.Spacing
 
 /** 普通页面统一整条悬浮玻璃，二级页面用返回按钮表达层级。 */
 @Composable
@@ -33,15 +36,21 @@ fun ScreenHeader(
     if (floatingGlass) {
         val titleStyle = MiradTextStyles.pageTitle
         val pageBackground = MaterialTheme.colorScheme.background
+        val shape = RoundedCornerShape(24.dp)
         Box(modifier.widthIn(max = 720.dp).fillMaxWidth()
             .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
             .drawBehind { drawRect(pageBackground, size = Size(size.width, 6.dp.toPx())) }
             .padding(horizontal = 12.dp, vertical = 6.dp)) {
             GlassSurface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp)
+                modifier = Modifier.fillMaxWidth().shadow(Elevation.floatingBar, shape, clip = false),
+                shape = shape
             ) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 8.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(
+                    start = if (root) Spacing.lg else Spacing.sm,
+                    top = Spacing.sm,
+                    end = Spacing.sm,
+                    bottom = Spacing.sm
+                ),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (onBack != null && !root) {

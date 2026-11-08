@@ -3,6 +3,7 @@ package com.mirad.reader.ui.common
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.heightIn
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -34,19 +36,32 @@ fun SettingNavRow(
     value: String? = null,
     subtitle: String? = null,
     icon: ImageVector? = null,
+    highlightIcon: Boolean = false,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 48.dp)
+            .heightIn(min = if (highlightIcon) Sizes.rowMinHeight else 48.dp)
             .clickable(onClick = onClick)
             .padding(vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp))
+            val colors = MaterialTheme.colorScheme
+            Box(
+                modifier = if (highlightIcon) Modifier
+                    .size(Sizes.settingsIconTile)
+                    .background(colors.secondaryContainer, RoundedCornerShape(10.dp)) else Modifier,
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = if (highlightIcon) colors.onSecondaryContainer else colors.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
             Spacer(Modifier.width(Spacing.md))
         }
         Column(modifier = Modifier.weight(1f)) {
@@ -64,7 +79,7 @@ fun SettingNavRow(
                 text = value,
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.widthIn(max = 120.dp).padding(start = Spacing.sm),
+                modifier = Modifier.widthIn(max = if (highlightIcon) 104.dp else 120.dp).padding(start = Spacing.sm),
                 textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )

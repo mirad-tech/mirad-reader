@@ -30,10 +30,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.data.repo.ShelfBook
+import com.mirad.reader.ui.design.Elevation
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Sizes
 
@@ -48,6 +50,8 @@ internal fun BookGridCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
+    val badgeLineHeight = MaterialTheme.typography.labelSmall.lineHeight
+    val titleTopInset = with(LocalDensity.current) { maxOf(32.dp, badgeLineHeight.toDp() + 11.dp) }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -62,10 +66,10 @@ internal fun BookGridCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(Sizes.coverAspect)
-                .shadow(2.dp, RoundedCornerShape(Sizes.coverCorner))
+                .shadow(Elevation.bookCover, RoundedCornerShape(Sizes.coverCorner))
                 .clip(RoundedCornerShape(Sizes.coverCorner))
         ) {
-            BookCover(book = item.book, modifier = Modifier.fillMaxSize())
+            BookCover(book = item.book, modifier = Modifier.fillMaxSize(), titleTopInset = titleTopInset)
             CoverProgress(item.percent)
             if (item.book.isPinned) {
                 Badge(text = "置顶", modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))

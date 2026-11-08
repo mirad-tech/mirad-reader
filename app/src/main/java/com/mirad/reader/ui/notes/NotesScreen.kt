@@ -9,10 +9,13 @@ import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.runtime.key
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyItemScope
 import androidx.compose.material3.MaterialTheme
 import com.mirad.reader.ui.common.MiradScaffold as Scaffold
 import androidx.compose.material3.Text
@@ -27,7 +30,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
+import com.mirad.reader.R
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.ui.common.glassBackdropSource
@@ -134,15 +141,17 @@ fun NotesScreen(
         }
     ) { padding ->
         key(tab) {
+            val direction = LocalLayoutDirection.current
+            val contentPadding = PaddingValues(
+                start = padding.calculateStartPadding(direction),
+                end = padding.calculateEndPadding(direction),
+                top = padding.calculateTopPadding() + Spacing.sm,
+                bottom = padding.calculateBottomPadding() + Spacing.sm
+            )
             BouncingLazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize().glassBackdropSource(),
-                contentPadding = PaddingValues(
-                    start = padding.calculateStartPadding(LocalLayoutDirection.current),
-                    end = padding.calculateEndPadding(LocalLayoutDirection.current),
-                    top = padding.calculateTopPadding() + Spacing.sm,
-                    bottom = padding.calculateBottomPadding() + Spacing.sm
-                )
+                contentPadding = contentPadding
             ) {
                 item(key = "notes-tabs") {
                     SegmentedRow(
@@ -155,12 +164,7 @@ fun NotesScreen(
                 val list = if (tab == 0) highlights else bookmarks
                 if (list.isEmpty()) {
                     item(key = "notes-empty") {
-                        EmptyState(
-                            title = if (tab == 0) "还没有划线或笔记" else "还没有书签",
-                            description = if (tab == 0) "阅读时长按选中文字，用工具条上的「划线」或「笔记」"
-                            else "阅读时点顶栏的星标即可添加书签",
-                            modifier = Modifier.fillParentMaxHeight(0.75f)
-                        )
+                        NotesEmptyState(bookmarks = tab == 1, contentPadding = contentPadding)
                     }
                 } else if (tab == 0) {
                     items(highlights, key = { it.id }) { item ->
@@ -229,6 +233,26 @@ fun NotesScreen(
                 }) { Text("删除") }
             },
             dismissButton = { MiradTextButton(onClick = { pendingDelete = null }) { Text("取消") } }
+        )
+    }
+}
+
+@Composable
+internal fun LazyItemScope.NotesEmptyState(bookmarks: Boolean, contentPadding: PaddingValues) {
+    val windowHeight = LocalWindowInfo.current.containerSize.height
+    val listHeight = with(LocalDensity.current) { windowHeight.toDp() } -
+        contentPadding.calculateTopPadding() - contentPadding.calculateBottomPadding()
+    // 分段栏、插画、两行提示和留白需要约 320 dp，短窗口优先显示文字。
+    val showIllustration = listHeight >= 320.dp
+    Box(contentAlignment = Alignment.Center) {
+        if (showIllustration) Spacer(Modifier.fillParentMaxHeight(0.75f))
+        EmptyState(
+            title = if (bookmarks) "还没有书签" else "还没有划线或笔记",
+            description = if (bookmarks) "阅读时点顶栏的「书签」即可添加"
+                else "阅读时长按选中文字，用工具条上的「划线」或「笔记」",
+            modifier = Modifier.fillMaxWidth(),
+            illustrationRes = if (showIllustration) R.drawable.ic_empty_notes else null,
+            verticalPadding = if (showIllustration) Spacing.xxxl else Spacing.sm
         )
     }
 }

@@ -54,6 +54,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -194,6 +195,8 @@ fun SettingCard(
     title: String? = null,
     subtitle: String? = null,
     modifier: Modifier = Modifier,
+    itemSpacing: Dp = 10.dp,
+    shadowElevation: Dp = 0.dp,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
@@ -202,7 +205,7 @@ fun SettingCard(
         (hardwareEnabled || LocalGlassBackdrop.current?.enabled == true) &&
         !LocalGlassLegacy.current
     // An inset tint inherits the parent's material. It must not sample the list containing itself.
-    val container = if (glassActive) {
+    val container = if (glassActive && shadowElevation == 0.dp) {
         MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) .12f else .08f)
     } else MaterialTheme.colorScheme.surface
     Column(modifier = modifier.fillMaxWidth()) {
@@ -217,13 +220,14 @@ fun SettingCard(
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = container,
+            shadowElevation = shadowElevation,
             border = androidx.compose.foundation.BorderStroke(.5.dp,
                 MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (glassActive) .45f else .7f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(itemSpacing)
             ) {
                 if (subtitle != null) {
                     Text(
@@ -240,8 +244,8 @@ fun SettingCard(
 }
 
 @Composable
-fun CardDivider() {
-    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
+fun CardDivider(modifier: Modifier = Modifier) {
+    HorizontalDivider(modifier = modifier, color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
 }
 
 /** 带数值的滑杆：标签与数值同一行，滑杆紧跟其后。 */

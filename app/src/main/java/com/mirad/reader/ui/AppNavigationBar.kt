@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
@@ -23,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.common.GlassSurface
 import com.mirad.reader.ui.common.LocalPageSafeInsets
 import com.mirad.reader.ui.common.glassSafeInsets
+import com.mirad.reader.ui.design.Elevation
 
 @Composable
 internal fun AppNavigationBar(
@@ -47,11 +49,14 @@ internal fun AppNavigationBar(
     val rtl = androidx.compose.ui.platform.LocalLayoutDirection.current == androidx.compose.ui.unit.LayoutDirection.Rtl
     LaunchedEffect(enabled) { if (!enabled) motion?.cancelDrag() }
     DisposableEffect(motion) { onDispose { motion?.releaseHost() } }
+    val shape = RoundedCornerShape(29.dp)
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
         .padding(horizontal = 12.dp, vertical = 8.dp), contentAlignment = Alignment.Center) {
-        GlassSurface(Modifier.widthIn(max = 480.dp).fillMaxWidth(),
-            shape = RoundedCornerShape(29.dp)) {
+        GlassSurface(
+            modifier = Modifier.widthIn(max = 480.dp).fillMaxWidth().shadow(Elevation.floatingBar, shape, clip = false),
+            shape = shape
+        ) {
             Box(Modifier.padding(5.dp)
                 .onSizeChanged { innerSize = it }
                 .pointerInput(motion, rtl) {
