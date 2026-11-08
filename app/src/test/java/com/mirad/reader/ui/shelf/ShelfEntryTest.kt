@@ -3,14 +3,82 @@ package com.mirad.reader.ui.shelf
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.repo.ShelfBook
+import com.mirad.reader.data.imports.ImportItem
+import com.mirad.reader.data.imports.ImportStage
 import kotlinx.coroutines.async
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertFalse
 import org.junit.Test
+import androidx.compose.ui.graphics.luminance
+import com.mirad.reader.ui.design.LightMiradColors
+import com.mirad.reader.ui.design.DarkMiradColors
 
 class ShelfEntryTest {
+
+    @Test
+    fun generatedCoverTextKeepsContrastInBothAppearanceModes() {
+        for (colors in listOf(LightMiradColors, DarkMiradColors)) {
+            for (tone in colors.coverTones) {
+                val first = tone.container.luminance()
+                val second = tone.onContainer.luminance()
+                val contrast = (maxOf(first, second) + .05f) / (minOf(first, second) + .05f)
+                assertTrue("封面文字对比度不足：$contrast", contrast >= 4.5f)
+            }
+        }
+    }
+
+    @Test
+    fun resumePromptConsumesOnlyItsVisibleTimeAndStaysDismissedUntilNewSession() {
+        val prompt = ShelfResumePromptState()
+        prompt.recordVisibleTime(2_000L)
+        assertEquals(3_000L, prompt.remainingMillis())
+        // 离开页面或被导入替换时没有可见时间，恢复后仍有三秒。
+        assertEquals(ShelfFloatingContent.IMPORT, resolveShelfFloatingContent(true, true, true, prompt.consumed))
+        assertEquals(3_000L, prompt.remainingMillis())
+        prompt.recordVisibleTime(2_999L)
+        assertFalse(prompt.consumed)
+        prompt.recordVisibleTime(1L)
+        assertTrue(prompt.consumed)
+        assertEquals(ShelfFloatingContent.NONE, resolveShelfFloatingContent(true, false, true, prompt.consumed))
+        assertEquals(ShelfFloatingContent.IMPORT, resolveShelfFloatingContent(true, true, true, prompt.consumed))
+        assertEquals(5_000L, ShelfResumePromptState().remainingMillis())
+    }
+
+    @Test
+    fun resumePromptSupportsAccessibilityTimeoutAndManualDismiss() {
+        val prompt = ShelfResumePromptState()
+        prompt.recordVisibleTime(5_000L, timeoutMillis = 15_000L)
+        assertFalse(prompt.consumed)
+        assertEquals(10_000L, prompt.remainingMillis(15_000L))
+        prompt.dismiss()
+        prompt.recordVisibleTime(100L, 15_000L)
+        assertEquals(0L, prompt.remainingMillis(15_000L))
+        assertEquals(ShelfFloatingContent.NONE, resolveShelfFloatingContent(false, true, true, false))
+        assertEquals(ShelfFloatingContent.NONE, resolveShelfFloatingContent(true, false, false, false))
+    }
+
+    @Test
+    fun importCardShowsStageProgressWithoutPretendingParsingIsOverallZeroPercent() {
+        val copying = ImportItem("active", "长书名.txt", ImportStage.COPYING, .35f)
+        val waiting = ImportItem("waiting", "下一本.epub")
+        val copied = shelfImportPresentation(listOf(copying, waiting))
+        assertEquals("长书名.txt", copied.fileName)
+        assertEquals("正在复制", copied.stage)
+        assertEquals(.35f, copied.progress!!, 0f)
+        assertEquals(1, copied.pendingCount)
+        val parsing = shelfImportPresentation(listOf(copying.copy(stage = ImportStage.PARSING, progress = 0f), waiting))
+        assertEquals("正在解析", parsing.stage)
+        assertNull(parsing.progress)
+        assertNull(shelfImportPresentation(listOf(copying.copy(progress = 0f))).progress)
+        val completed = copying.copy(stage = ImportStage.DONE, progress = 1f)
+        val next = shelfImportPresentation(listOf(completed, waiting))
+        assertEquals("下一本.epub", next.fileName)
+        assertEquals("准备导入", next.stage)
+        assertNull(next.progress)
+    }
 
     private fun createBook(id: Long, title: String, isHidden: Boolean = false): BookEntity {
         return BookEntity(

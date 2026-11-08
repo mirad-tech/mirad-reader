@@ -4,15 +4,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.ui.theme.MiradTextStyles
+import com.mirad.reader.ui.MiradIcons
 
 /** 普通页面统一整条悬浮玻璃，二级页面用返回按钮表达层级。 */
 @Composable
@@ -29,26 +31,28 @@ fun ScreenHeader(
 ) {
     val safeInsets = LocalPageSafeInsets.current ?: glassSafeInsets()
     if (floatingGlass) {
-        val titleStyle = MaterialTheme.typography.headlineSmall
+        val titleStyle = MiradTextStyles.pageTitle
+        val pageBackground = MaterialTheme.colorScheme.background
         Box(modifier.widthIn(max = 720.dp).fillMaxWidth()
             .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+            .drawBehind { drawRect(pageBackground, size = Size(size.width, 6.dp.toPx())) }
             .padding(horizontal = 12.dp, vertical = 6.dp)) {
             GlassSurface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(24.dp)
             ) {
-                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 12.dp, vertical = 8.dp),
+                Row(Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 8.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (onBack != null && !root) {
-                        IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                        IconButton(onClick = onBack) { Icon(MiradIcons.Back, "返回") }
                     }
                     Column(Modifier.weight(1f)) {
                         Text(title, style = titleStyle,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 2, overflow = TextOverflow.Ellipsis)
                         if (subtitle != null) Text(subtitle, style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
@@ -66,11 +70,11 @@ fun ScreenHeader(
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (onBack != null && !root) {
             GlassSurface(shape = CircleShape) {
-                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                IconButton(onClick = onBack) { Icon(MiradIcons.Back, "返回") }
             }
         }
         Column(Modifier.weight(1f)) {
-            Text(title, style = if (root || large) MaterialTheme.typography.headlineSmall
+            Text(title, style = if (root || large) MiradTextStyles.pageTitle
                 else MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onBackground,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)

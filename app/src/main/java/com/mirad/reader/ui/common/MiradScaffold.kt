@@ -104,6 +104,7 @@ fun MiradScaffold(
     bottomBar: @Composable () -> Unit = LocalAppBottomBar.current,
     snackbarHost: @Composable () -> Unit = {},
     floatingActionButton: @Composable () -> Unit = {},
+    bottomAccessory: @Composable (available: Boolean) -> Unit = {},
     content: @Composable (PaddingValues) -> Unit
 ) {
     val pager = LocalPagerChrome.current
@@ -112,6 +113,15 @@ fun MiradScaffold(
     var modal by remember { mutableStateOf(false) }
     var topHeight by remember { mutableIntStateOf(-1) }
     var bottomHeight by remember { mutableIntStateOf(-1) }
+    var accessoryHeight by remember { mutableIntStateOf(0) }
+    var reservedAccessoryHeight by remember { mutableIntStateOf(0) }
+    var bottomContentHeight by remember { mutableIntStateOf(0) }
+    val page = LocalPagerPage.current
+    val pageActive = LocalPagerPageActive.current
+    DisposableEffect(pager, page) {
+        onDispose { if (page != null) pager?.pageBottomContentHeights?.remove(page) }
+    }
+    SideEffect { if (page != null) pager?.pageBottomContentHeights?.set(page, bottomContentHeight) }
     val density = LocalDensity.current
     val direction = LocalLayoutDirection.current
     val safeInsets = LocalPageSafeInsets.current ?: glassSafeInsets()
@@ -127,7 +137,7 @@ fun MiradScaffold(
                         start = safeInsets.getLeft(density, direction).toDp(),
                         top = maxOf(topHeight, safeInsets.getTop(density)).toDp(),
                         end = safeInsets.getRight(density, direction).toDp(),
-                        bottom = maxOf(effectiveBottom, safeInsets.getBottom(density)).toDp()
+                        bottom = (maxOf(effectiveBottom, safeInsets.getBottom(density)) + reservedAccessoryHeight).toDp()
                     ) }
                     CompositionLocalProvider(LocalContentColor provides contentColorFor(containerColor)) {
                         // 只排除系统栏，仍让内容在悬浮玻璃顶栏/底栏后方滚动。
@@ -154,11 +164,21 @@ fun MiradScaffold(
                     }
                     val bottom = with(density) { effectiveBottom.coerceAtLeast(0).toDp() }
                     Box(Modifier.align(androidx.compose.ui.Alignment.BottomEnd).imePadding()
-                        .padding(end = 20.dp, bottom = bottom + 16.dp)) { floatingActionButton() }
-                    Column(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth()
+                        .padding(end = 20.dp, bottom = bottom + with(density) { accessoryHeight.toDp() } + 16.dp)) { floatingActionButton() }
+                    Box(Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth()
                         .imePadding().padding(bottom = bottom)) {
-                            if (pager == null || LocalPagerPageActive.current) snackbarHost()
+                        Column(Modifier.fillMaxWidth().onSizeChanged { bottomContentHeight = it.height },
+                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
+                            if (pager == null || pageActive) snackbarHost()
                             if (rootFeedback != null) FeedbackHost(rootFeedback)
+                            Box(Modifier.fillMaxWidth().onSizeChanged {
+                                accessoryHeight = it.height
+                                // 收起提示后保留已经测得的尾部余量，避免列表尾部突然跳动。
+                                reservedAccessoryHeight = maxOf(reservedAccessoryHeight, it.height)
+                            }, contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                bottomAccessory(pageActive && effectiveBottom >= 0 && !keyboard && !overlays.hasEntries)
+                            }
+                        }
                     }
                 }
             }

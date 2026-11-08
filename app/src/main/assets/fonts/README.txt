@@ -34,3 +34,17 @@
 固定 Noto 字重，subset.Subsetter 按上述字符集合裁切，保留全部 name/语言及 layout 特性；
 随后 TTFont.flavor = "woff2"，save。朱雀仿宋只执行最后的 WOFF2 保存。
 字体缺字继续走系统回退；原有文楷、宋体及 DEFAULT_CUSTOM_FONT 均保持不变。
+
+2026-11-08 界面衬线字体（方案 C）：
+
+字源：已有 noto-serif-sc-regular.woff2，Noto Serif SC 2.003 Regular，CFF 非可变字体。
+转换：uv run --with "fonttools[woff]==4.67.0" python tools/make_ui_font.py
+脚本仅去除 WOFF2 封装，不下载、不再次裁剪字形，不改变字符映射、字重或阅读默认值。
+输出：app/src/main/res/font/mirad_ui_serif.otf，2,777,524 字节，7573 个 Unicode 映射，
+完整覆盖 GB2312 的 6763 个汉字。输出 SHA256：
+e2ad95f9daca475fd77138a840a5ab77a62f45573665abbf769a9b634fac1f92
+界面字体放在 res/font，不能放回 assets/fonts，避免被 FontManager 当作新的阅读字体。
+只用于页面标题、文字封面及“关于”应用名；小字、按钮与阅读正文不随之更换字体。
+缺失字形仍由系统回退，实际 APK 增量以构建记录为准。
+已补齐此前缺少的宋体版权与 SIL OFL 1.1 原文：licenses/noto-serif-sc-OFL.txt。
+许可来源：https://github.com/notofonts/noto-cjk/blob/main/Serif/LICENSE

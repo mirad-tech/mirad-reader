@@ -27,6 +27,18 @@ import androidx.compose.ui.Modifier
 import com.mirad.reader.AppContainer
 import com.mirad.reader.BuildConfig
 import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.core.model.AppThemeMode
+import com.mirad.reader.core.model.BackgroundType
+import com.mirad.reader.core.model.FontFamilyKey
+import com.mirad.reader.core.model.PageMode
+import com.mirad.reader.core.model.ReadingFonts
+import com.mirad.reader.ui.MiradIcons
+import com.mirad.reader.ui.common.LocalGlassAppearance
+import com.mirad.reader.ui.common.readingThemeChoices
+import com.mirad.reader.ui.theme.MiradSerif
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withStyle
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.FeedbackHost
 import com.mirad.reader.ui.common.LocalAppAppearance
@@ -155,19 +167,74 @@ internal fun SettingsContent(
         ) {
             Spacer(modifier = Modifier.height(Spacing.sm))
             if (route == null) {
+                val dark = LocalAppDarkTheme.current ?: LocalAppSystemDark.current
+                val fontLabel = if (config.fontFamily == FontFamilyKey.CUSTOM) {
+                    if (config.customFontPath != null) {
+                        fonts.firstOrNull { it.filePath == config.customFontPath }?.label ?: "自定义字体"
+                    } else config.customFontAsset?.let { asset ->
+                        fonts.firstOrNull { it.assetName == asset }?.label
+                            ?: ReadingFonts.bundledLabel(asset.substringAfterLast('/'))
+                    }
+                } else when (config.fontFamily) {
+                    FontFamilyKey.SERIF -> "宋体"
+                    FontFamilyKey.SANS -> "黑体"
+                    FontFamilyKey.KAITI -> "楷体"
+                    FontFamilyKey.FANGSONG -> "仿宋"
+                    FontFamilyKey.ROUND -> "圆体"
+                    FontFamilyKey.LIGHT -> "细体"
+                    FontFamilyKey.MONO -> "等宽"
+                    else -> "系统字体"
+                }
                 SettingCard(title = "阅读设置") {
                     readingSettingsPages().forEach { page ->
-                        SettingNavRow(page.title, onClick = { onOpenRoute(SettingsRoute.Reading(page)) })
+                        val summary = when (page) {
+                            ReadingSettingsPage.TYPOGRAPHY -> listOfNotNull(fontLabel, "${config.fontSizeSp.toInt()}\u00A0px").joinToString(" · ")
+                            ReadingSettingsPage.THEME -> if (config.backgroundType == BackgroundType.IMAGE) "图片背景"
+                                else readingThemeChoices(dark).firstOrNull { it.first == config.theme }?.second
+                            ReadingSettingsPage.INTERACTION -> if (config.pageMode == PageMode.SCROLL) "上下滚动" else "左右翻页"
+                            else -> null
+                        }
+                        val icon = when (page) {
+                            ReadingSettingsPage.TYPOGRAPHY, ReadingSettingsPage.LAYOUT -> MiradIcons.Typography
+                            ReadingSettingsPage.THEME -> MiradIcons.Background
+                            ReadingSettingsPage.INTERACTION -> MiradIcons.Settings
+                            ReadingSettingsPage.SCREEN -> MiradIcons.Screen
+                            ReadingSettingsPage.HEADER_FOOTER -> MiradIcons.Contents
+                            ReadingSettingsPage.EPUB -> MiradIcons.Shelf
+                            ReadingSettingsPage.TTS -> MiradIcons.Speech
+                        }
+                        SettingNavRow(page.title, value = summary, icon = icon,
+                            onClick = { onOpenRoute(SettingsRoute.Reading(page)) })
                     }
                     CardDivider()
                     SettingNavRow("恢复默认", onClick = onResetReading)
                 }
                 SettingCard(title = "阅读记录") {
-                    SettingNavRow("阅读统计", onClick = onOpenStats)
+                    SettingNavRow("阅读统计", icon = MiradIcons.Stats, onClick = onOpenStats)
                 }
                 SettingCard(title = "应用设置") {
+                    val appearance = LocalAppAppearance.current
+                    val glass = LocalGlassAppearance.current
                     appSettingsPages.forEach { page ->
-                        SettingNavRow(page.title, onClick = { onOpenRoute(SettingsRoute.App(page)) })
+                        val summary = when (page) {
+                            AppSettingsPage.APPEARANCE -> listOfNotNull(
+                                when (appearance?.mode) {
+                                    AppThemeMode.SYSTEM -> "跟随系统"
+                                    AppThemeMode.DAY -> "日间"
+                                    AppThemeMode.NIGHT -> "夜间"
+                                    null -> null
+                                },
+                                if (glass.enabled) "清晰度 ${glass.clarityPercent}%" else "玻璃已关闭"
+                            ).joinToString(" · ")
+                            AppSettingsPage.ABOUT -> BuildConfig.VERSION_NAME
+                            else -> null
+                        }
+                        SettingNavRow(page.title, value = summary,
+                            icon = when (page) {
+                                AppSettingsPage.APPEARANCE -> MiradIcons.Settings
+                                AppSettingsPage.SHELF -> MiradIcons.Shelf
+                                AppSettingsPage.ABOUT -> MiradIcons.Info
+                            }, onClick = { onOpenRoute(SettingsRoute.App(page)) })
                     }
                 }
             } else when (route) {
@@ -184,7 +251,10 @@ internal fun SettingsContent(
                     )
                     AppSettingsPage.ABOUT -> SettingCard(title = "关于") {
                         Text(
-                            text = "墨读 v${BuildConfig.VERSION_NAME}",
+                            text = buildAnnotatedString {
+                                withStyle(SpanStyle(fontFamily = MiradSerif)) { append("墨读") }
+                                append(" v${BuildConfig.VERSION_NAME}")
+                            },
                             style = MaterialTheme.typography.bodyMedium
                         )
                     }

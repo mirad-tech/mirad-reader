@@ -177,43 +177,6 @@ private fun EmptyShelf(searching: Boolean, onImport: () -> Unit, hiddenOnly: Boo
 
 // 书籍与分组的操作面板统一用 ui/common/ActionSheet，不再各自实现 ModalBottomSheet。
 
-@Composable
-private fun ImportBar(items: List<ImportItem>, running: Boolean) {
-    if (items.isEmpty()) return
-    val active = items.lastOrNull {
-        it.stage == ImportStage.COPYING || it.stage == ImportStage.PARSING || it.stage == ImportStage.INDEXING
-    }
-    if (active == null && !running) return
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "正在导入 ${active?.displayName ?: ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                MiradLinearProgress(
-                    progress = { active?.progress ?: 0f },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                )
-            }
-        }
-    }
-}
-
 // ---------------------------------------------------------------- 工具
 
 private fun toggle(selection: Set<Long>, id: Long): Set<Long> =
@@ -268,7 +231,8 @@ internal fun ShelfContent(
     actions: ShelfContentActions = ShelfContentActions(),
     snackbarHost: @Composable () -> Unit = {},
     initialScrollIndex: Int = 0,
-    initialScrollOffset: Int = 0
+    initialScrollOffset: Int = 0,
+    resumePrompt: ShelfResumePromptState = remember { ShelfResumePromptState() }
 ) {
     val shelf = state.shelf
     val visible = state.visible
@@ -281,7 +245,11 @@ internal fun ShelfContent(
     val showSearch = state.showSearch
     val selection = state.selection
     val hiddenCount = remember(shelf) { shelf.count { it.book.isHidden } }
-    val onOpenBook = actions.onOpenBook
+    val onOpenBook: (Long) -> Unit = { bookId ->
+        resumePrompt.dismiss()
+        actions.onOpenBook(bookId)
+    }
+    val continueReading = remember(shelf, showHidden) { resolveContinueReading(shelf, showHidden) }
     var sortMenu by remember { mutableStateOf(false) }
     var importMenu by remember { mutableStateOf(false) }
     com.mirad.reader.ui.common.ResetEdgeBounceOnOverlay(importMenu || sortMenu)
@@ -301,43 +269,6 @@ internal fun ShelfContent(
                         .fillMaxWidth()
                         .padding(vertical = 4.dp)
                 )
-            }
-
-            // 继续阅读：省得每次都要在书架里翻找上次那本
-            val continueReading = remember(shelf, showHidden) {
-                resolveContinueReading(shelf, showHidden)
-            }
-            continueReading?.let { item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .clip(MaterialTheme.shapes.medium)
-                        .background(MaterialTheme.colorScheme.primary.copy(alpha = .08f))
-                        .clickable { onOpenBook(item.book.id) }
-                        .padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "继续阅读 · 已读 ${(item.percent * 100).toInt()}%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                        Text(
-                            text = item.book.title,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                    Text(
-                        text = formatRelative(item.lastReadAt),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(start = 12.dp)
-                    )
-                }
             }
 
             if (groups.isNotEmpty() || hiddenCount > 0) {
@@ -418,6 +349,16 @@ internal fun ShelfContent(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = snackbarHost,
+        bottomAccessory = { available ->
+            ShelfFloatingCard(
+                available = available && selection.isEmpty(),
+                resume = continueReading,
+                prompt = resumePrompt,
+                importing = state.importing,
+                importItems = state.importItems,
+                onOpenBook = onOpenBook
+            )
+        },
         topBar = {
             ShelfHeader(
                 total = shelf.count { !it.book.isHidden }, selectionCount = selection.size,
@@ -529,7 +470,6 @@ internal fun ShelfContent(
                     }
                 }
             }
-            ImportBar(state.importItems, state.importing)
         }
     }
 }

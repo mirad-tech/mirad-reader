@@ -149,6 +149,7 @@ fun ShelfScreen(
     }
 
     ShelfContent(
+        resumePrompt = container.shelfResumePrompt,
         state = ShelfContentState(
             shelf = shelf, visible = visible, groups = groups, sort = sort, layout = layout,
             selectedGroup = selectedGroup, showHidden = showHidden, query = query,

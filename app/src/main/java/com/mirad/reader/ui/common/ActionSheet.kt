@@ -79,7 +79,7 @@ fun EmptyState(
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(Spacing.xxxl)
         ) {
-            Text(text = title, style = MaterialTheme.typography.titleMedium)
+            Text(text = title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
             if (description != null) {
                 Spacer(modifier = Modifier.height(Spacing.xs))
                 Text(

@@ -299,7 +299,7 @@ private fun BackgroundPreview(style: ReadingStyle, dark: Boolean) {
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp)
-            .height(72.dp)
+            .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(Color(palette.background))
     ) {
@@ -308,23 +308,24 @@ private fun BackgroundPreview(style: ReadingStyle, dark: Boolean) {
             Image(
                 bitmap = bitmap,
                 contentDescription = "当前背景预览",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.matchParentSize(),
                 contentScale = ContentScale.Crop
             )
             // 与 ReaderCss 的 #mirad-tint 同口径：不透明度越低，衬底色盖得越多。
             val overlay = 1f - style.backgroundImageAlpha.coerceIn(0f, 1f)
             if (overlay > 0f) {
-                Box(Modifier.fillMaxSize().background(Color(palette.background).copy(alpha = overlay)))
+                Box(Modifier.matchParentSize().background(Color(palette.background).copy(alpha = overlay)))
             }
         }
-        Box(
+        Text(
+            text = "雪下了整整一夜，官道上的车辙……",
+            style = MaterialTheme.typography.bodyLarge,
+            color = Color(palette.text),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .align(Alignment.CenterStart)
-                .padding(horizontal = 12.dp)
-                .width(72.dp)
-                .height(6.dp)
-                .clip(RoundedCornerShape(3.dp))
-                .background(Color(palette.text))
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         )
     }
 }

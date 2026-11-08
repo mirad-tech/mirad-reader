@@ -9,8 +9,9 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.KeyboardArrowRight
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
@@ -18,6 +19,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.mirad.reader.ui.MiradIcons
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.design.Sizes
 import com.mirad.reader.ui.design.Spacing
@@ -30,6 +33,7 @@ fun SettingNavRow(
     label: String,
     value: String? = null,
     subtitle: String? = null,
+    icon: ImageVector? = null,
     onClick: () -> Unit
 ) {
     Row(
@@ -40,6 +44,11 @@ fun SettingNavRow(
             .padding(vertical = Spacing.xs),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(Spacing.md))
+        }
         Column(modifier = Modifier.weight(1f)) {
             Text(text = label, style = MaterialTheme.typography.bodyMedium)
             if (subtitle != null) {
@@ -56,11 +65,12 @@ fun SettingNavRow(
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.widthIn(max = 120.dp).padding(start = Spacing.sm),
+                textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
         Icon(
-            imageVector = Icons.Default.KeyboardArrowRight,
+            imageVector = MiradIcons.ChevronRight,
             contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )

@@ -5,9 +5,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,12 +15,6 @@ import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import kotlin.math.roundToInt
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -135,10 +126,10 @@ internal fun AppNavigationBar(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Icon(when (tab) {
-                                AppTab.Shelf -> ShelfIcon
-                                AppTab.Search -> Icons.Outlined.Search
-                                AppTab.Notes -> NotesIcon
-                                AppTab.Settings -> Icons.Outlined.Settings
+                                AppTab.Shelf -> MiradIcons.Shelf
+                                AppTab.Search -> MiradIcons.Search
+                                AppTab.Notes -> MiradIcons.Notes
+                                AppTab.Settings -> MiradIcons.Settings
                             }, null, tint = tint, modifier = Modifier.size(20.dp).graphicsLayer {
                                 scaleX = 1f + weight * if (dragging) .06f else 0f
                                 scaleY = scaleX
@@ -152,27 +143,3 @@ internal fun AppNavigationBar(
         }
     }
 }
-
-private val ShelfIcon = ImageVector.Builder("Shelf", 24.dp, 24.dp, 24f, 24f).apply {
-    path(stroke = SolidColor(Color.Black), strokeLineWidth = 1.75f,
-        strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
-        moveTo(12f, 6f); curveTo(9f, 4f, 5f, 4f, 2.5f, 5.5f)
-        lineTo(2.5f, 19f); curveTo(5f, 17.5f, 9f, 17.5f, 12f, 19.5f)
-        curveTo(15f, 17.5f, 19f, 17.5f, 21.5f, 19f)
-        lineTo(21.5f, 5.5f); curveTo(19f, 4f, 15f, 4f, 12f, 6f)
-        lineTo(12f, 19.5f)
-    }
-}.build()
-
-private val NotesIcon = ImageVector.Builder("Notes", 24.dp, 24.dp, 24f, 24f).apply {
-    path(stroke = SolidColor(Color.Black), strokeLineWidth = 1.75f,
-        strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round) {
-        moveTo(6f, 3f); lineTo(18f, 3f); quadTo(20f, 3f, 20f, 5f)
-        lineTo(20f, 19f); quadTo(20f, 21f, 18f, 21f)
-        lineTo(6f, 21f); quadTo(4f, 21f, 4f, 19f)
-        lineTo(4f, 5f); quadTo(4f, 3f, 6f, 3f)
-        moveTo(8f, 8f); lineTo(16f, 8f)
-        moveTo(8f, 12f); lineTo(16f, 12f)
-        moveTo(8f, 16f); lineTo(13f, 16f)
-    }
-}.build()

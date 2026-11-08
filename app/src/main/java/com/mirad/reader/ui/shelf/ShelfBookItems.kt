@@ -35,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.ui.design.LocalMiradColors
+import com.mirad.reader.ui.design.Sizes
 
 // ---------------------------------------------------------------- 书籍卡片
 
@@ -60,9 +61,9 @@ internal fun BookGridCard(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .aspectRatio(0.72f)
-                .shadow(2.dp, MaterialTheme.shapes.small)
-                .clip(MaterialTheme.shapes.small)
+                .aspectRatio(Sizes.coverAspect)
+                .shadow(2.dp, RoundedCornerShape(Sizes.coverCorner))
+                .clip(RoundedCornerShape(Sizes.coverCorner))
         ) {
             BookCover(book = item.book, modifier = Modifier.fillMaxSize())
             CoverProgress(item.percent)
@@ -112,7 +113,7 @@ internal fun BookGridCard(
             if (item.percent > 0f) {
                 Text(
                     text = "${(item.percent * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelSmall,
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
                     color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Medium
                 )
@@ -162,13 +163,15 @@ internal fun BookListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(6.dp))
-                InlineProgress(item.percent)
+                if (item.percent > 0f) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    InlineProgress(item.percent)
+                }
             }
             Spacer(modifier = Modifier.width(10.dp))
-            Text(
+            if (item.percent > 0f) Text(
                 text = "${(item.percent * 100).toInt()}%",
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Medium
             )
@@ -211,14 +214,14 @@ private fun InlineProgress(percent: Float) {
 @Composable
 private fun Badge(text: String, modifier: Modifier = Modifier) {
     Surface(
-        color = MaterialTheme.colorScheme.primary,
+        color = MaterialTheme.colorScheme.tertiaryContainer,
         shape = RoundedCornerShape(6.dp),
         modifier = modifier
     ) {
         Text(
             text = text,
             style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onPrimary,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
         )
     }

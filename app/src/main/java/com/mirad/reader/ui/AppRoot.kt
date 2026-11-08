@@ -157,7 +157,10 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         }
     }
 
-    fun navigate(screen: Screen) = navigation.open(screen)
+    fun navigate(screen: Screen) {
+        if (screen is Screen.Reader) container.shelfResumePrompt.dismiss()
+        navigation.open(screen)
+    }
     fun goBack() = navigation.back()
     fun openSourcePage(screen: Screen) = navigation.open(screen)
 

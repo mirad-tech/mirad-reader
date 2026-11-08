@@ -10,7 +10,10 @@ param(
     [string]$Name = 'preview',
     [string[]]$AdbArgs = @(),
     [switch]$KeepAvdOnStop,
-    [string]$CommandLogFile = $env:MIRAD_GLASS_CMD_LOG
+    [string]$CommandLogFile = $env:MIRAD_GLASS_CMD_LOG,
+    [string]$SystemImage = 'system-images;android-37.0;google_apis_playstore_ps16k;x86_64',
+    [string]$JavaHome = '',
+    [string]$CommandLineToolsRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -191,15 +194,31 @@ function Invoke-InstanceAdb([string[]]$Arguments, [int]$TimeoutMs = 30000, [stri
 switch ($Action) {
     'Create' {
         if (Test-Path -LiteralPath $statePath) { throw 'This run already exists; use a new RunId.' }
+        $imageMatch = [regex]::Match($SystemImage, '^system-images;(android-[A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*);([A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*);([A-Za-z0-9_]+(?:[-.][A-Za-z0-9_]+)*)$')
+        if (-not $imageMatch.Success) { throw 'SystemImage must be a system-images;android-...;tag;abi package path.' }
+        $imageRelative = 'system-images/{0}/{1}/{2}/' -f $imageMatch.Groups[1].Value, $imageMatch.Groups[2].Value, $imageMatch.Groups[3].Value
+        $imageDirectory = Join-Path $SdkRoot $imageRelative
+        if (-not (Test-Path -LiteralPath (Join-Path $imageDirectory 'system.img') -PathType Leaf)) {
+            throw "System image is not installed: $SystemImage ($imageDirectory)"
+        }
+        $java = if ($JavaHome) { Join-Path $JavaHome 'bin/java.exe' } else { Join-Path $StudioRoot 'jbr/bin/java.exe' }
+        if (-not (Test-Path -LiteralPath $java -PathType Leaf)) { throw "Java executable not found: $java" }
+        if ($CommandLineToolsRoot) {
+            $classPath = Join-Path $CommandLineToolsRoot 'lib/avdmanager-classpath.jar'
+            if (-not (Test-Path -LiteralPath $classPath -PathType Leaf)) { throw "AVD manager classpath not found: $classPath" }
+            $toolsDirectory = $CommandLineToolsRoot
+        } else {
+            $classPath = "$StudioRoot\plugins\android\lib\*;$StudioRoot\lib\*;$StudioRoot\plugins\Kotlin\kotlinc\lib\*"
+            $toolsDirectory = "$SdkRoot\tools\bin"
+        }
         foreach ($directory in @('android-home', 'avd', 'captures', 'logs')) {
             New-Item -ItemType Directory -Path (Join-Path $runRoot $directory) -Force | Out-Null
         }
-        $classPath = "$StudioRoot\plugins\android\lib\*;$StudioRoot\lib\*;$StudioRoot\plugins\Kotlin\kotlinc\lib\*"
-        $arguments = @("-Dcom.android.sdkmanager.toolsdir=$SdkRoot\tools\bin", '-cp', $classPath,
+        $arguments = @("-Dcom.android.sdkmanager.toolsdir=$toolsDirectory", '-cp', $classPath,
             'com.android.sdklib.tool.AvdManagerCli', 'create', 'avd', '-n', $avdName,
             '-p', (Join-Path $runRoot "avd/$avdName.avd"),
-            '-k', 'system-images;android-37.0;google_apis_playstore_ps16k;x86_64')
-        $result = Invoke-TaskProcess (Join-Path $StudioRoot 'jbr/bin/java.exe') $arguments 60000 "no`n"
+            '-k', $SystemImage)
+        $result = Invoke-TaskProcess $java $arguments 60000 "no`n"
         ($result.Output + $result.Error) | Set-Content -LiteralPath (Join-Path $runRoot 'logs/create.log') -Encoding utf8
         if ($result.ExitCode -ne 0) { throw "AVD creation failed ($($result.ExitCode)); see $runRoot\logs\create.log" }
         $config = Join-Path $runRoot "avd/$avdName.avd/config.ini"
@@ -221,7 +240,7 @@ switch ($Action) {
         $entries['hw.camera.front'] = 'none'
         $entries['showDeviceFrame'] = 'no'
         $entries['disk.dataPartition.size'] = '4G'
-        $entries['image.sysdir.1'] = (Join-Path $SdkRoot 'system-images/android-37.0/google_apis_playstore_ps16k/x86_64/')
+        $entries['image.sysdir.1'] = (Join-Path $SdkRoot $imageRelative)
         $lines = foreach ($entry in $entries.GetEnumerator()) { "$($entry.Key)=$($entry.Value)" }
         $lines | Set-Content -LiteralPath $config -Encoding utf8
         [ordered]@{

@@ -26,6 +26,7 @@ internal class PagerChrome {
     var progress: () -> Float = { 0f }
     var reversed = false
     var bottomHeight by mutableIntStateOf(-1)
+    val pageBottomContentHeights = mutableStateMapOf<String, Int>()
     internal fun add(view: GlassBackdropView, page: Int) { bodies[view] = page }
     internal fun remove(view: View) { if (Build.VERSION.SDK_INT >= 31 && view is GlassBackdropView) bodies.remove(view) }
     internal fun version(root: View): Any {
@@ -78,7 +79,9 @@ internal fun PagerChromeHost(
                         if (!keyboard) navigation(available)
                     }
                     if (feedback != null) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .imePadding().padding(bottom = with(androidx.compose.ui.platform.LocalDensity.current) { state.bottomHeight.coerceAtLeast(0).toDp() })) {
+                        .imePadding().padding(bottom = with(androidx.compose.ui.platform.LocalDensity.current) {
+                            (state.bottomHeight.coerceAtLeast(0) + (state.pageBottomContentHeights[activePage] ?: 0)).toDp()
+                        })) {
                         FeedbackHost(feedback)
                     }
                 }

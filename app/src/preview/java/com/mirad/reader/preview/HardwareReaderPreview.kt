@@ -121,7 +121,7 @@ internal fun HardwareReaderPreview(
 
     val safe = glassSafeInsets().asPaddingValues()
     val direction = LocalLayoutDirection.current
-    val top = if (config.showHeader) 24 else 0
+    val top = readerTopInsetDp(config.fullScreen, safe.calculateTopPadding()) + if (config.showHeader) 24 else 0
     val bottom = safe.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
     val horizontal = maxOf(config.horizontalPaddingDp,
         readerHorizontalInsetDp(safe.calculateLeftPadding(direction)),

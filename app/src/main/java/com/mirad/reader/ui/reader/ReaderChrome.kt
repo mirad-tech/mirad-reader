@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.sizeIn
@@ -21,15 +23,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -61,6 +55,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import com.mirad.reader.core.model.ReaderConfig
+import com.mirad.reader.ui.MiradIcons
 import com.mirad.reader.core.model.ThemePalette
 import kotlinx.coroutines.delay
 import java.time.LocalTime
@@ -69,6 +64,10 @@ import java.time.format.DateTimeFormatter
 // WebView rounds its viewport before centering columns; keep fractional edges outside cutouts.
 internal fun readerHorizontalInsetDp(inset: Dp): Int =
     if (inset.value > 0f) ceil(inset.value).toInt() + 1 else 0
+
+/** 页眉和正文共用：仅非全屏避让顶部，全屏不因系统栏暂时出现而重新分页。 */
+internal fun readerTopInsetDp(fullScreen: Boolean, inset: Dp): Int =
+    if (!fullScreen && inset.value > 0f) ceil(inset.value).toInt() else 0
 
 /**
  * 阅读顶栏：只保留「返回 / 章节信息 / 书签 / 更多」。
@@ -94,9 +93,10 @@ fun ReaderTopBar(
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-        .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
+        .padding(horizontal = if (legacy) 0.dp else 4.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
-        Column {
+        // 将原来的外留白纳入同一玻璃表面，控件位置和总高度不变，图片背景也不会出现实色带。
+        Column(Modifier.padding(vertical = if (legacy) 0.dp else 10.dp)) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -106,7 +106,7 @@ fun ReaderTopBar(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 IconButton(onClick = onBack) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    Icon(MiradIcons.Back, contentDescription = "返回")
                 }
                 Column(
                     modifier = Modifier.weight(1f),
@@ -132,7 +132,7 @@ fun ReaderTopBar(
                 }
                 IconButton(onClick = onBookmark) {
                     Icon(
-                        Icons.Default.Star,
+                        MiradIcons.Bookmark,
                         contentDescription = "书签",
                         tint = if (hasBookmark) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant
@@ -140,7 +140,7 @@ fun ReaderTopBar(
                 }
                 Box {
                 IconButton(onClick = { menu = true }) {
-                    Icon(Icons.Default.MoreVert, contentDescription = "更多")
+                    Icon(MiradIcons.More, contentDescription = "更多")
                 }
                 GlassPortalMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("目录") }, onClick = { menu = false; onToc() })
@@ -183,9 +183,9 @@ fun ReaderBottomBar(
     val legacy = LocalGlassLegacy.current
     Box(Modifier.fillMaxWidth()
         .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-        .padding(horizontal = if (legacy) 0.dp else 4.dp, vertical = if (legacy) 0.dp else 10.dp)) {
+        .padding(horizontal = if (legacy) 0.dp else 4.dp)) {
     GlassSurface(Modifier.fillMaxWidth(), shape = if (legacy) RectangleShape else MaterialTheme.shapes.large) {
-        Column {
+        Column(Modifier.padding(vertical = if (legacy) 0.dp else 10.dp)) {
             if (legacy) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, thickness = 1.dp)
             val draftState = androidx.compose.runtime.remember {
                 androidx.compose.runtime.mutableStateOf<Float?>(null)
@@ -211,18 +211,18 @@ fun ReaderBottomBar(
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                BarAction("目录", Icons.Default.List, onToc)
-                BarAction("笔记", Icons.Default.Edit, onNotes)
+                BarAction("目录", MiradIcons.Contents, onToc)
+                BarAction("笔记", MiradIcons.Edit, onNotes)
                 // 底栏给"自动阅读"而不是朗读：它是阅读中最常用的位置控制，
                 // 朗读仍在右上「更多」菜单里（朗读本章 / 暂停朗读），功能不丢。
                 BarAction(
                     text = "自动阅读",
-                    icon = Icons.Default.PlayArrow,
+                    icon = MiradIcons.Play,
                     onClick = onAutoRead,
                     active = autoReading
                 )
-                BarAction("搜索", Icons.Default.Search, onSearch)
-                BarAction("设置", Icons.Default.Settings, onSettings)
+                BarAction("搜索", MiradIcons.Search, onSearch)
+                BarAction("设置", MiradIcons.Settings, onSettings)
             }
             Row(
                 modifier = Modifier
@@ -304,12 +304,13 @@ internal fun HeaderFooter(
     val textColor = Color(palette.secondaryText)
     // 正文列居中后，页眉页脚要跟着列左边缘走，否则会贴在屏幕边上与正文错位。
     val horizontal = if (insetLeftDp >= 0) (insetLeftDp + 4).dp else (config.horizontalPaddingDp + 4).dp
+    val top = readerTopInsetDp(config.fullScreen, glassSafeInsets().asPaddingValues().calculateTopPadding())
     Column(
         modifier = Modifier
             .fillMaxSize()
             .windowInsetsPadding(glassSafeInsets().only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
-            .padding(horizontal = horizontal, vertical = 4.dp),
-        verticalArrangement = Arrangement.SpaceBetween
+            .padding(top = top.dp)
+            .padding(horizontal = horizontal, vertical = 4.dp)
     ) {
         if (config.showHeader) {
             Row(
@@ -332,6 +333,8 @@ internal fun HeaderFooter(
                 }
             }
         }
+        // 即使关闭页眉，页脚也必须留在底部，不能由单子项的 SpaceBetween 排到顶部。
+        Spacer(Modifier.weight(1f))
         if (config.showFooter) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

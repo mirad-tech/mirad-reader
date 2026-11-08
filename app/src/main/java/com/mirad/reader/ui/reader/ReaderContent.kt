@@ -222,10 +222,10 @@ internal fun ReaderContent(
         }, session::startAutoRead)
     }
 
-    // 正文与顶部阅读文字不再为状态栏、挖孔增加留白，也不执行挖孔区域文字裁剪；保留页眉页脚自身占位与导航栏预留。
+    // 非全屏时，正文与页眉使用相同的顶部安全区；全屏保持原来的顶部排版。
     val systemBarInsets = glassSafeInsets().asPaddingValues()
     val layoutDirection = LocalLayoutDirection.current
-    val reserveTop = if (config.showHeader) 24 else 0
+    val reserveTop = readerTopInsetDp(config.fullScreen, systemBarInsets.calculateTopPadding()) + if (config.showHeader) 24 else 0
     val reserveBottom = systemBarInsets.calculateBottomPadding().value.roundToInt() + if (config.showFooter) 24 else 0
     val reserveLeft = readerHorizontalInsetDp(systemBarInsets.calculateLeftPadding(layoutDirection))
     val reserveRight = readerHorizontalInsetDp(systemBarInsets.calculateRightPadding(layoutDirection))

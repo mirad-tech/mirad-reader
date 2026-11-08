@@ -43,6 +43,9 @@ class AppContainer(app: Application) {
     /** 与应用同生命周期的协程作用域，用于导入、统计等长任务。 */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** 短暂续读提示只记在本进程，重建页面不重复提示，重启应用自然恢复。 */
+    internal val shelfResumePrompt = com.mirad.reader.ui.shelf.ShelfResumePromptState()
+
     val paths: AppPaths = AppPaths(app)
 
     val database: AppDatabase = Room.databaseBuilder(

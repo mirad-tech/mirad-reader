@@ -24,9 +24,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.dp
 import com.mirad.reader.core.sources.*
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.design.Spacing
+import com.mirad.reader.ui.MiradIcons
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -142,28 +144,31 @@ fun SourceSearchScreen(
                     onExpand = { expanded = !expanded }, onCatalog = { catalog = it }, onDownload = { download(it) })
             } else {
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
-                        OutlinedTextField(
-                            value = query, onValueChange = { query = it }, label = { Text("书名或作者") },
-                            modifier = Modifier.fillMaxWidth(), singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = { beginSearch() })
-                        )
-                        MiradButton(enabled = state.running || query.isNotBlank(),
-                            onClick = { if (state.running) search.cancelSearch() else beginSearch() }) {
-                            Text(if (state.running) "取消搜索" else "搜索")
-                        }
-                    }
+                    OutlinedTextField(
+                        value = query, onValueChange = { query = it }, label = { Text("书名或作者") },
+                        modifier = Modifier.fillMaxWidth(), singleLine = true,
+                        shape = MaterialTheme.shapes.medium,
+                        leadingIcon = { Icon(MiradIcons.Search, contentDescription = null) },
+                        trailingIcon = {
+                            MiradTextButton(enabled = state.running || query.isNotBlank(),
+                                onClick = { if (state.running) search.cancelSearch() else beginSearch() }) {
+                                Text(if (state.running) "取消搜索" else "搜索")
+                            }
+                        },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { beginSearch() })
+                    )
                 }
                 if (state.totalSources > 0) item {
                     SourceProgress(if (state.running) "正在搜索" else "已搜索", state.completedSources, state.totalSources, state.running)
                 }
                 state.message?.let { item { Text(it, style = MaterialTheme.typography.bodyMedium) } }
                 if (sources.none { it.enabled && it.unsupportedReason == null }) item {
-                    SourceEmpty("没有可用的已启用书源")
-                    MiradButton(onClick = onSources) { Text("管理书源") }
+                    EmptyState("没有可用的已启用书源", actionText = "管理书源", onAction = onSources,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp))
                 } else if (state.query.isNotBlank() && !state.running && state.matches.isEmpty()) item {
-                    SourceEmpty("没有找到匹配的书籍")
+                    EmptyState("没有找到匹配的书籍",
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 280.dp))
                 }
                 items(state.matches, key = { it.key }) { match ->
                     Column(

@@ -4,7 +4,7 @@
 
 当前维护的构建入口为 `debug`、`release` 和 `preview`。独立 GPU 原型已退役；阅读 GPU 检查使用下文 Integrated reader hardware checks 中的生产组件预览。三个单轮修复脚本已从当前树移除，需要追溯时从 Git 历史查看，不再作为常规验收入口。
 
-This driver uses the existing Android Studio runtime, Android SDK, and API 37 image. It does not install dependencies. Each run owns an AVD, Android preferences, logs, captures, and a private ADB server under `build/verification/glass-native-preview/<run-id>/`.
+By default this driver uses the existing Android Studio runtime, Android SDK, and API 37 image. It does not install dependencies. Each run owns an AVD, Android preferences, logs, captures, and a private ADB server under `build/verification/glass-native-preview/<run-id>/`.
 
 新建的隔离实例在测试结束并执行 `Stop` 后，会先确认本次模拟器及专用 ADB 已停止、相关端口已释放，再仅删除该运行目录的 `avd` 子目录；`captures`、`logs` 和 `instance.json` 保留。旧实例或未带本工具所有权标记的实例不会自动删除。清理状态和失败原因记录在 `instance.json` 与 `logs/avd-cleanup.log`；无法确认安全时不开始清理，清理过程出错时可能留下部分文件并输出警告。需要稍后继续使用同一临时模拟器时，可在停止时传入 `-KeepAvdOnStop`；已清理的运行应使用新的 RunId 创建实例。
 
@@ -15,6 +15,27 @@ Run with PowerShell 7.4 or newer from the repository root:
 & './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Start -RunId glass-20261022
 & './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Status -RunId glass-20261022
 ```
+
+也可显式指定已安装的 SDK 命令行工具、JDK 和系统镜像；镜像须预先存在，不会自动下载。以下端口仅作示例，使用前须确认空闲：
+
+```powershell
+$instance = @{
+    RunId = '<本轮唯一 RunId>'
+    SdkRoot = '<SDK 根目录>'
+    JavaHome = '<JDK 根目录>'
+    CommandLineToolsRoot = '<SDK 根目录>/cmdline-tools/latest'
+    SystemImage = 'system-images;android-36;google_apis;x86_64'
+    ServerPort = 5050
+    ConsolePort = 5560
+}
+& './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Create @instance
+& './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Start @instance
+& './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Status @instance
+# 完成本轮验证后，在持有实例的外层流程 finally 中执行：
+& './tools/glass-preview/Invoke-GlassPreview.ps1' -Action Stop @instance
+```
+
+后续 Install、Adb、Capture 和 Stop 均使用相同的 RunId、SDK 路径与端口；其他镜像的结果须标明实际 API 版本，不能代替 API 37 或旧系统验证。
 
 `Start` launches hidden background processes and returns immediately. Check `Status` after other independent work; `BootCompleted = 1` confirms startup. On this workstation, the Codex filesystem sandbox cannot create the ADB socketpair or connect to the host's listener. Run `Start`, `Status`, and all subsequent device actions in the authorized host environment. The script refuses to let a client implicitly start an unrestricted ADB server.
 

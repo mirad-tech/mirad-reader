@@ -41,7 +41,11 @@ object Sizes {
     /** 书籍封面（列表/操作面板）。 */
     val coverSmallWidth = 44.dp
     val coverSmallHeight = 60.dp
+    val coverCorner = 8.dp
 }
+
+@Immutable
+data class CoverTone(val container: Color, val onContainer: Color)
 
 /**
  * Material3 配色之外的语义色：搜索命中、朗读高亮、笔记高亮、封面遮罩等。
@@ -56,7 +60,8 @@ data class MiradColors(
     val chartEmpty: Color,
     val selectionCheck: Color,
     /** 深色色块上的勾选颜色（对比色，不随主题走）。 */
-    val checkOnDarkSwatch: Color
+    val checkOnDarkSwatch: Color,
+    val coverTones: List<CoverTone>
 )
 
 val LightMiradColors = MiradColors(
@@ -66,7 +71,9 @@ val LightMiradColors = MiradColors(
     coverScrim = Color(0x38000000),
     chartEmpty = Color(0x1F2F6B58),
     selectionCheck = Color(0xFF2F6B58),
-    checkOnDarkSwatch = Color(0xFFFFFFFF)
+    checkOnDarkSwatch = Color(0xFFFFFFFF),
+    coverTones = listOf(0xFF2F6B58, 0xFF3E5C76, 0xFF8A5A3B, 0xFF8C3F3F, 0xFF63506E, 0xFF4A5A52)
+        .map { CoverTone(Color(it), Color(0xFFFCFBF7)) }
 )
 
 val DarkMiradColors = MiradColors(
@@ -76,7 +83,9 @@ val DarkMiradColors = MiradColors(
     coverScrim = Color(0x59000000),
     chartEmpty = Color(0x338FD3BC),
     selectionCheck = Color(0xFF9BD3BB),
-    checkOnDarkSwatch = Color(0xFFFFFFFF)
+    checkOnDarkSwatch = Color(0xFFFFFFFF),
+    coverTones = listOf(0xFF1D5B45, 0xFF2C4458, 0xFF6B4429, 0xFF6E2F2F, 0xFF4B3B56, 0xFF37443D)
+        .map { CoverTone(Color(it), Color(0xFFE3E6E2)) }
 )
 
 val LocalMiradColors = staticCompositionLocalOf { LightMiradColors }

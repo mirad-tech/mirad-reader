@@ -217,6 +217,8 @@ fun SettingCard(
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = container,
+            border = androidx.compose.foundation.BorderStroke(.5.dp,
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (glassActive) .45f else .7f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
