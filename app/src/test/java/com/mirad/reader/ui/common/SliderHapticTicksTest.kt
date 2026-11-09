@@ -6,10 +6,9 @@ import org.junit.Test
 
 class SliderHapticTicksTest {
     @Test
-    fun arrivalAtTheSameTickWorksInBothDirections() {
+    fun firstDragUpdateAndReverseDragTickOnArrival() {
         val ticks = SliderHapticTicks(5f)
-        ticks.start()
-        assertFalse(ticks.update(14f, 0L))
+        ticks.start(14f)
         assertTrue(ticks.update(15f, 80L))
         assertFalse(ticks.update(16f, 160L))
         assertTrue(ticks.update(15f, 240L))
@@ -19,8 +18,7 @@ class SliderHapticTicksTest {
     @Test
     fun floatStepsRecognizeTheDisplayedTick() {
         val ticks = SliderHapticTicks(.02f)
-        ticks.start()
-        assertFalse(ticks.update(.078f, 0L))
+        ticks.start(.078f)
         assertTrue(ticks.update(Math.nextDown(.08f), 100L))
         assertFalse(ticks.update(.081f, 200L))
     }
@@ -28,8 +26,7 @@ class SliderHapticTicksTest {
     @Test
     fun fastSweepsMergeCrossingsAndLimitRepeatedFeedback() {
         val ticks = SliderHapticTicks(.05f)
-        ticks.start()
-        assertFalse(ticks.update(.01f, 0L))
+        ticks.start(.01f)
         assertTrue(ticks.update(.46f, 100L))
         assertFalse(ticks.update(.56f, 159L))
         assertTrue(ticks.update(.66f, 160L))
@@ -40,11 +37,11 @@ class SliderHapticTicksTest {
     fun cancellationAndNonDragUpdatesNeverCarryTheOldBaseline() {
         val ticks = SliderHapticTicks(5f)
         assertFalse(ticks.update(12f, 0L))
-        ticks.start()
+        ticks.start(13f)
         assertFalse(ticks.update(14f, 80L))
         ticks.stop()
         assertFalse(ticks.update(25f, 160L))
-        ticks.start()
+        ticks.start(48f)
         assertFalse(ticks.update(49f, 240L))
         assertTrue(ticks.update(50f, 320L))
     }

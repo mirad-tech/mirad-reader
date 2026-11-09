@@ -2,13 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前版本：1.3.8（versionCode 34）**
+**当前版本：1.3.9（versionCode 35）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.8.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.9.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-[墨读 1.3.5 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.5/mirad-reader-1.3.5-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.5/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.3.5)。1.3.8 为本地构建版本。
+[墨读 1.3.9 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.9/mirad-reader-1.3.9-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.9/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.3.9)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 

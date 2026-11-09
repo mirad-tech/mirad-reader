@@ -8,16 +8,17 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.interaction.DragInteraction
+import androidx.compose.foundation.interaction.Interaction
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
@@ -45,25 +46,35 @@ fun MiradSlider(
     val active = MaterialTheme.colorScheme.primary.copy(alpha = if (enabled) 1f else 0.38f)
     val inactive = MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (enabled) 1f else 0.38f)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val interactions = remember { MutableInteractionSource() }
+    val sliderValue = value.coerceIn(valueRange)
+    val currentValue = rememberUpdatedState(sliderValue)
     val ticks = remember(hapticStep) { SliderHapticTicks(hapticStep) }
-    val haptic = LocalHapticFeedback.current
-    LaunchedEffect(interactions, enabled, ticks) {
-        if (!enabled) return@LaunchedEffect
-        try {
-            interactions.interactions.collect { interaction ->
+    val interactions = remember(ticks) {
+        val source = MutableInteractionSource()
+        object : MutableInteractionSource by source {
+            override suspend fun emit(interaction: Interaction) {
+                trackDrag(interaction)
+                source.emit(interaction)
+            }
+
+            override fun tryEmit(interaction: Interaction): Boolean {
+                trackDrag(interaction)
+                return source.tryEmit(interaction)
+            }
+
+            // 发出拖动开始事件时就记录起点，异步收集可能晚于首次值更新。
+            private fun trackDrag(interaction: Interaction) {
                 when (interaction) {
-                    is DragInteraction.Start -> ticks.start()
+                    is DragInteraction.Start -> ticks.start(currentValue.value)
                     is DragInteraction.Stop, is DragInteraction.Cancel -> ticks.stop()
                     else -> Unit
                 }
             }
-        } finally {
-            ticks.stop()
         }
     }
+    val haptic = LocalHapticFeedback.current
     Slider(
-        value = value.coerceIn(valueRange),
+        value = sliderValue,
         onValueChange = { updated ->
             if (enabled && ticks.update(updated, SystemClock.elapsedRealtime())) {
                 haptic.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
@@ -97,25 +108,21 @@ fun MiradSlider(
 
 /** 手势内只记录相邻的滑动值，快速扫过多个刻度时也只触发一次。 */
 internal class SliderHapticTicks(private val step: Float) {
-    private var dragging = false
     private var previous: Float? = null
     private var lastTickMillis: Long? = null
 
-    fun start() {
-        dragging = true
-        previous = null
+    fun start(value: Float) {
+        previous = value
     }
 
     fun stop() {
-        dragging = false
         previous = null
     }
 
     fun update(value: Float, nowMillis: Long): Boolean {
-        if (!dragging) return false
-        val prior = previous
+        val prior = previous ?: return false
         previous = value
-        if (prior == null || prior == value) return false
+        if (prior == value) return false
         val from = prior.toDouble() / step
         val to = value.toDouble() / step
         // 比较刻度编号时容忍浮点步进误差，落在刻度上算一次，离开该刻度不重复。
