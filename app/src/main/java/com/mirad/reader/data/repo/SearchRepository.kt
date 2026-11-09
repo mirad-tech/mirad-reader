@@ -1,5 +1,7 @@
 package com.mirad.reader.data.repo
 
+import androidx.room.withTransaction
+
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.dao.PreferenceDao
@@ -97,7 +99,8 @@ object SearchMatcher {
 class SearchRepository(
     private val textProvider: ChapterTextProvider,
     private val ftsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null,
-    private val preferences: PreferenceDao? = null
+    private val preferences: PreferenceDao? = null,
+    private val database: com.mirad.reader.data.db.AppDatabase? = null
 ) {
     private val indexFormatLock = Mutex()
     private var indexFormatReady = false
@@ -262,8 +265,15 @@ class SearchRepository(
                         contentLower = normalizeCase(content)
                     )
                 }
-                ftsDao.deleteForBook(book.id)
-                ftsDao.insertAll(fullBatch)
+                val publish: suspend () -> Unit = {
+                    ftsDao.deleteForBook(book.id)
+                    ftsDao.insertAll(fullBatch)
+                }
+                val db = database
+                if (db == null) publish() else db.withTransaction {
+                    // 阅读会话退出时搜索可能还在收尾，不能把旧正文索引写回新版。
+                    if (db.bookDao().getById(book.id)?.filePath == book.filePath) publish()
+                }
             }
         }
 

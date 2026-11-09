@@ -2,13 +2,13 @@
 
 Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose、Room 和 WebView。
 
-**当前版本：1.3.9（versionCode 35）**
+**当前版本：1.3.10（versionCode 36）**
 
-[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.9.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
+[下载已发布版本](https://github.com/mirad-tech/mirad-reader/releases/latest) · [本次更新](docs/releases/1.3.10.md) · [开发与验证](docs/DEVELOPMENT.md) · [文档目录](docs/README.md)
 
 ## 安装
 
-[墨读 1.3.9 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.9/mirad-reader-1.3.9-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.9/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.3.9)。
+[墨读 1.3.10 APK](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.10/mirad-reader-1.3.10-release.apk) · [SHA-256 校验文件](https://github.com/mirad-tech/mirad-reader/releases/download/v1.3.10/SHA256SUMS.txt) · [Release 页面](https://github.com/mirad-tech/mirad-reader/releases/tag/v1.3.10)。
 
 本机安装包与校验文件统一放在 `artifacts/apk/`，按构建类型、版本和批次归档，本机索引为 `artifacts/apk/README.md`。该目录不入 Git；新克隆的仓库需先下载或构建安装包，归档约定见[开发文档](docs/DEVELOPMENT.md#仓库与发布约定)。
 
@@ -19,7 +19,7 @@ Android 本地优先的 TXT / EPUB 阅读器，使用 Kotlin、Jetpack Compose�
 ## 功能
 
 - **四栏导航**：书架、搜书、笔记和设置分别保留页面状态；长按选中胶囊推动时正文同步横向移动，松手吸附最近页面。阅读时隐藏应用底栏，退出后回到原入口。
-- **导入与书架**：TXT / EPUB 文件、多文件及目录导入，接收其他应用分享，输入 HTTP/HTTPS 文件直链或网页长文；支持封面、搜索、排序、分组、置顶、隐藏和批量操作，网格/列表布局会被记住。
+- **导入与书架**：TXT / EPUB 文件、多文件及目录导入，接收其他应用分享，输入 HTTP/HTTPS 文件直链或网页长文；支持封面、搜索、排序、分组、置顶、隐藏和批量操作，网格/列表布局会被记住。重新导入整本同格式的本地新版时，可更新原书并保留阅读位置。
 - **书源与离线下载**：支持书源 URL、完整 JSON 文件和链接清单导入，跨源搜索并按完整目录章数比较；支持后台整本下载、暂停、继续、取消和重试，完成后作为 EPUB 加入书架。兼容范围见[书源说明](docs/BOOK_SOURCES.md)。
 - **阅读**：左右分页、上下滚动、目录跳转、进度记忆、可关闭的音量键翻页、自动阅读，以及字体、字号、行距、字间距、背景和主题设置；新增内置 Noto 黑体、朱雀仿宋及四款日夜植物线描背景。
 - **页数与定位**：修正部分设备小数版心产生的虚假末页，避免翻页时正文原地不动及重开后的进度跳变。

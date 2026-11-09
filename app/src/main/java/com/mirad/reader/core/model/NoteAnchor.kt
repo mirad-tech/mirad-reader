@@ -24,5 +24,5 @@ object NoteAnchor {
     }
 
     /** 给界面用的一句话说明。 */
-    const val STALE_HINT = "位置已失效（正文重新识别或重新分章过）"
+    const val STALE_HINT = "位置已失效"
 }

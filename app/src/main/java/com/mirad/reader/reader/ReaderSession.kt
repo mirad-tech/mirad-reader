@@ -579,17 +579,17 @@ class ReaderSession(
     }
 
 
-    fun saveProgressNow() = progressTracker.saveProgressNow()
+    fun saveProgressNow() { progressTracker.saveProgressNow() }
     fun startSession() = progressTracker.startSession()
     fun endSession() = progressTracker.endSession()
 
-    fun release() {
+    fun release(): kotlinx.coroutines.Job? {
         // 退出阅读页：先取消自动阅读的计时任务/JS 滚动，再保存进度、释放 WebView。
         autoRead.release()
         _autoReadNotice.value = null
         cancelSearchNavigation()
         progressTracker.cancelPendingSave()
-        saveProgressNow()
+        val progressWrite = progressTracker.saveProgressNow()
         endSession()
         prepared = false
         // 只清理本会话注册的 handler，避免音量键继续驱动已销毁的会话。
@@ -601,6 +601,7 @@ class ReaderSession(
         }
         webView = null
         resources.release()
+        return progressWrite
     }
 
     // ------------------------------------------------------------------ 工具

@@ -307,7 +307,13 @@ fun ShelfScreen(
         encodingBook == null && chapterBook == null && !confirmDelete && actionBook == null &&
         !showGroupManager && groupRenameTarget == null && groupAction == null && groupDeleteTarget == null) {
         val result = summary!!
-        ImportResultDialog(result) { container.importer.clearSummary(result.batchId) }
+        ImportResultDialog(
+            result,
+            onPreview = container.importer::previewUpdate,
+            onUpdate = container.importer::confirmUpdate,
+            onResolveWithoutUpdate = container.importer::resolveWithoutUpdate,
+            onDismiss = { container.importer.clearSummary(result.batchId) }
+        )
     }
 
     if (groupDialog) {

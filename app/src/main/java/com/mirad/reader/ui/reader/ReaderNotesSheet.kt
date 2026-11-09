@@ -133,7 +133,7 @@ fun NotesSheet(
                             title = highlight.text,
                             subtitle = highlight.note,
                             meta = if (stale) {
-                                "第 ${highlight.chapterIndex + 1} 章 · ${NoteAnchor.STALE_HINT}"
+                                NoteAnchor.STALE_HINT
                             } else {
                                 "第 ${highlight.chapterIndex + 1} 章"
                             },

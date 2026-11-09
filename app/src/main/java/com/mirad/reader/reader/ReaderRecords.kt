@@ -165,6 +165,7 @@ internal class ReaderProgress(
     private val stats = container.stats
     private val progressWrites = Mutex()
     private var saveJob: Job? = null
+    private var lastWrite: Job? = null
     private var sessionRequested = false
     private var sessionStartedAt = 0L
     private var sessionStartAbsolute = 0L
@@ -182,14 +183,14 @@ internal class ReaderProgress(
         }
     }
 
-    fun saveProgressNow() {
+    fun saveProgressNow(): Job? {
         val current = _state.value
         // prepare 完成不代表正文已经恢复；加载中退出不能用默认位置覆盖已有进度。
-        if (!canSave() || !current.ready) return
+        if (!canSave() || !current.ready) return lastWrite
         lastTrustedAbsolute = absoluteOffset()
         // 用应用级作用域：退出阅读页时组合作用域会被取消，进度与统计不能丢；
         // 互斥串行化保证快速连续跨章时旧快照不会后写覆盖新位置。
-        container.appScope.launch {
+        return container.appScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
             progressWrites.withLock {
                 withContext(Dispatchers.IO) {
                     books.saveProgress(
@@ -206,7 +207,7 @@ internal class ReaderProgress(
                     books.touchLastRead(bookId)
                 }
             }
-        }
+        }.also { lastWrite = it }
     }
 
     private fun absoluteOffset(): Long {

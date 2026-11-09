@@ -13,8 +13,11 @@ import com.mirad.reader.data.db.entity.ProgressEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /** 书架条目：书籍 + 进度。 */
 data class ShelfBook(
@@ -34,6 +37,11 @@ class BookRepository(
     private val appDatabase: AppDatabase? = null,
     private val sessionDao: SessionDao? = null
 ) {
+    private val contentLocks = ConcurrentHashMap<Long, Mutex>()
+
+    /** 阅读会话及改变正文或章节的操作共用同一本书的锁。 */
+    internal fun contentLock(id: Long): Mutex = contentLocks.computeIfAbsent(id) { Mutex() }
+
 
     fun observeShelf(): Flow<List<ShelfBook>> = combine(
         bookDao.observeAll(),
@@ -52,6 +60,8 @@ class BookRepository(
     }
 
     suspend fun getBook(id: Long): BookEntity? = bookDao.getById(id)
+
+    internal suspend fun getAllBooks(): List<BookEntity> = bookDao.getAll()
 
     suspend fun getChapters(bookId: Long): List<ChapterEntity> = chapterDao.getForBook(bookId)
 
@@ -103,7 +113,12 @@ class BookRepository(
     suspend fun saveProgress(progress: ProgressEntity) = progressDao.upsert(progress)
 
     /** 删除书籍及其全部数据与文件（阅读记录一并删除，与删除确认文案一致）。 */
-    suspend fun deleteBook(book: BookEntity) = withContext(Dispatchers.IO) {
+    suspend fun deleteBook(book: BookEntity) = contentLock(book.id).withLock {
+        withContext(Dispatchers.IO) { deleteCurrentBook(book.id) }
+    }
+
+    private suspend fun deleteCurrentBook(id: Long) {
+        val book = bookDao.getById(id) ?: return
         // 先删数据库行（外键 CASCADE 清理章节/进度/划线/书签；另清 FTS 与阅读会话），
         // 文件删除放最后：行已删而文件残留可以重试删除；反过来会留下"有行无文件"的死链书。
         val block: suspend () -> Unit = {

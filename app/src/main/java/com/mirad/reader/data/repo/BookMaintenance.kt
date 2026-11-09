@@ -17,12 +17,10 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 已导入书籍的维护操作。
@@ -59,7 +57,10 @@ class BookMaintenance(
             book.id, digest(bytes), books.getChapters(book.id), detection.rule?.id)
     }
 
-    suspend fun applyChapters(book: BookEntity, preview: ChapterPreview): Int = withContext(Dispatchers.IO) {
+    suspend fun applyChapters(book: BookEntity, preview: ChapterPreview): Int =
+        books.contentLock(book.id).withLock { applyChaptersLocked(book, preview) }
+
+    private suspend fun applyChaptersLocked(book: BookEntity, preview: ChapterPreview): Int = withContext(Dispatchers.IO) {
         require(book.id == preview.bookId && book.format != BookFormat.EPUB)
         database.withTransaction {
             val current = books.getBook(book.id) ?: error("书籍已不存在")
@@ -157,14 +158,15 @@ class BookMaintenance(
 
     /** 用原始文件重新解码并重建章节索引。同一本书串行执行：发布、失败恢复与清理同临界区，不影响其他书。 */
     suspend fun redetect(book: BookEntity, charsetHint: String? = null): ReindexResult {
-        val lock = redetectLocks.computeIfAbsent(book.id) { Mutex() }
-        return lock.withLock {
+        return books.contentLock(book.id).withLock {
             withContext(Dispatchers.IO) {
-                val bytes = rawBytes(book)
+                val oldBook = books.getBook(book.id) ?: error("书籍已不存在")
+                check(oldBook.filePath == book.filePath) { "正文已更新，请重新打开编码设置" }
+                val bytes = rawBytes(oldBook)
                 val decoded = TextCodec.decode(bytes, manual = charsetHint)
                 val normalized = TextNormalizer.normalize(decoded.text)
                 if (normalized.isBlank()) throw IllegalStateException("重新解码后没有正文内容")
-                val target = contentFile(book)
+                val target = contentFile(oldBook)
                 // 每次操作独占临时文件：被取消的旧任务（取消只在挂起点生效，秒级的同步分章
                 // 计算会把清理推迟到计算之后）只能删掉自己的输出，动不了并发新任务的文件。
                 val staging = ContentReplacer.stagingFile(target)
@@ -172,7 +174,6 @@ class BookMaintenance(
                 staging.writeText(normalized, Charsets.UTF_8)
                 // 旧状态快照：正文替换失败时把章节与书籍字段恢复到本次操作之前，
                 // 保证"完整旧状态或完整新状态"，绝不留下新索引配旧正文的混合状态。
-                val oldBook = books.getBook(book.id) ?: book
                 val oldChapters = books.getChapters(book.id)
                 try {
                     // 耗时计算结束后、发布前检查取消：已取消的任务不得继续提交结果。
@@ -189,7 +190,7 @@ class BookMaintenance(
                                 database.searchFtsDao().deleteForBook(book.id)
                                 val result = persistChapters(book, slices)
                                 books.updateBook(
-                                    book.copy(
+                                    oldBook.copy(
                                         encoding = decoded.charsetName,
                                         chapterRuleId = detection.rule?.id,
                                         totalChapters = slices.size,
@@ -216,8 +217,6 @@ class BookMaintenance(
             }
         }
     }
-
-    private val redetectLocks = ConcurrentHashMap<Long, Mutex>()
 
     /**
      * 各候选编码的前若干字。用于「编码」对话框：选中即预览，用户一眼就能看出哪个是对的。

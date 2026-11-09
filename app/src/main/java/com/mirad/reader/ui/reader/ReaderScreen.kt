@@ -7,7 +7,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -20,6 +19,11 @@ import androidx.compose.ui.Modifier
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.reader.ReaderSession
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 @Composable
 fun ReaderScreen(
@@ -35,25 +39,29 @@ fun ReaderScreen(
     var error by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(bookId) {
-        val loaded = container.books.getBook(bookId)
-        if (loaded == null) {
-            error = "书籍不存在"
-            return@LaunchedEffect
+        container.books.contentLock(bookId).withLock {
+            val loaded = container.books.getBook(bookId)
+            if (loaded == null) {
+                error = "书籍不存在"
+                return@withLock
+            }
+            val appearance = container.settings.currentAppAppearance()
+            val config = appearance.resolveReaderConfig(container.settings.currentGlobal(), latestSystemDark)
+            val created = ReaderSession(container, loaded, scope)
+            try {
+                created.prepare(config, appearance.effectiveDark(latestSystemDark))
+                book = loaded
+                session = created
+                awaitCancellation()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "打开失败"
+            } finally {
+                val lastWrite = created.release()
+                withContext(NonCancellable) { lastWrite?.join() }
+            }
         }
-        val appearance = container.settings.currentAppAppearance()
-        val config = appearance.resolveReaderConfig(container.settings.currentGlobal(), latestSystemDark)
-        val created = ReaderSession(container, loaded, scope)
-        // prepare 失败也要释放：会话在 init 里注册了全局音量键 handler，不释放会让
-        // ReaderKeys.pager 指向一个已经废弃的会话，同时 resources/zip 句柄一直挂着。
-        // release() 不会写坏进度：ReaderSession 用 prepared 标记挡住了半初始化状态的写库。
-        val prepared = runCatching { created.prepare(config, appearance.effectiveDark(latestSystemDark)) }
-        if (prepared.isFailure) {
-            created.release()
-            error = prepared.exceptionOrNull()?.message ?: "打开失败"
-            return@LaunchedEffect
-        }
-        book = loaded
-        session = created
     }
 
     val current = session
@@ -72,10 +80,6 @@ fun ReaderScreen(
             CircularProgressIndicator()
         }
         return
-    }
-
-    DisposableEffect(current) {
-        onDispose { current.release(); com.mirad.reader.reader.ReaderKeys.pager = null }
     }
 
     ReaderContent(

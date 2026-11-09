@@ -95,7 +95,7 @@ class AppContainer(app: Application) {
         appScope.launch { removeRetiredPreviewFonts(paths.fontsDir) }
     }
 
-    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao(), database.preferenceDao())
+    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao(), database.preferenceDao(), database)
 
     val importer: ImportPipeline = ImportPipeline(
         context = app,

@@ -5,6 +5,27 @@ import org.junit.Test
 import kotlinx.coroutines.launch
 
 class ImportBatchQueueTest {
+    @Test fun pendingReviewDoesNotBlockOtherImportsAndResolvesInItsOriginalBatch() {
+        val queue = ImportBatchQueue()
+        val mixed = queue.enqueue(listOf(ImportItem("review", "旧书新版"), ImportItem("new", "新书")))
+        queue.update("review") { it.copy(stage = ImportStage.REVIEW) }
+        queue.update("new") { it.copy(stage = ImportStage.DONE, bookId = 18) }
+        val initial = queue.complete(mixed)
+        assertFalse(queue.state.value.running)
+        assertEquals(1, initial.success)
+        assertEquals("review", initial.pending.single().id)
+
+        val later = queue.enqueue(listOf(ImportItem("waiting", "仍在阅读")))
+        queue.update("waiting") { it.copy(stage = ImportStage.WAITING_READER) }
+        queue.complete(later)
+        queue.update("review") { it.copy(stage = ImportStage.UPDATED, bookId = 12) }
+        assertEquals(1, queue.summary.value!!.updated)
+        assertEquals(listOf(12L, 18L), queue.summary.value!!.bookIds)
+        assertTrue(queue.acknowledge(mixed.id).isEmpty())
+        assertEquals(listOf("waiting"), queue.acknowledge(later.id))
+        assertNull(queue.summary.value)
+    }
+
     @Test fun cancellationWhileWaitingForTheImportLockStillCompletesItsBatch() = kotlinx.coroutines.runBlocking {
         val queue = ImportBatchQueue()
         val batch = queue.enqueue(listOf(ImportItem("waiting", "后台下载")))

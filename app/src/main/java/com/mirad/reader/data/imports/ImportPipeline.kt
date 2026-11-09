@@ -3,24 +3,24 @@ package com.mirad.reader.data.imports
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
+import android.util.Log
 import androidx.room.withTransaction
 import com.mirad.reader.core.epub.EpubParser
 import com.mirad.reader.core.epub.ZipEntryReader
 import com.mirad.reader.core.html.Html
 import com.mirad.reader.core.model.TocJson
-import com.mirad.reader.core.text.ChapterRules
-import com.mirad.reader.core.text.ChapterSplitter
-import com.mirad.reader.core.text.EncodingDetector
-import com.mirad.reader.core.text.TextNormalizer
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.repo.BookRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -57,16 +57,33 @@ class ImportPipeline(
     private val downloadReceipts = appDatabase?.let {
         DownloadImportReceipts(it.preferenceDao()) { bookId -> books.getBook(bookId) != null }
     }
+    private val editions = appDatabase?.let { BookEditionUpdater(it, books) }
+    private val staging = LocalImportStaging(paths)
+    private val pending = mutableMapOf<String, PendingEdition>()
+    private var recovered = false
+
+    init {
+        if (editions != null) scope.launch { mutex.withLock { recoverLocalImports() } }
+    }
 
     fun clearSummary(batchId: String? = lastSummary.value?.batchId) {
-        batches.acknowledge(batchId)
+        scope.launch {
+            mutex.withLock {
+                batches.acknowledge(batchId).forEach { id ->
+                    pending.remove(id)?.let {
+                        it.waiter?.cancel()
+                        cleanStaging(it.token)
+                    }
+                }
+            }
+        }
     }
 
     fun import(sources: List<ImportSource>, force: Boolean = false): String? {
         if (sources.isEmpty()) return null
         val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
         val batch = batches.enqueue(items)
-        scope.launch { runBatch(batch, sources, items, force) }
+        scope.launch { runBatch(batch, sources, items, force, local = !force && editions != null) }
         return batch.id
     }
 
@@ -74,11 +91,11 @@ class ImportPipeline(
         if (sources.isEmpty()) return ImportSummary(0, 0, 0, emptyList())
         val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
         val batch = batches.enqueue(items)
-        return runBatch(batch, sources, items, force)
+        return runBatch(batch, sources, items, force, local = false)
     }
 
     private suspend fun runBatch(
-        batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean
+        batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean, local: Boolean
     ): ImportSummary {
         var summary: ImportSummary? = null
         // 收敛逻辑见 BatchCompletionGuard：取消/异常也要把批次收成终态，否则 running 永远为 true。
@@ -87,7 +104,9 @@ class ImportPipeline(
             complete = { summary = batches.complete(batch) }
         ).run {
             mutex.withLock {
-                for (index in sources.indices) importOne(sources[index], items[index].id, force)
+                if (local) recoverLocalImports()
+                val matcher = if (local) EditionMatcher(books::getChapters) else null
+                for (index in sources.indices) importOne(sources[index], items[index].id, force, matcher)
             }
         }
         return checkNotNull(summary)
@@ -99,8 +118,9 @@ class ImportPipeline(
     private fun sameContent(incoming: File, existing: com.mirad.reader.data.db.entity.BookEntity): Boolean =
         FileFingerprint.sameContent(incoming, books.originalFileOf(existing))
 
-    private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean) {
+    private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean, matcher: EditionMatcher?) {
         val token = UUID.randomUUID().toString()
+        val local = matcher != null
         val downloadTaskId = (source as? ImportSource.FromFile)?.downloadTaskId
         var committedBookId: Long? = null
         try {
@@ -113,7 +133,6 @@ class ImportPipeline(
             }
             updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
             val extension = guessExtension(source)
-            val target = paths.originalFile(token, extension)
             // 拷前预检：旧实现是整份拷贝完成后才在 prepareTxt 里校验大小，
             // 于是一个超大 TXT 会先把内部存储写满、再报"文件过大"。
             val declaredSize = withContext(Dispatchers.IO) { runCatching { sizeOf(source) }.getOrDefault(0L) }
@@ -127,6 +146,8 @@ class ImportPipeline(
                 }
                 return
             }
+            if (local) staging.mark(token)
+            val target = paths.originalFile(token, extension)
             val size = withContext(Dispatchers.IO) {
                 copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
             }
@@ -134,11 +155,14 @@ class ImportPipeline(
             updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
             val displayTitle = source.displayName.substringBeforeLast('.').trim().ifBlank { source.displayName }
 
+            val format = if (extension == EPUB_EXT) BookFormat.EPUB else BookFormat.TXT
+            val shelf = if (local) books.getAllBooks().filter { it.format == format } else emptyList()
             if (!force) {
-                val duplicate = books.findDuplicateCandidates(displayTitle, size)
+                val duplicate = (if (local) shelf.filter { it.fileSize == size }
+                    else books.findDuplicateCandidates(displayTitle, size))
                     .firstOrNull { sameContent(target, it) }
                 if (duplicate != null) {
-                    paths.deleteBookFiles(token, null)
+                    if (!local) paths.deleteBookFiles(token, null)
                     downloadTaskId?.let { taskId ->
                         withContext(NonCancellable + Dispatchers.IO) { downloadReceipts?.record(taskId, duplicate.id) }
                     }
@@ -155,28 +179,29 @@ class ImportPipeline(
             }
 
             val prepared = withContext(Dispatchers.IO) {
-                if (extension == EPUB_EXT) prepareEpub(source, token, target, displayTitle, size)
+                if (extension == EPUB_EXT) prepareEpub(source, token, target, displayTitle, size, local)
                 else prepareTxt(source, token, target, displayTitle, size)
             }
 
-            withContext(NonCancellable + Dispatchers.IO) {
-                // 入库三步同事务：中途崩溃不会留下"有书行但章节为空"的半本书。
-                val block: suspend () -> Long = {
-                    val id = books.insertBook(prepared.book)
-                    books.saveChapters(id, prepared.chapters.map { it.copy(bookId = id) })
-                    books.updateIndexInfo(
-                        bookId = id,
-                        chapters = prepared.chapters.size,
-                        chars = prepared.totalChars,
-                        ruleId = prepared.ruleId,
-                        regex = prepared.regex,
-                        encoding = prepared.encoding
-                    )
-                    downloadTaskId?.let { taskId -> downloadReceipts?.record(taskId, id) }
-                    id
+            if (matcher != null) {
+                val match = matcher.match(prepared.book, displayTitle, prepared.epub, shelf)
+                if (match.duplicate != null) {
+                    skipDuplicate(itemId, match.duplicate)
+                    return
                 }
-                val db = appDatabase
-                val bookId = if (db != null) db.withTransaction { block() } else block()
+                if (match.candidates.isNotEmpty()) {
+                    val entry = PendingEdition(token, displayTitle, prepared, match.candidates)
+                    pending[itemId] = entry
+                    val automatic = match.automatic
+                    if (automatic == null) showReview(itemId, entry)
+                    else attemptUpdate(itemId, entry, automatic, agreed = null)
+                    return
+                }
+            }
+
+            currentCoroutineContext().ensureActive()
+            withContext(NonCancellable + Dispatchers.IO) {
+                val bookId = insertPrepared(prepared, downloadTaskId)
                 committedBookId = bookId
                 updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId) }
             }
@@ -189,12 +214,13 @@ class ImportPipeline(
             }
             // 清理必须包 NonCancellable：协程已取消时，裸的 withContext 会立刻抛
             // CancellationException，文件/DB 补偿一步都不会执行。
-            withContext(NonCancellable + Dispatchers.IO) {
+            if (!local) withContext(NonCancellable + Dispatchers.IO) {
                 // 封面写在 coversDir（不在书籍目录下），补偿必须显式带上，否则孤儿 jpg 会累积。
                 paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
             }
             // 取消不是"导入失败"：往上抛，由 runBatch 统一把批次收敛成"已取消"。
-            if (t is kotlinx.coroutines.CancellationException) throw t
+            pending.remove(itemId)?.waiter?.cancel()
+            if (t is CancellationException) throw t
             updateItem(itemId) {
                 it.copy(
                     stage = ImportStage.FAILED,
@@ -202,7 +228,20 @@ class ImportPipeline(
                     message = t.message ?: t.javaClass.simpleName
                 )
             }
+        } finally {
+            if (local && itemId !in pending) cleanStaging(token)
         }
+    }
+
+    private suspend fun insertPrepared(prepared: PreparedBook, downloadTaskId: String? = null): Long {
+        val block: suspend () -> Long = {
+            val id = books.insertBook(prepared.book)
+            books.saveChapters(id, prepared.chapters.map { it.copy(bookId = id) })
+            books.updateIndexInfo(id, prepared.chapters.size, prepared.totalChars, prepared.ruleId, prepared.regex, prepared.encoding)
+            downloadTaskId?.let { downloadReceipts?.record(it, id) }
+            id
+        }
+        return appDatabase?.withTransaction { block() } ?: block()
     }
 
     private data class PreparedBook(
@@ -211,8 +250,203 @@ class ImportPipeline(
         val encoding: String?,
         val ruleId: String?,
         val regex: String?,
-        val totalChars: Long
+        val totalChars: Long,
+        val epub: List<EpubChapterSignature>? = null
     )
+
+    private class PendingEdition(
+        val token: String,
+        val displayTitle: String,
+        val prepared: PreparedBook,
+        var candidates: List<EditionCandidate>,
+        var preview: ImportUpdatePreview? = null,
+        var waiter: Job? = null
+    )
+
+    fun previewUpdate(itemId: String, bookId: Long) {
+        scope.launch {
+            mutex.withLock {
+                val entry = pending[itemId] ?: return@withLock
+                if (entry.waiter != null) return@withLock
+                val candidate = entry.candidates.firstOrNull { it.book.id == bookId } ?: return@withLock
+                try {
+                    showReview(itemId, entry, inspect(entry, candidate).preview)
+                } catch (_: EditionChanged) {
+                    refreshReview(itemId, entry)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    showReview(itemId, entry, message = e.message ?: "无法核对续读位置")
+                }
+            }
+        }
+    }
+
+    fun confirmUpdate(itemId: String, preview: ImportUpdatePreview) {
+        scope.launch {
+            mutex.withLock {
+                val entry = pending[itemId] ?: return@withLock
+                if (entry.waiter != null || entry.preview != preview || preview.resume == ResumeImpact.UNAVAILABLE) return@withLock
+                val candidate = entry.candidates.firstOrNull { it.book.id == preview.bookId } ?: return@withLock
+                attemptUpdate(itemId, entry, candidate, agreed = preview)
+            }
+        }
+    }
+
+    fun resolveWithoutUpdate(itemId: String, keepNew: Boolean) {
+        scope.launch {
+            mutex.withLock {
+                val entry = pending[itemId] ?: return@withLock
+                if (entry.waiter != null && keepNew) return@withLock
+                entry.waiter?.cancel()
+                try {
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        val id = if (keepNew) insertPrepared(entry.prepared) else null
+                        finishPending(itemId, entry, if (keepNew) ImportStage.DONE else ImportStage.SKIPPED, id,
+                            if (keepNew) null else "已跳过")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "无法保存新书")
+                }
+            }
+        }
+    }
+
+    private suspend fun attemptUpdate(
+        itemId: String, entry: PendingEdition, candidate: EditionCandidate, agreed: ImportUpdatePreview?
+    ) {
+        val lock = books.contentLock(candidate.book.id)
+        if (lock.tryLock()) {
+            try {
+                applyOrReview(itemId, entry, candidate, agreed)
+            } finally {
+                lock.unlock()
+            }
+            return
+        }
+        updateItem(itemId) { it.copy(stage = ImportStage.WAITING_READER, progress = 1f, review = null, message = null) }
+        entry.waiter = scope.launch {
+            // 只等待同书的会话，释放整个导入队列给批次中的其它书。
+            while (isActive) {
+                lock.withLock { }
+                val done = mutex.withLock {
+                    if (pending[itemId] !== entry) return@withLock true
+                    if (!lock.tryLock()) return@withLock false
+                    try {
+                        entry.waiter = null
+                        applyOrReview(itemId, entry, candidate, agreed)
+                        true
+                    } finally {
+                        lock.unlock()
+                    }
+                }
+                if (done) break
+            }
+        }
+    }
+
+    private suspend fun applyOrReview(
+        itemId: String, entry: PendingEdition, candidate: EditionCandidate, agreed: ImportUpdatePreview?
+    ) {
+        try {
+            val update = inspect(entry, candidate)
+            val preview = update.preview
+            val needsConfirmation = preview.resume == ResumeImpact.CHAPTER_START || preview.lostLocations > 0
+            if (preview.resume == ResumeImpact.UNAVAILABLE ||
+                (agreed == null && needsConfirmation) || (agreed != null && agreed != preview)) {
+                showReview(itemId, entry, preview)
+                return
+            }
+            currentCoroutineContext().ensureActive()
+            withContext(NonCancellable + Dispatchers.IO) {
+                staging.beforeReplacement(entry.token, update.old.book)
+                checkNotNull(editions).publish(update, entry.prepared.book, entry.prepared.chapters)
+                finishPending(itemId, entry, ImportStage.UPDATED, candidate.book.id)
+            }
+        } catch (_: EditionChanged) {
+            refreshReview(itemId, entry)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "更新失败")
+        }
+    }
+
+    private suspend fun inspect(entry: PendingEdition, candidate: EditionCandidate) =
+        checkNotNull(editions).inspect(candidate, entry.prepared.book, entry.prepared.chapters)
+
+    private suspend fun refreshReview(itemId: String, entry: PendingEdition) {
+        val match = try {
+            EditionMatcher(books::getChapters)
+                .match(entry.prepared.book, entry.displayTitle, entry.prepared.epub, books.getAllBooks())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "无法重新核对旧书")
+            return
+        }
+        if (match.duplicate != null) {
+            pending.remove(itemId)
+            skipDuplicate(itemId, match.duplicate)
+            cleanStaging(entry.token)
+        } else {
+            entry.candidates = match.candidates
+            showReview(itemId, entry, message = "旧书或阅读记录已变化，请重新核对")
+        }
+    }
+
+    private fun showReview(
+        itemId: String, entry: PendingEdition, preview: ImportUpdatePreview? = null, message: String? = null
+    ) {
+        entry.preview = preview
+        val candidates = entry.candidates.map {
+            val book = it.book
+            ImportReviewCandidate(book.id, book.title, book.author, book.totalChapters, book.addedAt)
+        }
+        updateItem(itemId) {
+            it.copy(stage = ImportStage.REVIEW, progress = 1f, message = message,
+                review = ImportReview(entry.prepared.chapters.size, candidates, preview))
+        }
+    }
+
+    private fun skipDuplicate(itemId: String, candidate: EditionCandidate) {
+        val prefix = if (candidate.relation == EditionRelation.OLDER) "书架已保存较新的版本" else "书架中已有同一本书"
+        updateItem(itemId) {
+            it.copy(stage = ImportStage.SKIPPED, progress = 1f, bookId = candidate.book.id,
+                review = null, message = prefix + "《" + candidate.book.title + "》")
+        }
+    }
+
+    private suspend fun finishPending(
+        itemId: String, entry: PendingEdition, stage: ImportStage, id: Long? = null, message: String? = null
+    ) {
+        pending.remove(itemId)
+        updateItem(itemId) { it.copy(stage = stage, progress = 1f, bookId = id, review = null, message = message) }
+        cleanStaging(entry.token)
+    }
+
+    private suspend fun recoverLocalImports() {
+        if (recovered) return
+        // 只在本进程创建暂存项之前恢复，不能把仍在等待确认的文件当作孤儿。
+        recovered = true
+        try {
+            staging.recover(books.getAllBooks())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w("ImportPipeline", "无法读取本地导入清理记录", e)
+        }
+    }
+
+    private suspend fun cleanStaging(token: String) = withContext(NonCancellable + Dispatchers.IO) {
+        try {
+            if (staging.isMarked(token)) staging.finish(token, books.getAllBooks())
+        } catch (e: Exception) {
+            Log.w("ImportPipeline", "无法核对导入文件引用，保留清理记录", e)
+        }
+    }
 
     private fun prepareTxt(
         source: ImportSource,
@@ -267,6 +501,7 @@ class ImportPipeline(
             fileSize = size,
             encoding = streamResult.charset,
             chapterRuleId = streamResult.ruleId,
+            chapterRegex = streamResult.regex,
             totalChapters = chapters.size,
             totalChars = streamResult.totalChars,
             addedAt = System.currentTimeMillis()
@@ -286,20 +521,24 @@ class ImportPipeline(
         token: String,
         target: File,
         displayTitle: String,
-        size: Long
+        size: Long,
+        local: Boolean
     ): PreparedBook {
         val info = runCatching { EpubParser.parse(target) }
             .getOrElse { throw ImportException("EPUB 解析失败：${it.message ?: "文件可能已损坏"}") }
 
         val reader = ZipEntryReader.open(target)
         val chapters = ArrayList<ChapterEntity>(info.spine.size)
+        val signatures = if (local) ArrayList<EpubChapterSignature>(info.spine.size) else null
         var totalChars = 0L
         try {
             for (item in info.spine) {
                 // 与阅读/渲染路径同口径（ZipEntryReader.MAX_CHAPTER_BYTES）：口径不一致时
                 // 会出现"目录与渲染正常、但该章搜索 0 命中 / TTS 为空"的章节。
                 val html = reader.readText(item.href, maxBytes = ZipEntryReader.MAX_CHAPTER_BYTES)
+                if (local && html == null) throw ImportException("EPUB 有章节无法读取，未完成导入")
                 val text = html?.let { Html.toPlainText(it) }.orEmpty()
+                signatures?.add(EpubChapterSignature.of(text))
                 totalChars += text.length
                 chapters.add(
                     ChapterEntity(
@@ -354,7 +593,8 @@ class ImportPipeline(
             encoding = null,
             ruleId = null,
             regex = null,
-            totalChars = totalChars
+            totalChars = totalChars,
+            epub = signatures
         )
     }
 

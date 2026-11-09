@@ -24,6 +24,9 @@ enum class ImportStage {
     PARSING,
     INDEXING,
     DONE,
+    UPDATED,
+    REVIEW,
+    WAITING_READER,
     SKIPPED,
     FAILED
 }
@@ -34,7 +37,31 @@ data class ImportItem(
     val stage: ImportStage = ImportStage.PENDING,
     val progress: Float = 0f,
     val message: String? = null,
-    val bookId: Long? = null
+    val bookId: Long? = null,
+    val review: ImportReview? = null
+)
+
+data class ImportReviewCandidate(
+    val bookId: Long,
+    val title: String,
+    val author: String?,
+    val chapters: Int,
+    val addedAt: Long
+)
+
+enum class ResumeImpact { UNREAD, EXACT, CHAPTER_START, UNAVAILABLE }
+
+data class ImportUpdatePreview(
+    val bookId: Long,
+    val resume: ResumeImpact,
+    val chapterTitle: String?,
+    val lostLocations: Int
+)
+
+data class ImportReview(
+    val newChapters: Int,
+    val candidates: List<ImportReviewCandidate>,
+    val preview: ImportUpdatePreview? = null
 )
 
 data class ImportState(
@@ -56,5 +83,7 @@ data class ImportSummary(
     val skipped: Int,
     val messages: List<String>,
     val batchId: String = "",
-    val bookIds: List<Long> = emptyList()
+    val bookIds: List<Long> = emptyList(),
+    val updated: Int = 0,
+    val pending: List<ImportItem> = emptyList()
 )

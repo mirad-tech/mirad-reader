@@ -4,12 +4,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.UUID
 
-/** In-memory task/result ownership. Finished batches never contribute to a later summary. */
+/** 已扫描的批次可继续处理待确认项，结果只归属它自己的批次。 */
 internal class ImportBatchQueue {
     data class Batch(val id: String, val itemIds: Set<String>)
+    private data class Result(val id: String, var items: List<ImportItem>)
     private val _state = MutableStateFlow(ImportState())
     val state = _state.asStateFlow()
-    private val pendingResults = ArrayDeque<ImportSummary>()
+    private val pendingResults = ArrayDeque<Result>()
     private val _summary = MutableStateFlow<ImportSummary?>(null)
     val summary = _summary.asStateFlow()
 
@@ -22,7 +23,14 @@ internal class ImportBatchQueue {
 
     @Synchronized
     fun update(id: String, transform: (ImportItem) -> ImportItem) {
-        _state.value = _state.value.copy(items = _state.value.items.map { if (it.id == id) transform(it) else it })
+        val active = _state.value
+        if (active.items.any { it.id == id }) {
+            _state.value = active.copy(items = active.items.map { if (it.id == id) transform(it) else it })
+        } else {
+            val result = pendingResults.firstOrNull { result -> result.items.any { it.id == id } } ?: return
+            result.items = result.items.map { if (it.id == id) transform(it) else it }
+            if (pendingResults.firstOrNull() === result) _summary.value = summarize(result)
+        }
     }
 
     /**
@@ -51,32 +59,37 @@ internal class ImportBatchQueue {
         check(items.size == batch.itemIds.size && items.all { it.stage in TERMINAL }) {
             "Cannot complete a batch with unfinished items"
         }
-        val result = ImportSummary(
-            success = items.count { it.stage == ImportStage.DONE },
-            failed = items.count { it.stage == ImportStage.FAILED },
-            skipped = items.count { it.stage == ImportStage.SKIPPED },
-            messages = items.filter { it.stage != ImportStage.DONE }
-                .map { "${it.displayName}：${it.message.orEmpty()}" },
-            batchId = batch.id,
-            bookIds = items.filter { it.stage == ImportStage.DONE || it.stage == ImportStage.SKIPPED }
-                .mapNotNull { it.bookId }.distinct()
-        )
+        val result = Result(batch.id, items)
         val remaining = _state.value.items.filterNot { it.id in batch.itemIds }
         _state.value = ImportState(remaining, running = remaining.isNotEmpty())
         pendingResults.addLast(result)
-        _summary.value = pendingResults.firstOrNull()
-        return result
+        _summary.value = pendingResults.firstOrNull()?.let(::summarize)
+        return summarize(result)
     }
 
     @Synchronized
-    fun acknowledge(batchId: String?) {
+    fun acknowledge(batchId: String?): List<String> {
         // A delayed dismiss callback must not consume the next batch's result.
-        if (pendingResults.firstOrNull()?.batchId != batchId) return
-        pendingResults.removeFirstOrNull()
-        _summary.value = pendingResults.firstOrNull()
+        if (batchId == null || pendingResults.firstOrNull()?.id != batchId) return emptyList()
+        val removed = pendingResults.removeFirst()
+        _summary.value = pendingResults.firstOrNull()?.let(::summarize)
+        return removed.items.filter { it.stage in PENDING_DECISION }.map { it.id }
     }
 
+    private fun summarize(result: Result): ImportSummary = ImportSummary(
+        success = result.items.count { it.stage == ImportStage.DONE },
+        updated = result.items.count { it.stage == ImportStage.UPDATED },
+        failed = result.items.count { it.stage == ImportStage.FAILED },
+        skipped = result.items.count { it.stage == ImportStage.SKIPPED },
+        messages = result.items.mapNotNull { item -> item.message?.let { item.displayName + "：" + it } },
+        batchId = result.id,
+        bookIds = result.items.filter { it.stage in setOf(ImportStage.DONE, ImportStage.UPDATED, ImportStage.SKIPPED) }
+            .mapNotNull { it.bookId }.distinct(),
+        pending = result.items.filter { it.stage in PENDING_DECISION }
+    )
+
     private companion object {
-        val TERMINAL = setOf(ImportStage.DONE, ImportStage.SKIPPED, ImportStage.FAILED)
+        val PENDING_DECISION = setOf(ImportStage.REVIEW, ImportStage.WAITING_READER)
+        val TERMINAL = setOf(ImportStage.DONE, ImportStage.UPDATED, ImportStage.SKIPPED, ImportStage.FAILED) + PENDING_DECISION
     }
 }
