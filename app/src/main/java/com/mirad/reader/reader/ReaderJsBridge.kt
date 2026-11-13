@@ -24,7 +24,10 @@ class ReaderJsBridge(
     /** 自动下滑到达本章末尾（章节代次随章号校验）。 */
     private val onAutoScrollEnd: (chapterIndex: Int) -> Unit = {},
     /** 合并后的真实正文变化；不把 Android onDraw 当成内容变化。 */
-    private val onVisualChanged: () -> Unit = {}
+    private val onVisualChanged: () -> Unit = {},
+    private val onRequestChapterLoad: (index: Int, documentEpoch: Int, forward: Boolean) -> Unit =
+        { index, _, _ -> onRequestNextChapter(index) },
+    private val onReadToEnd: (chapterIndex: Int, documentEpoch: Int, coverTurnId: Int) -> Unit = { _, _, _ -> }
 ) {
     /** 兼容旧版不带 chapterIndex 的调用方 */
     constructor(
@@ -66,6 +69,18 @@ class ReaderJsBridge(
         // 显式取函数属性，避免调用到本方法自身导致递归
         val callback = this.onRequestNextChapter
         main.post { callback(index) }
+    }
+
+    @JavascriptInterface
+    fun onRequestChapterLoad(index: Int, documentEpoch: Int, forward: Boolean) {
+        val callback = this.onRequestChapterLoad
+        main.post { callback(index, documentEpoch, forward) }
+    }
+
+    @JavascriptInterface
+    fun onReadToEnd(chapterIndex: Int, documentEpoch: Int, coverTurnId: Int) {
+        val callback = this.onReadToEnd
+        main.post { callback(chapterIndex, documentEpoch, coverTurnId) }
     }
 
     @JavascriptInterface

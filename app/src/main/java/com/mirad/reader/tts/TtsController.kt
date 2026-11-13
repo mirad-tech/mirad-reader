@@ -12,6 +12,9 @@ import java.util.UUID
  */
 class TtsController(private val context: Context) {
 
+    @Volatile
+    private var ownedPlaylistToken: String? = TtsBus.playlist?.token
+
     val state: StateFlow<TtsBus.TtsState> = TtsBus.state
 
     /** 当前是否正在发声播放（暂停态为 false）。 */
@@ -41,6 +44,7 @@ class TtsController(private val context: Context) {
             ends = IntArray(sentences.size) { sentences[it].end }
         )
         TtsBus.playlist = playlist
+        ownedPlaylistToken = playlist.token
         val intent = Intent(context, TtsService::class.java)
             .setAction(TtsBus.ACTION_PLAY)
             .putExtra(TtsBus.EXTRA_TOKEN, playlist.token)
@@ -76,6 +80,18 @@ class TtsController(private val context: Context) {
     fun consumeChapterFinished() = TtsBus.consumeChapterFinished()
 
     private fun send(action: String) {
-        runCatching { context.startService(TtsService.intent(context, action)) }
+        val token = ownedPlaylistToken ?: return
+        val revision = TtsBus.prepareControl(token, action) ?: return
+        runCatching {
+            context.startService(
+                TtsService.intent(context, action)
+                    .putExtra(TtsBus.EXTRA_TOKEN, token)
+                    .putExtra(TtsBus.EXTRA_CONTROL_REVISION, revision)
+            )
+        }.onFailure {
+            if (TtsBus.resolvePlaylist(token) != null) {
+                TtsBus.update { state -> state.copy(playing = false, error = "无法控制朗读服务") }
+            }
+        }
     }
 }

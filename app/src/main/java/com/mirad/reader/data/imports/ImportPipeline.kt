@@ -9,10 +9,12 @@ import com.mirad.reader.core.epub.EpubParser
 import com.mirad.reader.core.epub.ZipEntryReader
 import com.mirad.reader.core.html.Html
 import com.mirad.reader.core.model.TocJson
+import com.mirad.reader.core.text.StreamingTxtProcessor
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
+import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.repo.BookRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -21,8 +23,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -38,16 +40,17 @@ interface BookImporter {
 }
 
 /**
- * 导入管线：复制 → 识别格式 → 解析/分章 → 入库 → 生成封面。
- *
- * 串行执行，向 UI 暴露每一步的进度；单个文件失败不影响其余文件。
+ * 导入管线：
+ * - 具备持久读取权限的手机本地文件（SAF）：零拷贝记录原文件 URI，直接流式/随机解析章节；
+ * - 临时分享流、网址下载与书源下载：仅保留单份原始文件，TXT 不再生成第二份 `content.utf8.txt`。
  */
 class ImportPipeline(
     private val context: Context,
     private val paths: AppPaths,
     private val books: BookRepository,
     private val scope: CoroutineScope,
-    private val appDatabase: com.mirad.reader.data.db.AppDatabase? = null
+    private val appDatabase: com.mirad.reader.data.db.AppDatabase? = null,
+    private val contentAccess: BookContentAccess = BookContentAccess(context)
 ) : BookImporter {
 
     private val batches = ImportBatchQueue()
@@ -57,7 +60,7 @@ class ImportPipeline(
     private val downloadReceipts = appDatabase?.let {
         DownloadImportReceipts(it.preferenceDao()) { bookId -> books.getBook(bookId) != null }
     }
-    private val editions = appDatabase?.let { BookEditionUpdater(it, books) }
+    private val editions = appDatabase?.let { BookEditionUpdater(it, books, contentAccess) }
     private val staging = LocalImportStaging(paths)
     private val pending = mutableMapOf<String, PendingEdition>()
     private var recovered = false
@@ -98,14 +101,13 @@ class ImportPipeline(
         batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean, local: Boolean
     ): ImportSummary {
         var summary: ImportSummary? = null
-        // 收敛逻辑见 BatchCompletionGuard：取消/异常也要把批次收成终态，否则 running 永远为 true。
         BatchCompletionGuard(
             abort = { reason -> batches.abort(batch, reason) },
             complete = { summary = batches.complete(batch) }
         ).run {
             mutex.withLock {
                 if (local) recoverLocalImports()
-                val matcher = if (local) EditionMatcher(books::getChapters) else null
+                val matcher = if (local) EditionMatcher(contentAccess, books::getChapters) else null
                 for (index in sources.indices) importOne(sources[index], items[index].id, force, matcher)
             }
         }
@@ -115,8 +117,8 @@ class ImportPipeline(
     // ------------------------------------------------------------------ 单个文件
 
     /** 采样一致后还需全文确认；读不出来就不判重，不能静默丢掉用户导入的书。 */
-    private fun sameContent(incoming: File, existing: com.mirad.reader.data.db.entity.BookEntity): Boolean =
-        FileFingerprint.sameContent(incoming, books.originalFileOf(existing))
+    private fun sameContent(incomingPath: String, existing: BookEntity): Boolean =
+        FileFingerprint.sameContent(contentAccess, incomingPath, existing.filePath)
 
     private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean, matcher: EditionMatcher?) {
         val token = UUID.randomUUID().toString()
@@ -126,16 +128,14 @@ class ImportPipeline(
         try {
             downloadTaskId?.let { taskId ->
                 downloadReceipts?.find(taskId)?.let { id ->
-                    updateItem(itemId) { it.copy(stage = ImportStage.SKIPPED, progress = 1f,
-                        bookId = id, message = "下载书籍已加入书架") }
+                    updateItem(itemId) {
+                        it.copy(stage = ImportStage.SKIPPED, progress = 1f, bookId = id, message = "下载书籍已加入书架")
+                    }
                     return
                 }
             }
-            updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
-            val extension = guessExtension(source)
-            // 拷前预检：旧实现是整份拷贝完成后才在 prepareTxt 里校验大小，
-            // 于是一个超大 TXT 会先把内部存储写满、再报"文件过大"。
-            val declaredSize = withContext(Dispatchers.IO) { runCatching { sizeOf(source) }.getOrDefault(0L) }
+            val extension = withContext(Dispatchers.IO) { guessExtension(source) }
+            val declaredSize = withContext(Dispatchers.IO) { runCatching { sizeOf(source) }.getOrDefault(-1L) }
             if (declaredSize > MAX_TXT_BYTES) {
                 updateItem(itemId) {
                     it.copy(
@@ -146,23 +146,38 @@ class ImportPipeline(
                 }
                 return
             }
+
             if (local) staging.mark(token)
-            val target = paths.originalFile(token, extension)
-            val size = withContext(Dispatchers.IO) {
-                copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
+
+            val directReference = source is ImportSource.FromUri &&
+                downloadTaskId == null &&
+                contentAccess.canReferenceUriDirectly(source.uriString)
+
+            val bookFilePath: String
+            val size: Long
+            if (directReference) {
+                updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
+                bookFilePath = source.uriString
+                size = withContext(Dispatchers.IO) { verifyReadableSize(bookFilePath, declaredSize) }
+            } else {
+                updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
+                val target = paths.originalFile(token, extension)
+                size = withContext(Dispatchers.IO) {
+                    copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
+                }
+                bookFilePath = target.absolutePath
+                updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
             }
 
-            updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
             val displayTitle = source.displayName.substringBeforeLast('.').trim().ifBlank { source.displayName }
-
             val format = if (extension == EPUB_EXT) BookFormat.EPUB else BookFormat.TXT
             val shelf = if (local) books.getAllBooks().filter { it.format == format } else emptyList()
             if (!force) {
-                val duplicate = (if (local) shelf.filter { it.fileSize == size }
+                val duplicate = (if (local) shelf.filter { it.fileSize == size && it.filePath != bookFilePath }
                     else books.findDuplicateCandidates(displayTitle, size))
-                    .firstOrNull { sameContent(target, it) }
+                    .firstOrNull { sameContent(bookFilePath, it) }
                 if (duplicate != null) {
-                    if (!local) paths.deleteBookFiles(token, null)
+                    if (!local) paths.deleteManagedBookStorage(bookFilePath, null, null)
                     downloadTaskId?.let { taskId ->
                         withContext(NonCancellable + Dispatchers.IO) { downloadReceipts?.record(taskId, duplicate.id) }
                     }
@@ -179,8 +194,8 @@ class ImportPipeline(
             }
 
             val prepared = withContext(Dispatchers.IO) {
-                if (extension == EPUB_EXT) prepareEpub(source, token, target, displayTitle, size, local)
-                else prepareTxt(source, token, target, displayTitle, size)
+                if (extension == EPUB_EXT) prepareEpub(source, token, bookFilePath, displayTitle, size, local)
+                else prepareTxt(source, token, bookFilePath, displayTitle, size)
             }
 
             if (matcher != null) {
@@ -206,19 +221,14 @@ class ImportPipeline(
                 updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId) }
             }
         } catch (t: Throwable) {
-            // 事务成功后不能因恢复协程时的取消删除正文；恢复任务从同事务的凭据找回书籍。
             if (committedBookId != null) {
                 updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = committedBookId) }
-                if (t is kotlinx.coroutines.CancellationException) throw t
+                if (t is CancellationException) throw t
                 return
             }
-            // 清理必须包 NonCancellable：协程已取消时，裸的 withContext 会立刻抛
-            // CancellationException，文件/DB 补偿一步都不会执行。
             if (!local) withContext(NonCancellable + Dispatchers.IO) {
-                // 封面写在 coversDir（不在书籍目录下），补偿必须显式带上，否则孤儿 jpg 会累积。
                 paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
             }
-            // 取消不是"导入失败"：往上抛，由 runBatch 统一把批次收敛成"已取消"。
             pending.remove(itemId)?.waiter?.cancel()
             if (t is CancellationException) throw t
             updateItem(itemId) {
@@ -328,7 +338,6 @@ class ImportPipeline(
         }
         updateItem(itemId) { it.copy(stage = ImportStage.WAITING_READER, progress = 1f, review = null, message = null) }
         entry.waiter = scope.launch {
-            // 只等待同书的会话，释放整个导入队列给批次中的其它书。
             while (isActive) {
                 lock.withLock { }
                 val done = mutex.withLock {
@@ -379,7 +388,7 @@ class ImportPipeline(
 
     private suspend fun refreshReview(itemId: String, entry: PendingEdition) {
         val match = try {
-            EditionMatcher(books::getChapters)
+            EditionMatcher(contentAccess, books::getChapters)
                 .match(entry.prepared.book, entry.displayTitle, entry.prepared.epub, books.getAllBooks())
         } catch (e: CancellationException) {
             throw e
@@ -429,7 +438,6 @@ class ImportPipeline(
 
     private suspend fun recoverLocalImports() {
         if (recovered) return
-        // 只在本进程创建暂存项之前恢复，不能把仍在等待确认的文件当作孤儿。
         recovered = true
         try {
             staging.recover(books.getAllBooks())
@@ -451,20 +459,21 @@ class ImportPipeline(
     private fun prepareTxt(
         source: ImportSource,
         token: String,
-        target: File,
+        bookFilePath: String,
         displayTitle: String,
         size: Long
     ): PreparedBook {
         if (size > MAX_TXT_BYTES) {
             throw ImportException("TXT 文件过大（${size / 1024 / 1024} MB，上限 80 MB）")
         }
-        if (size == 0L || !target.exists()) throw ImportException("文件内容为空")
+        if (size <= 0L || !contentAccess.isReadable(bookFilePath)) {
+            throw ImportException("文件内容为空")
+        }
 
-        val contentFile = paths.contentFile(token)
         val streamResult = try {
-            com.mirad.reader.core.text.StreamingTxtProcessor.process(
-                sourceFile = target,
-                targetContentFile = contentFile,
+            StreamingTxtProcessor.indexRaw(
+                openStream = { contentAccess.openStream(bookFilePath) },
+                declaredBytes = size,
                 manualEncoding = null
             )
         } catch (e: Throwable) {
@@ -494,11 +503,11 @@ class ImportPipeline(
             title = displayTitle,
             author = null,
             format = BookFormat.TXT,
-            filePath = target.absolutePath,
-            contentPath = contentFile.absolutePath,
+            filePath = bookFilePath,
+            contentPath = null,
             coverPath = if (hasCover) coverFile.absolutePath else null,
             sourceUri = sourceUriOf(source),
-            fileSize = size,
+            fileSize = streamResult.totalBytes.takeIf { it > 0L } ?: size,
             encoding = streamResult.charset,
             chapterRuleId = streamResult.ruleId,
             chapterRegex = streamResult.regex,
@@ -519,22 +528,27 @@ class ImportPipeline(
     private fun prepareEpub(
         source: ImportSource,
         token: String,
-        target: File,
+        bookFilePath: String,
         displayTitle: String,
         size: Long,
         local: Boolean
     ): PreparedBook {
-        val info = runCatching { EpubParser.parse(target) }
+        val reader = runCatching { contentAccess.openZip(bookFilePath) }
             .getOrElse { throw ImportException("EPUB 解析失败：${it.message ?: "文件可能已损坏"}") }
 
-        val reader = ZipEntryReader.open(target)
-        val chapters = ArrayList<ChapterEntity>(info.spine.size)
-        val signatures = if (local) ArrayList<EpubChapterSignature>(info.spine.size) else null
+        val info: com.mirad.reader.core.epub.EpubBookInfo
+        val chapters: ArrayList<ChapterEntity>
+        val signatures: ArrayList<EpubChapterSignature>?
         var totalChars = 0L
+        var hasCover = false
+        val coverFile = paths.coverFile(token)
+
         try {
+            info = runCatching { EpubParser(reader).parse() }
+                .getOrElse { throw ImportException("EPUB 解析失败：${it.message ?: "文件可能已损坏"}") }
+            chapters = ArrayList(info.spine.size)
+            signatures = if (local) ArrayList(info.spine.size) else null
             for (item in info.spine) {
-                // 与阅读/渲染路径同口径（ZipEntryReader.MAX_CHAPTER_BYTES）：口径不一致时
-                // 会出现"目录与渲染正常、但该章搜索 0 命中 / TTS 为空"的章节。
                 val html = reader.readText(item.href, maxBytes = ZipEntryReader.MAX_CHAPTER_BYTES)
                 if (local && html == null) throw ImportException("EPUB 有章节无法读取，未完成导入")
                 val text = html?.let { Html.toPlainText(it) }.orEmpty()
@@ -550,23 +564,18 @@ class ImportPipeline(
                     )
                 )
             }
-        } finally {
-            reader.close()
-        }
-
-        val coverFile = paths.coverFile(token)
-        var hasCover = false
-        val coverHref = info.coverHref
-        if (coverHref != null) {
-            runCatching {
-                ZipEntryReader.open(target).use { zipReader ->
-                    if (zipReader.sizeOf(coverHref) in 1..ZipEntryReader.MAX_COVER_BYTES.toLong()) {
-                        zipReader.openStream(coverHref)?.use { input ->
+            val coverHref = info.coverHref
+            if (coverHref != null) {
+                runCatching {
+                    if (reader.sizeOf(coverHref) in 1..ZipEntryReader.MAX_COVER_BYTES.toLong()) {
+                        reader.openStream(coverHref)?.use { input ->
                             hasCover = CoverGenerator.saveCover(input, coverFile)
                         }
                     }
                 }
             }
+        } finally {
+            reader.close()
         }
 
         val title = info.title?.takeIf { it.isNotBlank() } ?: displayTitle
@@ -574,7 +583,7 @@ class ImportPipeline(
             title = title,
             author = info.author,
             format = BookFormat.EPUB,
-            filePath = target.absolutePath,
+            filePath = bookFilePath,
             contentPath = null,
             coverPath = if (hasCover) coverFile.absolutePath else null,
             sourceUri = sourceUriOf(source),
@@ -605,12 +614,11 @@ class ImportPipeline(
     }
 
     private fun sourceUriOf(source: ImportSource): String = when (source) {
-        is ImportSource.FromUri -> source.uri.toString()
+        is ImportSource.FromUri -> source.uriString
         is ImportSource.FromFile -> source.originUrl ?: source.file.absolutePath
     }
 
     private fun guessExtension(source: ImportSource): String {
-        // 严格通过 4 字节魔数判断是否为 ZIP/EPUB（0x50, 0x4B, 0x03, 0x04，杜绝以 PK 开头的普通 TXT 误判）
         val isZipHeader = runCatching {
             openInput(source).use { input ->
                 val head = ByteArray(4)
@@ -626,6 +634,31 @@ class ImportPipeline(
         return detectExtension(source.displayName, isZipHeader)
     }
 
+    private fun verifyReadableSize(path: String, declaredSize: Long): Long {
+        val known = if (declaredSize > 0L) declaredSize else contentAccess.size(path)
+        if (known > MAX_TXT_BYTES) {
+            throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
+        }
+        if (known > 0L) {
+            if (!contentAccess.isReadable(path)) throw ImportException("无法读取所选文件")
+            return known
+        }
+        var counted = 0L
+        contentAccess.openStream(path).use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                counted += n
+                if (counted > MAX_TXT_BYTES) {
+                    throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
+                }
+            }
+        }
+        if (counted == 0L) throw ImportException("文件内容为空")
+        return counted
+    }
+
     private fun copyTo(source: ImportSource, target: File, onProgress: (Float) -> Unit): Long {
         target.parentFile?.mkdirs()
         val total = sizeOf(source)
@@ -638,7 +671,6 @@ class ImportPipeline(
                     if (read <= 0) break
                     output.write(buffer, 0, read)
                     copied += read
-                    // 来源大小不可信（querySize 可能返回 0）时也要兜住：超限立即中止并删掉半截文件
                     if (copied > MAX_TXT_BYTES) {
                         runCatching { target.delete() }
                         throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
@@ -652,14 +684,20 @@ class ImportPipeline(
     }
 
     private fun openInput(source: ImportSource): InputStream = when (source) {
-        is ImportSource.FromUri -> context.contentResolver.openInputStream(source.uri)
-            ?: throw ImportException("无法打开所选文件")
+        is ImportSource.FromUri -> {
+            val uriStr = source.uriString
+            if (contentAccess.isReadable(uriStr)) contentAccess.openStream(uriStr)
+            else source.uri?.let { context.contentResolver.openInputStream(it) } ?: throw ImportException("无法打开所选文件")
+        }
         is ImportSource.FromFile -> source.file.inputStream()
     }
 
     private fun sizeOf(source: ImportSource): Long = when (source) {
         is ImportSource.FromFile -> source.file.length()
-        is ImportSource.FromUri -> querySize(source.uri)
+        is ImportSource.FromUri -> {
+            val viaAccess = contentAccess.size(source.uriString)
+            if (viaAccess >= 0L) viaAccess else source.uri?.let { querySize(it) } ?: -1L
+        }
     }
 
     private fun querySize(uri: Uri): Long {
@@ -682,7 +720,6 @@ class ImportPipeline(
         const val TXT_EXT = "txt"
         const val MAX_TXT_BYTES = 80L * 1024 * 1024
 
-        /** 取消/异常中断时写入条目的原因，用户能在导入结果里看到。 */
         const val CANCELLED_MESSAGE = "导入已取消"
         const val INTERRUPTED_MESSAGE = "导入未完成"
 

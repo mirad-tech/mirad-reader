@@ -48,8 +48,9 @@ internal fun rememberReaderPageTurn(
     var captureRunning by remember { mutableStateOf(false) }
     var coverAnimator by remember { mutableStateOf<android.animation.ValueAnimator?>(null) }
     var coverBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var coverTurnId by remember { mutableStateOf<Int?>(null) }
 
-    fun clearOverlay() {
+    fun clearOverlay(completed: Boolean = false) {
         manualTurnJob?.cancel()
         manualTurnJob = null
         coverAnimator?.let { animator ->
@@ -63,6 +64,8 @@ internal fun rememberReaderPageTurn(
         overlay = null
         overlayX = 0f
         animating = false
+        coverTurnId?.let { session.settleCoverTurn(it, completed) }
+        coverTurnId = null
         // Let Compose remove the old Image node before releasing its GPU buffer.
         val owner = session.webView
         if (owner != null && released != null) owner.postOnAnimation {
@@ -110,6 +113,7 @@ internal fun rememberReaderPageTurn(
             overlay = bitmap.asImageBitmap()
             overlayX = 0f
             animating = true
+            coverTurnId = session.beginCoverTurn()
             switched = session.turnPage(delta, pauseAuto = !auto)
             val distance = if (delta > 0) -pageView.width.toFloat() else pageView.width.toFloat()
             coverAnimator = android.animation.ValueAnimator.ofFloat(0f, distance).apply {
@@ -117,7 +121,7 @@ internal fun rememberReaderPageTurn(
                 addUpdateListener { overlayX = it.animatedValue as Float }
                 addListener(object : android.animation.AnimatorListenerAdapter() {
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        clearOverlay()
+                        clearOverlay(completed = true)
                     }
 
                     override fun onAnimationCancel(animation: android.animation.Animator) {
@@ -152,7 +156,7 @@ internal fun rememberReaderPageTurn(
     }
 
     // 在 graphicsLayer 中读取位移，沿用原来的绘制阶段订阅，不让每帧动画重组整页。
-    return ReaderPageTurn(overlay, { overlayX }, ::turnFromTap, ::clearOverlay)
+    return ReaderPageTurn(overlay, { overlayX }, ::turnFromTap) { clearOverlay() }
 }
 
 /** 用软件层捕获当前页位图，用于覆盖翻页动画；失败时返回 null（自动退化为普通翻页）。 */

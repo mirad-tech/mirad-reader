@@ -1,11 +1,14 @@
 package com.mirad.reader.ui.reader
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.sizeIn
 import com.mirad.reader.ui.common.BouncingLazyColumn
 import androidx.compose.foundation.lazy.items
 import com.mirad.reader.ui.common.MiradTextButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -16,6 +19,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.NoteAnchor
 import com.mirad.reader.core.model.NoteExporter
@@ -112,10 +116,14 @@ fun NotesSheet(
         }
     ) {
         Column(modifier = Modifier.padding(horizontal = Spacing.xl)) {
+            val dark = LocalAppDarkTheme.current ?: LocalAppSystemDark.current
+            val colors = MaterialTheme.colorScheme
             SegmentedRow(
                 options = listOf(0 to "划线 ${highlights.size}", 1 to "书签 ${bookmarks.size}"),
                 selected = tab,
-                onSelect = { tab = it }
+                onSelect = { tab = it },
+                trackColor = if (dark) colors.surfaceContainerLow else colors.surfaceVariant,
+                selectedColor = if (dark) colors.surfaceContainerHighest else colors.surface
             )
         }
         when (tab) {
@@ -138,9 +146,9 @@ fun NotesSheet(
                                 "第 ${highlight.chapterIndex + 1} 章"
                             },
                             trailing = {
-                                SheetActionButton("删除", onClick = {
+                                NoteDeleteAction {
                                     pendingDelete = "划线" to { scope.launch { session.deleteHighlight(highlight) } }
-                                })
+                                }
                             },
                             onClick = if (stale) null else ({ onJump(highlight.chapterIndex, highlight.startOffset) })
                         )
@@ -162,14 +170,11 @@ fun NotesSheet(
                             subtitle = bookmark.snippet,
                             meta = if (stale) NoteAnchor.STALE_HINT else null,
                             trailing = {
-                                SheetActionButton(
-                                    "删除",
-                                    onClick = {
-                                        pendingDelete = "书签" to {
-                                            scope.launch { container.notes.deleteBookmark(bookmark) }
-                                        }
+                                NoteDeleteAction {
+                                    pendingDelete = "书签" to {
+                                        scope.launch { container.notes.deleteBookmark(bookmark) }
                                     }
-                                )
+                                }
                             },
                             onClick = if (stale) null else ({ onJump(bookmark.chapterIndex, bookmark.charOffset) })
                         )
@@ -177,5 +182,16 @@ fun NotesSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NoteDeleteAction(onClick: () -> Unit) {
+    MiradTextButton(
+        onClick = onClick,
+        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+    ) {
+        Text("删除", maxLines = 1, softWrap = false)
     }
 }

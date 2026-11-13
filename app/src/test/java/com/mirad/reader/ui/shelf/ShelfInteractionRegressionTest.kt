@@ -125,8 +125,17 @@ class ShelfInteractionRegressionTest {
         assertEquals(listOf(1L to true, 2L to true), writes)
     }
 
-    private fun actions(book: BookEntity, onMultiSelect: () -> Unit = {}) = ShelfGroupActions.bookActionItems(
-        book = book, onOpen = {}, onUnhide = {}, onEdit = {}, onTogglePinned = {},
+    @Test fun finishActionSendsTheOppositeStateForTheSelectedBook() {
+        val writes = mutableListOf<Boolean>()
+        actions(book(1), onSetFinished = { writes += it }).single { it.label == "标为已读完" }.onClick()
+        actions(book(1).copy(finished = true), onSetFinished = { writes += it })
+            .single { it.label == "取消已读完" }.onClick()
+        assertEquals(listOf(true, false), writes)
+    }
+
+    private fun actions(book: BookEntity, onSetFinished: (Boolean) -> Unit = {}, onMultiSelect: () -> Unit = {}) = ShelfGroupActions.bookActionItems(
+        book = book, onOpen = {}, onEdit = {}, onTogglePinned = {},
+        onSetFinished = onSetFinished,
         onMoveToGroup = {}, onHide = {}, onChapters = {}, onEncoding = {}, onDelete = {}, onMultiSelect = onMultiSelect
     )
 }

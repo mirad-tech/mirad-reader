@@ -12,7 +12,9 @@ import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,10 +29,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * 阅读会话：负责 WebView 配置、章节加载、配置注入、进度保存、标注渲染与阅读统计。
  */
-class ReaderSession(
+class ReaderSession internal constructor(
     private val container: AppContainer,
     val book: BookEntity,
-    private val scope: CoroutineScope
+    private val scope: CoroutineScope,
+    private val enqueueFinished: (Int) -> Deferred<Boolean> = { chapterIndex ->
+        container.queueBookFinished(book.id, true, chapterIndex)
+    }
 ) {
 
     private val books = container.books
@@ -85,6 +90,17 @@ class ReaderSession(
     private var chapterCharCounts: List<Long> = emptyList()
     private var restoreOffset: Int = 0
     private var systemDark: Boolean = false
+    private var documentEpoch = 0
+    private var arrivedByReading = false
+    private var documentCoverTurnId = 0
+    private var finishedWrite: Deferred<Boolean>? = null
+    private var coverTurnSequence = 0
+    private var coverTurn: CoverTurn? = null
+
+    private class CoverTurn(val id: Int) {
+        var settled = false
+        var bookEnd: Pair<Int, Int>? = null
+    }
 
 
     /**
@@ -165,11 +181,15 @@ class ReaderSession(
             }
         },
         onChapterChanged = { index -> onJsChapterChanged(index) },
-        onRequestNextChapter = { index ->
+        onRequestChapterLoad = { index, epoch, forward ->
             // 只有 JS 侧原地换章失败（fetch/解析出错）才会走到这里：显式重载目标章。
             // 这是换章兜底，不是用户操作，不能把自动阅读暂停掉。
-            if (index in chapters.indices) gotoChapterInternal(index, 0, pauseAuto = false)
+            if (prepared && chapterRendered && epoch == documentEpoch && index in chapters.indices) {
+                gotoChapterInternal(index, 0, pauseAuto = false,
+                    forwardReading = forward && index == _state.value.chapterIndex + 1)
+            }
         },
+        onReadToEnd = ::onReadToEnd,
         onAutoScrollEnd = { index ->
             // 旧章/旧页面的迟到回调不能启动已经暂停或关闭的自动阅读：章号与运行状态都要匹配。
             if (index == _state.value.chapterIndex) autoRead.onScrollChapterEnd()
@@ -179,6 +199,46 @@ class ReaderSession(
             visualChanges.tryEmit(Unit)
         }
     )
+
+    internal fun beginCoverTurn(): Int = (++coverTurnSequence).also { coverTurn = CoverTurn(it) }
+
+    internal fun settleCoverTurn(id: Int, completed: Boolean) {
+        val turn = coverTurn?.takeIf { it.id == id } ?: return
+        if (!completed) {
+            coverTurn = null
+            return
+        }
+        turn.settled = true
+        val end = turn.bookEnd
+        turn.bookEnd = null
+        if (end != null) onReadToEnd(end.first, end.second, id)
+    }
+
+    private fun onReadToEnd(chapterIndex: Int, epoch: Int, coverTurnId: Int) {
+        val current = _state.value
+        if (!prepared || !chapterRendered || !current.ready || epoch != documentEpoch ||
+            chapters.isEmpty() || chapterIndex != chapters.lastIndex ||
+            book.finished || finishedWrite != null
+        ) return
+        // 连续滚动的短末章可能完整显示在上一章下方，活动章仍由视口顶部决定。
+        val paged = current.config.pageMode != PageMode.SCROLL
+        val windowed = !paged && style.allowsWindowedScroll(current.config)
+        if (!windowed && current.chapterIndex != chapterIndex) return
+        if (paged && current.page != current.pages - 1) return
+        if (coverTurnId != 0) {
+            if (!paged) return
+            val turn = coverTurn?.takeIf { it.id == coverTurnId } ?: return
+            if (!turn.settled) {
+                turn.bookEnd = chapterIndex to epoch
+                return
+            }
+        }
+        val write = enqueueFinished(chapterIndex)
+        finishedWrite = write
+        scope.launch {
+            if (!write.await() && finishedWrite === write) finishedWrite = null
+        }
+    }
 
     // ------------------------------------------------------------------ 生命周期
 
@@ -239,7 +299,7 @@ class ReaderSession(
                 evaluate("if (window.MiradReader) { MiradReader.cancelProgrammaticScroll(); }")
             }
         }
-        loadCurrentChapter(initial = true)
+        loadCurrentChapter()
     }
 
     var onTap: ((x: Float, y: Float) -> Unit)? = null
@@ -256,8 +316,11 @@ class ReaderSession(
     /** 最近一次真正完成 init 的章节号；自动翻页等换章就绪判断以它为准。 */
     private val _renderedChapter = MutableStateFlow(-1)
 
-    private fun loadCurrentChapter(initial: Boolean) {
+    private fun loadCurrentChapter(forwardReading: Boolean = false, coverTurnId: Int = 0) {
         val index = _state.value.chapterIndex
+        documentEpoch++
+        arrivedByReading = forwardReading && index == chapters.lastIndex
+        documentCoverTurnId = if (arrivedByReading) coverTurnId else 0
         chapterRendered = false
         renderAttempts = 0
         _renderedChapter.value = -1
@@ -271,20 +334,21 @@ class ReaderSession(
     private fun onChapterRendered() {
         if (chapterRendered) return
         val view = webView ?: return
+        val epoch = documentEpoch
         view.evaluateJavascript("typeof MiradReader !== 'undefined'") { result ->
+            if (!prepared || webView !== view || epoch != documentEpoch || chapterRendered) return@evaluateJavascript
             if (result == "true") {
-                if (chapterRendered) return@evaluateJavascript
                 chapterRendered = true
                 val configJson = jsConfig()
                 val offset = restoreOffset.coerceAtLeast(0)
                 // 初始化和恢复是同一次位置发布，不能先把章首默认值交给进度/统计。
-                evaluate("MiradReader.init($configJson, $offset); true;")
+                evaluate("MiradReader.init($configJson, $offset, $epoch, $arrivedByReading, $documentCoverTurnId); true;")
                 _renderedChapter.value = _state.value.chapterIndex
                 renderHighlights()
                 scope.launch { annotations.refreshBookmarkFlagNow() }
             } else if (renderAttempts < 8) {
                 renderAttempts++
-                view.postDelayed({ onChapterRendered() }, 150)
+                view.postDelayed({ if (webView === view && documentEpoch == epoch) onChapterRendered() }, 150)
             }
         }
     }
@@ -410,7 +474,10 @@ class ReaderSession(
         this.systemDark = systemDark
         updateConfig(config)
         // 阅读模式/排版变化会重排正文并可能移动锚点：自动阅读先暂停，由用户手动继续。
-        if (style.layoutChanged(previous, config)) pauseAutoRead()
+        if (style.layoutChanged(previous, config)) {
+            coverTurn = null
+            pauseAutoRead()
+        }
         // 调速不重建循环；运行中的滚动只在这里同步一次新速度。
         autoRead.onSpeedChanged()
         val css = jsQuote(resources.currentThemeCss())
@@ -442,14 +509,16 @@ class ReaderSession(
     private fun turnPageInternal(delta: Int): Boolean {
         val current = _state.value
         if (!current.ready) return false
+        val coverTurnId = coverTurn?.takeUnless { it.settled }?.id ?: 0
         val target = current.page + delta
         if (target in 0 until current.pages) {
-            evaluate(if (delta > 0) "MiradReader.nextPage();" else "MiradReader.prevPage();")
+            evaluate(if (delta > 0) "MiradReader.nextPage($coverTurnId);" else "MiradReader.prevPage();")
             return false
         }
         val nextChapter = current.chapterIndex + delta
         if (nextChapter in chapters.indices) {
-            gotoChapterInternal(nextChapter, if (delta > 0) 0 else Int.MAX_VALUE, pauseAuto = false)
+            gotoChapterInternal(nextChapter, if (delta > 0) 0 else Int.MAX_VALUE, pauseAuto = false,
+                forwardReading = delta > 0, coverTurnId = coverTurnId)
             return true
         }
         return false
@@ -490,7 +559,9 @@ class ReaderSession(
         index: Int,
         offset: Int = 0,
         pauseAuto: Boolean,
-        fromSearchHit: Boolean = false
+        fromSearchHit: Boolean = false,
+        forwardReading: Boolean = false,
+        coverTurnId: Int = 0
     ): Boolean {
         if (!fromSearchHit) cancelSearchNavigation()
         val chapter = chapters.getOrNull(index) ?: return false
@@ -504,13 +575,14 @@ class ReaderSession(
             val count = withContext(Dispatchers.IO) { notes.highlightsForChapter(book.id, index).size }
             _state.update { it.copy(highlightCount = count) }
         }
-        loadCurrentChapter(initial = false)
+        loadCurrentChapter(forwardReading, coverTurnId)
         return true
     }
 
     fun jumpToOffset(offset: Int, mark: Boolean = false) {
         cancelSearchNavigation()
         pauseAutoRead()
+        coverTurn = null
         restoreOffset = offset
         evaluate("MiradReader.gotoOffset($offset, true);")
         if (mark) evaluate("MiradReader.markSearch($offset, ${offset + 1});")
@@ -583,7 +655,7 @@ class ReaderSession(
     fun startSession() = progressTracker.startSession()
     fun endSession() = progressTracker.endSession()
 
-    fun release(): kotlinx.coroutines.Job? {
+    internal fun release(): List<Job> {
         // 退出阅读页：先取消自动阅读的计时任务/JS 滚动，再保存进度、释放 WebView。
         autoRead.release()
         _autoReadNotice.value = null
@@ -601,7 +673,7 @@ class ReaderSession(
         }
         webView = null
         resources.release()
-        return progressWrite
+        return listOfNotNull(progressWrite, finishedWrite)
     }
 
     // ------------------------------------------------------------------ 工具
@@ -619,6 +691,7 @@ class ReaderSession(
     /** 就近查找文本并跳转（跨端偏移不一致时更准确）。 */
     fun findTextAndJump(needle: String, approxOffset: Int, mark: Boolean = true): Boolean {
         if (needle.isBlank()) return false
+        coverTurn = null
         val quoted = org.json.JSONObject.quote(needle)
         evaluate("MiradReader.findText($quoted, $approxOffset, $mark);")
         return true

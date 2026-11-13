@@ -268,7 +268,7 @@
         return after ? after.start : (before ? before.start : 0);
     }
 
-    function applyPosition(animate) {
+    function applyPosition(animate, onSettled) {
         var c = content();
         if (!c) return;
         // 定位是新的位置意图：先结束旧的滚动动画，保证同一时刻只有一个写入者。
@@ -276,7 +276,7 @@
         if (CFG.mode === 'PAGED') {
             var x = state.page * step();
             if (animate && CFG.anim === 'SLIDE') {
-                animateScrollLeft(c, x);
+                if (animateScrollLeft(c, x, onSettled)) onSettled = null;
             } else {
                 c.scrollLeft = x;
             }
@@ -291,6 +291,7 @@
             }
         }
         reportState();
+        if (onSettled) onSettled();
     }
 
     /** 取消水平翻页动画。snap=true 时直接落到目标列，避免停在两页之间。 */
@@ -316,7 +317,7 @@
         }
     }
 
-    function animateScrollLeft(el, target) {
+    function animateScrollLeft(el, target, onSettled) {
         cancelPageMotion(false);
         var token = pageMotion.token;
         pageMotion.active = true;
@@ -326,7 +327,7 @@
         if (Math.abs(delta) < 1) {
             pageMotion.active = false;
             el.scrollLeft = target;
-            return;
+            return false;
         }
         var duration = Math.min(320, 140 + Math.abs(delta) * 0.35);
         var startTime = null;
@@ -342,12 +343,14 @@
                 pageMotion.active = false;
                 pageMotion.raf = 0;
                 reportState();
+                if (onSettled) onSettled();
             }
         }
         pageMotion.raf = window.requestAnimationFrame(frame);
+        return true;
     }
 
-    function animateScrollTop(target) {
+    function animateScrollTop(target, onSettled) {
         cancelScrollMotion();
         var token = scrollMotion.token;
         var start = window.scrollY || 0;
@@ -364,6 +367,7 @@
             } else {
                 scrollMotion.raf = 0;
                 reportState();
+                if (onSettled) onSettled();
             }
         }
         scrollMotion.raf = window.requestAnimationFrame(frame);

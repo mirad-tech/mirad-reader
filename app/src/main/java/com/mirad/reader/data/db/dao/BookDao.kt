@@ -47,8 +47,9 @@ interface BookDao {
     @Query("UPDATE books SET title = :title, author = :author WHERE id = :id")
     suspend fun updateMeta(id: Long, title: String, author: String?)
 
-    @Query("UPDATE books SET finished = :finished WHERE id = :id")
-    suspend fun setFinished(id: Long, finished: Boolean)
+    @Query("UPDATE books SET finished = :finished WHERE id = :id AND " +
+        "(:endChapterIndex IS NULL OR (:endChapterIndex >= 0 AND totalChapters = :endChapterIndex + 1))")
+    suspend fun setFinished(id: Long, finished: Boolean, endChapterIndex: Int?): Int
 
     @Query("UPDATE books SET totalChapters = :chapters, totalChars = :chars WHERE id = :id")
     suspend fun updateCounts(id: Long, chapters: Int, chars: Long)

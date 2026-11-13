@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +20,17 @@ interface BookmarkDao {
 
     @Delete
     suspend fun delete(bookmark: BookmarkEntity)
+
+    @Query("SELECT * FROM bookmarks WHERE id = :id")
+    suspend fun getById(id: Long): BookmarkEntity?
+
+    @Transaction
+    suspend fun deleteForUndo(id: Long): BookmarkEntity? {
+        val record = getById(id) ?: return null
+        delete(record)
+        return record
+    }
+
 
     @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Long)

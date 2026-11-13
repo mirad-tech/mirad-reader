@@ -37,6 +37,7 @@ fun SettingNavRow(
     subtitle: String? = null,
     icon: ImageVector? = null,
     highlightIcon: Boolean = false,
+    valueMaxLines: Int = 2,
     onClick: () -> Unit
 ) {
     Row(
@@ -81,7 +82,8 @@ fun SettingNavRow(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.widthIn(max = if (highlightIcon) 104.dp else 120.dp).padding(start = Spacing.sm),
                 textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                maxLines = 2, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                maxLines = valueMaxLines, softWrap = valueMaxLines > 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
         }
         Icon(

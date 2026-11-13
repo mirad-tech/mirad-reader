@@ -34,7 +34,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.documentfile.provider.DocumentFile
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.imports.ImportSource
@@ -63,7 +62,6 @@ fun ShelfScreen(
     onOpenStats: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenNotes: () -> Unit = {},
-    onOpenHidden: () -> Unit = {},
     onOnlineSearch: () -> Unit = {},
     onSourceManager: () -> Unit = {}
 ) {
@@ -92,8 +90,9 @@ fun ShelfScreen(
     // 网格/列表选择持久化：离开书架再回来保持用户上次的选择（此前每次都重置为网格）
     val shelfLayoutGrid by container.settings.shelfLayoutGrid.collectAsState(initial = true)
     val layout = if (shelfLayoutGrid) ShelfLayout.GRID else ShelfLayout.LIST
-    var selectedGroup by rememberSaveable { mutableStateOf<Long?>(null) }
-    var showHidden by rememberSaveable { mutableStateOf(false) }
+    var groupFilter by rememberSaveable { mutableStateOf<Long?>(null) }
+    // 旧版「未分组」胶囊已移除，恢复时视为未筛选。
+    val selectedGroup = groupFilter?.takeUnless { it == ShelfQuery.GROUP_NONE }
     var query by rememberSaveable { mutableStateOf("") }
     var showSearch by rememberSaveable { mutableStateOf(false) }
     var selection by remember { mutableStateOf<Set<Long>>(emptySet()) }
@@ -107,11 +106,8 @@ fun ShelfScreen(
     var actionBook by remember { mutableStateOf<BookEntity?>(null) }
     var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
     var chapterBook by remember { mutableStateOf<BookEntity?>(null) }
+    var relinkTarget by remember { mutableStateOf<BookEntity?>(null) }
     var showGroupManager by remember { mutableStateOf(false) }
-    var groupAction by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
-    var groupRenameTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
-    var groupRenameDraft by remember { mutableStateOf("") }
-    var groupDeleteTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.GroupEntity?>(null) }
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("shelf")
     var toast by feedback
     var showUrlImportDialog by remember { mutableStateOf(false) }
@@ -125,47 +121,59 @@ fun ShelfScreen(
         if (uri != null) {
             scope.launch {
                 val sources = withContext(Dispatchers.IO) {
-                    runCatching {
-                        DocumentFile.fromTreeUri(context, uri)?.listFiles()
-                            ?.filter { it.isFile && it.name != null && isSupported(it.name!!) }
-                            ?.map { ImportSource.FromUri(it.uri, it.name!!) }
-                            ?: emptyList()
-                    }.getOrDefault(emptyList())
+                    ImportSources.fromTreeUri(context, uri, ::isSupported)
                 }
                 if (sources.isEmpty()) toast = "所选文件夹里没有 txt / epub" else container.importer.import(sources)
             }
         }
     }
+    val relinkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val target = relinkTarget
+        relinkTarget = null
+        if (uri != null && target != null) {
+            scope.launch {
+                try {
+                    com.mirad.reader.data.io.BookContentAccess.tryTakePersistableReadPermission(context, uri)
+                    val uriText = uri.toString()
+                    val saved = container.maintenance.relinkSource(target.id, uriText, uriText)
+                    toast = "已重新关联《${saved.title}》"
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    toast = e.message ?: "重新关联失败"
+                }
+            }
+        }
+    }
 
-    val visible = remember(shelf, sort, selectedGroup, query, showHidden) {
+    val visible = remember(shelf, sort, selectedGroup, query) {
         ShelfQuery.apply(
             all = shelf,
             sort = sort,
             groupId = selectedGroup,
-            query = query,
-            includeHidden = false,
-            onlyHidden = showHidden
+            query = query
         )
     }
 
     ShelfContent(
         resumePrompt = container.shelfResumePrompt,
         state = ShelfContentState(
-            shelf = shelf, visible = visible, groups = groups, sort = sort, layout = layout,
-            selectedGroup = selectedGroup, showHidden = showHidden, query = query,
+            shelf = shelf, visible = visible, sort = sort, layout = layout,
+            selectedGroup = selectedGroup, selectedGroupName = groups.firstOrNull { it.id == selectedGroup }?.name,
+            query = query,
             showSearch = showSearch, selection = selection, importItems = importState.items,
             importing = importState.running
         ),
         actions = ShelfContentActions(
             onOpenBook = onOpenBook, onStats = onOpenStats, onSettings = onOpenSettings,
-            onNotes = onOpenNotes, onHidden = onOpenHidden,
+            onNotes = onOpenNotes,
             onOnlineSearch = onOnlineSearch, onSourceManager = onSourceManager,
             onToggleSearch = { showSearch = !showSearch; if (!showSearch) query = "" },
             onQueryChange = { query = it }, onSortChange = { sort = it },
             onLayoutChange = { container.settings.queueShelfLayout(it == ShelfLayout.GRID, container.appScope) },
-            onSelectGroup = { id, hidden -> selectedGroup = id; showHidden = hidden },
+            onClearGroupFilter = { groupFilter = null },
             onSelectionChange = { selection = it }, onBookAction = { actionBook = it },
-            onGroupAction = { groupAction = it }, onManageGroups = { showGroupManager = true },
+            onManageGroups = { showGroupManager = true },
             onSelectAll = { selection = visible.map { it.book.id }.toSet() },
             onPinSelected = { scope.launch {
                 ShelfGroupActions.commitPinSelected(selection.mapNotNull { id -> shelf.firstOrNull { it.book.id == id }?.book }) { id, pinned ->
@@ -184,8 +192,9 @@ fun ShelfScreen(
 
     // ---------------- 弹层 ----------------
 
-    actionBook?.let { book ->
-        val isHidden = book.isHidden
+    actionBook?.let { selectedBook ->
+        val entry = shelf.firstOrNull { it.book.id == selectedBook.id }
+        val book = entry?.book ?: selectedBook
         ActionSheet(
             title = book.title,
             subtitle = "${book.author ?: "未知作者"} · ${book.totalChapters} 章 · ${book.format}",
@@ -199,12 +208,12 @@ fun ShelfScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "阅读进度 ${(shelf.firstOrNull { it.book.id == book.id }?.percent ?: 0f).let { (it * 100).toInt() }}%",
+                            text = "阅读进度 ${((entry?.percent ?: 0f) * 100).toInt()}%",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            text = if (isHidden) "已在书架隐藏" else "上次阅读 ${formatRelative(shelf.firstOrNull { it.book.id == book.id }?.lastReadAt ?: 0L)}",
+                            text = "上次阅读 ${formatRelative(entry?.lastReadAt ?: 0L)}",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -214,9 +223,6 @@ fun ShelfScreen(
             items = ShelfGroupActions.bookActionItems(
                 book = book,
                 onOpen = { onOpenBook(book.id) },
-                onUnhide = {
-                    scope.launch { container.books.setHidden(book.id, false); toast = "已恢复《${book.title}》到书架" }
-                },
                 onEdit = {
                     editing = book
                     editTitle = book.title
@@ -225,18 +231,28 @@ fun ShelfScreen(
                 onTogglePinned = {
                     scope.launch { container.books.setPinned(book.id, !book.isPinned) }
                 },
+                onSetFinished = { finished -> container.queueBookFinished(book.id, finished) },
                 onMoveToGroup = {
                     selection = setOf(book.id)
                     isSingleBookGroupAction = true
                     groupDialog = true
                 },
                 onHide = {
-                    scope.launch { container.books.setHidden(book.id, true); toast = "已隐藏《${book.title}》，可在「已隐藏」中找回" }
+                    scope.launch { container.books.setHidden(book.id, true); toast = "已在书架隐藏" }
                 },
                 onChapters = { chapterBook = book },
                 onEncoding = { encodingBook = book },
                 onDelete = { selection = setOf(book.id); isSingleBookDeleteAction = true; confirmDelete = true },
-                onMultiSelect = { selection = setOf(book.id) }
+                onMultiSelect = { selection = setOf(book.id) },
+                onRelink = {
+                    relinkTarget = book
+                    val mime = if (book.format == com.mirad.reader.data.db.entity.BookFormat.EPUB) {
+                        arrayOf("application/epub+zip", "application/octet-stream", "*/*")
+                    } else {
+                        arrayOf("text/plain", "*/*")
+                    }
+                    relinkPicker.launch(mime)
+                }
             )
         )
     }
@@ -244,7 +260,8 @@ fun ShelfScreen(
     if (showGroupManager) {
         GroupManagerSheet(container = container, onDismiss = { showGroupManager = false },
             currentSelectedGroupId = { selectedGroup },
-            onSelectedGroupChange = { selectedGroup = it })
+            onSelectedGroupChange = { groupFilter = it },
+            onOpenGroup = { groupFilter = it.id; showGroupManager = false })
     }
 
     chapterBook?.let { book ->
@@ -268,26 +285,6 @@ fun ShelfScreen(
         )
     }
 
-    groupAction?.let { group ->
-        ActionSheet(
-            title = group.name,
-            subtitle = "分组 · ${shelf.count { it.book.groupId == group.id }} 本",
-            onDismiss = { groupAction = null },
-            items = ShelfGroupActions.groupActionItems(
-                group = group,
-                onSelect = { selectedGroup = group.id; showHidden = false },
-                onRename = {
-                    groupRenameTarget = group
-                    groupRenameDraft = group.name
-                },
-                onDelete = {
-                    groupAction = null
-                    groupDeleteTarget = group
-                }
-            )
-        )
-    }
-
 
 
     if (showUrlImportDialog) {
@@ -305,7 +302,7 @@ fun ShelfScreen(
 
     if (summary != null && !showUrlImportDialog && !groupDialog && editing == null &&
         encodingBook == null && chapterBook == null && !confirmDelete && actionBook == null &&
-        !showGroupManager && groupRenameTarget == null && groupAction == null && groupDeleteTarget == null) {
+        !showGroupManager) {
         val result = summary!!
         ImportResultDialog(
             result,
@@ -389,61 +386,6 @@ fun ShelfScreen(
                 }) { Text("新建并移入") }
             },
             dismissButton = { MiradTextButton(onClick = dismissGroupDialog) { Text("取消") } }
-        )
-    }
-
-    groupDeleteTarget?.let { target ->
-        val count = shelf.count { it.book.groupId == target.id }
-        AlertDialog(
-            onDismissRequest = { groupDeleteTarget = null },
-            title = { Text("删除分组「${target.name}」") },
-            text = {
-                Text(
-                    if (count > 0) "组内 $count 本书会回到「未分组」，书籍本身不会被删除。"
-                    else "这个分组是空的。"
-                )
-            },
-            confirmButton = {
-                MiradTextButton(danger = true, onClick = {
-                    scope.launch {
-                        selectedGroup = ShelfGroupActions.commitDeleteGroup(target.id, { selectedGroup }) {
-                            container.groups.delete(target)
-                        }
-                        groupDeleteTarget = null
-                        toast = "已删除分组「${target.name}」"
-                    }
-                }) { Text("删除") }
-            },
-            dismissButton = { MiradTextButton(onClick = { groupDeleteTarget = null }) { Text("取消") } }
-        )
-    }
-
-    if (groupRenameTarget != null) {
-        val target = groupRenameTarget!!
-        AlertDialog(
-            onDismissRequest = { groupRenameTarget = null },
-            title = { Text("重命名分组「${target.name}」") },
-            text = {
-                OutlinedTextField(
-                    value = groupRenameDraft,
-                    onValueChange = { groupRenameDraft = it },
-                    label = { Text("分组名称") },
-                    singleLine = true
-                )
-            },
-            confirmButton = {
-                MiradTextButton(enabled = groupRenameDraft.isNotBlank(), onClick = {
-                    val name = groupRenameDraft.trim()
-                    groupRenameTarget = null
-                    if (name.isNotEmpty() && name != target.name) {
-                        scope.launch {
-                            container.groups.rename(target, name)
-                            toast = "已重命名为「$name」"
-                        }
-                    }
-                }) { Text("保存") }
-            },
-            dismissButton = { MiradTextButton(onClick = { groupRenameTarget = null }) { Text("取消") } }
         )
     }
 

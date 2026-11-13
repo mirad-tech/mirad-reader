@@ -220,8 +220,10 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         onOpenStats = { navigate(Screen.Stats) },
                         onOpenSettings = { navigate(Screen.Settings) },
                         onOpenNotes = { navigate(Screen.Notes) },
-                        onOpenHidden = { navigate(Screen.HiddenBooks) },
-                        onOnlineSearch = { openSourcePage(Screen.OnlineSearch) },
+                        onOnlineSearch = {
+                            container.sourceSearch.clearComparison()
+                            navigation.select(AppTab.Search, returnToRoot = true)
+                        },
                         onSourceManager = { openSourcePage(Screen.SourceManager) }
                     )
                     is Screen.Reader -> ReaderScreen(
@@ -248,7 +250,11 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         onBack = { goBack() },
                         onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) }
                     )
-                    Screen.HiddenBooks -> HiddenBooksScreen(container = container, onBack = { goBack() })
+                    Screen.HiddenBooks -> HiddenBooksScreen(
+                        container = container,
+                        onBack = { goBack() },
+                        onOpenBook = { bookId -> navigate(Screen.Reader(bookId)) }
+                    )
                     Screen.SourceManager -> SourceManagerScreen(
                         repository = container.sources,
                         onBack = { goBack() },

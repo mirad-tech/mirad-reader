@@ -41,7 +41,7 @@
             state.page = Math.floor(Math.max(0, relativeTop) / viewportHeight());
             reportState();
         } else {
-            window.MiradReader.gotoOffset(anchor.offset, false);
+            window.MiradReader.gotoOffset(anchor.offset, false, true);
         }
         themeAnchor = sameRootAndMode ? anchor : null;
         rememberThemePosition(themeAnchor);
@@ -49,8 +49,10 @@
 
     window.MiradReader = {
         /** 首次初始化（页面加载完成后调用）。 */
-        init: function (config, initialOffset) {
+        init: function (config, initialOffset, documentEpoch, arrivedByReading, coverTurnId) {
             themeAnchor = null;
+            readingEnd.documentEpoch = documentEpoch || 0;
+            newReadingIntent();
             state.ready = false;
             if (typeof initialOffset === 'number' && isFinite(initialOffset) && initialOffset >= 0) {
                 pendingRestore = initialOffset;
@@ -78,6 +80,7 @@
             }
             reportState();
             watchResources();
+            if (arrivedByReading === true) confirmReadingEnd(readingEnd.intent, coverTurnId);
             installVisualSignals();
             // 短章不足一屏时没有任何滚动事件：初始化后立刻补下一章，否则永远滚不动
             if (windowed()) {
@@ -116,6 +119,7 @@
          * 拖动字号、行距滑杆时走这条快路径，否则每帧重建整章 DOM 文本模型会明显卡顿。
          */
         setThemeCssOnly: function (css, config) {
+            newReadingIntent();
             var anchor = captureThemeAnchor();
             var prevMode = CFG.mode;
             var prevWindowed = CFG.windowedScroll;
@@ -195,8 +199,8 @@
             return state.text;
         },
 
-        nextPage: function () {
-            return window.MiradReader.gotoPage(state.page + 1, true);
+        nextPage: function (coverTurnId) {
+            return window.MiradReader.gotoPage(state.page + 1, true, true, coverTurnId);
         },
 
         prevPage: function () {
@@ -208,14 +212,16 @@
          * 这样点击左右两侧的体感与手指滑动一致。
          */
         scrollStep: function (direction) {
+            var intent = newReadingIntent();
             var h = viewportHeight();
             var max = Math.max(0, document.documentElement.scrollHeight - h);
-            var target = (window.scrollY || 0) + (direction >= 0 ? 1 : -1) * h * 0.85;
+            var start = window.scrollY || 0;
+            var target = start + (direction >= 0 ? 1 : -1) * h * 0.85;
             // 接章分支只属于单章模式：窗口模式下 advanceChapter/retreatChapter 自身直接返回 false，
             // 这里若提前 return true 会把窗口边界的翻屏动作整个吞掉（点下 1/3 或音量键无响应）。
             if (!windowed()) {
                 // 已经在底部还继续往下翻 → 用户意图是继续读下一章（原地换章，不重载）
-                if (direction >= 0 && atBottom()) {
+                if (direction >= 0 && atBottom() && (currentChapterIndex() < lastChapterIndex() || start >= max)) {
                     advanceChapter();
                     return true;
                 }
@@ -225,7 +231,9 @@
                     return true;
                 }
             }
-            animateScrollTop(Math.max(0, Math.min(target, max)));
+            animateScrollTop(Math.max(0, Math.min(target, max)), direction >= 0 ? function () {
+                if ((window.scrollY || 0) > start) checkForwardScrollEnd(intent);
+            } : null);
             return true;
         },
 
@@ -304,17 +312,21 @@
             return started ? 'ADVANCING' : 'FAILED';
         },
 
-        gotoPage: function (page, animate) {
+        gotoPage: function (page, animate, forwardReading, coverTurnId) {
             themeAnchor = null;
+            var intent = newReadingIntent();
             var target = Math.min(Math.max(page | 0, 0), state.pages - 1);
             var changed = target !== state.page;
             state.page = target;
-            applyPosition(!!animate);
+            applyPosition(!!animate, changed && forwardReading === true && CFG.mode === 'PAGED' ? function () {
+                confirmReadingEnd(intent, coverTurnId);
+            } : null);
             return changed;
         },
 
-        gotoOffset: function (offset, animate) {
+        gotoOffset: function (offset, animate, fromResourceRelayout) {
             themeAnchor = null;
+            if (!fromResourceRelayout) newReadingIntent();
             if (!state.ready) {
                 pendingRestore = offset;
                 return false;
@@ -480,6 +492,7 @@
     }
 
     window.addEventListener('resize', function () {
+        newReadingIntent();
         window.MiradReader.relayout(true);
         requestVisualSignal();
     });

@@ -190,34 +190,50 @@ try {
             Tap '返回'
             Check (@((Dump).selection).Count -eq 0) "$layout selection exit clears selection"
             Capture "shelf-$layout"
+            $nextLayout = if ($layout -eq 'GRID') { 'LIST' } else { 'GRID' }
+            $switchLabel = if ($layout -eq 'GRID') { '切换到列表' } else { '切换到网格' }
+            Tap $switchLabel
+            Check ((Dump).layout -eq $nextLayout) "$layout switch opens the advertised layout"
         }
     }
 
     if ($Suite -in @('all','groups')) {
-        foreach ($entry in @('manager','long-press')) {
-            foreach ($count in @(1,2)) {
-                $hidden = if ($count -eq 2) {'true'} else {'false'}
-                $name = "group-$entry-$count"
-                StartScene @('--ez','selectGroup','true','--ei','groupCount',"$count",'--ez','hidden',$hidden)
-                if ($entry -eq 'manager') { Tap '更多'; Tap '分组管理'; Tap '删除' -First }
-                else { Tap '测试分组' -Long; Tap '删除分组' }
-                Tap '取消'
-                $cancelled=Dump
-                Check ($cancelled.selectedGroup -eq 7 -and @($cancelled.groups) -contains 7) "$name cancellation keeps group and filter"
-                if ($entry -eq 'manager') { Tap '删除' -First }
-                else { Tap '测试分组' -Long; Tap '删除分组' }
-                Tap '删除'
-                $state=Dump
-                Check ($null -eq $state.selectedGroup -and @($state.groups) -notcontains 7) "$name deletion clears only the deleted filter"
-                Check (@($state.books | Where-Object { $_.id -in @(1,2) -and $null -eq $_.group }).Count -eq 2) "$name group members survive as ungrouped books"
-                if ($entry -eq 'manager') { [void](Device @('shell','input','keyevent','4')) }
-                $state=Dump
-                Check ((@($state.visibleIds | Sort-Object) -join ',') -eq '1,2') "$name books remain reachable without a group chip"
-                if ($count -eq 2) {
-                    Check (@($state.groups) -contains 9 -and @($state.books | Where-Object { $_.id -eq 3 -and $_.hidden }).Count -eq 1) "$name other group and hidden book stay unchanged"
-                }
-                Capture $name
+        foreach ($count in @(1,2)) {
+            $hidden = if ($count -eq 2) {'true'} else {'false'}
+            $name = "group-manager-$count"
+            StartScene @('--ei','groupCount',"$count",'--ez','hidden',$hidden)
+            $shelfUi = ReadUi
+            Check (-not (FindLabel $shelfUi '全部') -and -not (FindLabel $shelfUi '未分组') -and -not (FindLabel $shelfUi '测试分组') -and -not (FindLabel $shelfUi '已隐藏 1')) "$name no group chips appear on the shelf"
+            Tap '更多'; Tap '分组管理'; Tap '测试分组'
+            $filtered = Dump
+            Check ($filtered.selectedGroup -eq 7 -and (@($filtered.visibleIds) -join ',') -eq '1,2') "$name manager opens a group without its hidden books"
+            Tap '更多'; Tap '清除分组筛选'
+            Check ($null -eq (Dump).selectedGroup) "$name filter clears without a group chip"
+            if ($count -eq 2) {
+                Tap '更多'; Tap '分组管理'; Tap '另一分组'
+                $emptyUi = ReadUi
+                Check ((FindLabel $emptyUi '没有匹配的书籍') -and -not (FindLabel $emptyUi '切换到列表')) "$name empty group has no sort or layout controls"
+                Tap '清除筛选'
             }
+            Tap '更多'; Tap '分组管理'; Tap '测试分组'
+            Tap '更多'; Tap '分组管理'; Tap '删除' -First
+            if ($count -eq 2) {
+                Check ($null -ne (FindLabel (ReadUi) '组内 3 本书会回到「未分组」，书本身不会被删除。')) "$name delete confirmation counts the hidden member"
+            }
+            Tap '取消'
+            $cancelled=Dump
+            Check ($cancelled.selectedGroup -eq 7 -and @($cancelled.groups) -contains 7) "$name cancellation keeps group and filter"
+            Tap '删除' -First; Tap '删除'
+            $state=Dump
+            Check ($null -eq $state.selectedGroup -and @($state.groups) -notcontains 7) "$name deletion clears only the deleted filter"
+            Check (@($state.books | Where-Object { $_.id -in @(1,2) -and $null -eq $_.group }).Count -eq 2) "$name group members survive as ungrouped books"
+            [void](Device @('shell','input','keyevent','4'))
+            $state=Dump
+            Check ((@($state.visibleIds | Sort-Object) -join ',') -eq '1,2') "$name books remain reachable without a group chip"
+            if ($count -eq 2) {
+                Check (@($state.groups) -contains 9 -and @($state.books | Where-Object { $_.id -eq 3 -and $_.hidden -and $null -eq $_.group }).Count -eq 1) "$name ungrouping keeps the hidden book hidden and the other group intact"
+            }
+            Capture $name
         }
     }
 

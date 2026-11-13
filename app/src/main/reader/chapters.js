@@ -91,6 +91,7 @@
                 state.pendingEndAnchor = false;
             }
             reportState();
+            publishReadingEnd();
         };
         if (window.requestAnimationFrame) requestAnimationFrame(run);
         else window.setTimeout(run, 16);
@@ -114,7 +115,7 @@
         return result.join(' ');
     }
 
-    function swapInNextChapter(html, toBottom) {
+    function swapInNextChapter(html, toBottom, readingIntent) {
         var live = content();
         if (!live) return false;
         var parsed;
@@ -235,6 +236,7 @@
             reportState();
             // 新章的图片/字体可能晚于布局才展开：重新监听并重排（按代次丢弃旧回调）
             watchResources(gen);
+            if (!toBottom) confirmReadingEnd(readingIntent);
         };
         var start = function () {
             if (window.requestAnimationFrame) {
@@ -252,11 +254,15 @@
     }
 
     /** 原地换章失败时，显式请原生重载目标章——这是唯一的失败兜底入口。 */
-    function requestChapterLoad(index) {
+    function requestChapterLoad(index, readingIntent) {
         var b = bridge();
-        if (b && b.onRequestNextChapter) {
+        if (b && (b.onRequestChapterLoad || b.onRequestNextChapter)) {
             try {
-                b.onRequestNextChapter(index);
+                if (b.onRequestChapterLoad) {
+                    b.onRequestChapterLoad(index, readingEnd.documentEpoch, readingIntent === readingEnd.intent);
+                } else {
+                    b.onRequestNextChapter(index);
+                }
                 return true;
             } catch (e) {
             }
@@ -276,11 +282,12 @@
             notifyBottomOnce();
             return false;
         }
+        var readingIntent = newReadingIntent();
         if (prefetchedFor === idx + 1 && prefetchedHtml) {
             var cached = prefetchedHtml;
             prefetchedHtml = null;
             prefetchedFor = -1;
-            if (swapInNextChapter(cached)) {
+            if (swapInNextChapter(cached, false, readingIntent)) {
                 prefetchNextChapter();
                 return true;
             }
@@ -288,10 +295,10 @@
         fetch(chapterUrlOf(idx + 1))
             .then(function (r) { return r.ok ? r.text() : null; })
             .then(function (html) {
-                if (!html || !swapInNextChapter(html)) requestChapterLoad(idx + 1);
+                if (!html || !swapInNextChapter(html, false, readingIntent)) requestChapterLoad(idx + 1, readingIntent);
                 else prefetchNextChapter();
             })
-            .catch(function () { requestChapterLoad(idx + 1); });
+            .catch(function () { requestChapterLoad(idx + 1, readingIntent); });
         return true;
     }
 
@@ -340,6 +347,7 @@
         if (CFG.mode !== 'SCROLL' || !state.ready) return false;
         var idx = currentChapterIndex();
         if (idx <= 0) return false;
+        newReadingIntent();
         if (prevPrefetchedFor === idx - 1 && prevPrefetchedHtml) {
             var cached = prevPrefetchedHtml;
             prevPrefetchedHtml = null;

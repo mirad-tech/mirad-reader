@@ -197,13 +197,13 @@ internal fun SettingsContent(
                         val icon = when (page) {
                             ReadingSettingsPage.TYPOGRAPHY, ReadingSettingsPage.LAYOUT -> MiradIcons.Typography
                             ReadingSettingsPage.THEME -> MiradIcons.Background
-                            ReadingSettingsPage.INTERACTION -> MiradIcons.Settings
+                            ReadingSettingsPage.INTERACTION -> MiradIcons.PageTurn
                             ReadingSettingsPage.SCREEN -> MiradIcons.Screen
-                            ReadingSettingsPage.HEADER_FOOTER -> MiradIcons.Contents
-                            ReadingSettingsPage.EPUB -> MiradIcons.Shelf
+                            ReadingSettingsPage.HEADER_FOOTER -> MiradIcons.HeaderFooter
+                            ReadingSettingsPage.EPUB -> MiradIcons.Epub
                             ReadingSettingsPage.TTS -> MiradIcons.Speech
                         }
-                        SettingNavRow(page.title, value = summary, icon = icon, highlightIcon = true,
+                        SettingNavRow(page.title, value = summary, icon = icon, highlightIcon = true, valueMaxLines = 1,
                             onClick = { onOpenRoute(SettingsRoute.Reading(page)) })
                         CardDivider(rowDivider)
                     }
@@ -230,7 +230,7 @@ internal fun SettingsContent(
                             AppSettingsPage.ABOUT -> BuildConfig.VERSION_NAME
                             else -> null
                         }
-                        SettingNavRow(page.title, value = summary, highlightIcon = true,
+                        SettingNavRow(page.title, value = summary, highlightIcon = true, valueMaxLines = 1,
                             icon = when (page) {
                                 AppSettingsPage.APPEARANCE -> MiradIcons.Settings
                                 AppSettingsPage.SHELF -> MiradIcons.Shelf

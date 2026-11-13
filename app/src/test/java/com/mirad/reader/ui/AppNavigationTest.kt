@@ -91,4 +91,34 @@ class AppNavigationTest {
         restored.back()
         assertEquals(Screen.Shelf, restored.current)
     }
+
+    @Test fun restoreRemovesTheOldShelfHiddenRouteButKeepsTheSettingsList() {
+        val restored = AppNavigationState(listOf(
+            "Shelf", "Shelf|Shelf", "Shelf|HiddenBooks",
+            "Settings|Settings", "Settings|app:SHELF", "Settings|HiddenBooks"
+        ))
+        assertEquals(Screen.Shelf, restored.current)
+        restored.select(AppTab.Settings)
+        assertEquals(Screen.HiddenBooks, restored.current)
+        restored.open(Screen.Reader(42L))
+        restored.back()
+        assertEquals(Screen.HiddenBooks, restored.current)
+        restored.back()
+        assertEquals(Screen.SettingsDetail(SettingsRoute.App(AppSettingsPage.SHELF)), restored.current)
+    }
+
+    @Test fun shelfSearchShortcutOpensTheSearchRootFromDownloads() {
+        val state = AppNavigationState()
+        state.select(AppTab.Search)
+        state.open(Screen.Downloads)
+        state.select(AppTab.Shelf)
+        state.select(AppTab.Search)
+        assertEquals(Screen.Downloads, state.current)
+        state.select(AppTab.Shelf)
+
+        state.select(AppTab.Search, returnToRoot = true)
+        assertEquals(Screen.OnlineSearch, state.current)
+        state.back()
+        assertEquals(Screen.Shelf, state.current)
+    }
 }

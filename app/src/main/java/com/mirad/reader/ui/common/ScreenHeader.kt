@@ -9,9 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.theme.MiradTextStyles
@@ -35,11 +33,9 @@ fun ScreenHeader(
     val safeInsets = LocalPageSafeInsets.current ?: glassSafeInsets()
     if (floatingGlass) {
         val titleStyle = MiradTextStyles.pageTitle
-        val pageBackground = MaterialTheme.colorScheme.background
         val shape = RoundedCornerShape(24.dp)
         Box(modifier.widthIn(max = 720.dp).fillMaxWidth()
             .windowInsetsPadding(safeInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-            .drawBehind { drawRect(pageBackground, size = Size(size.width, 6.dp.toPx())) }
             .padding(horizontal = 12.dp, vertical = 6.dp)) {
             GlassSurface(
                 modifier = Modifier.fillMaxWidth().shadow(Elevation.floatingBar, shape, clip = false),

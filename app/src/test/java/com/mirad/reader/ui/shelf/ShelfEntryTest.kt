@@ -114,7 +114,7 @@ class ShelfEntryTest {
             createShelfItem(book2, 2000L),
             createShelfItem(book3, 3000L)
         )
-        val res1 = resolveContinueReading(shelf1, showHidden = false)
+        val res1 = resolveContinueReading(shelf1)
         assertNotNull(res1)
         assertEquals(3L, res1?.book?.id)
         assertEquals("书本 3", res1?.book?.title)
@@ -125,7 +125,7 @@ class ShelfEntryTest {
             createShelfItem(book2, 2000L),
             createShelfItem(book3.copy(isHidden = true), 3000L)
         )
-        val res2 = resolveContinueReading(shelf2, showHidden = false)
+        val res2 = resolveContinueReading(shelf2)
         assertNotNull(res2)
         assertEquals(2L, res2?.book?.id)
         assertEquals("书本 2", res2?.book?.title)
@@ -136,7 +136,7 @@ class ShelfEntryTest {
             createShelfItem(book2.copy(isHidden = true), 2000L),
             createShelfItem(book3.copy(isHidden = true), 3000L)
         )
-        val res3 = resolveContinueReading(shelf3, showHidden = false)
+        val res3 = resolveContinueReading(shelf3)
         assertNotNull(res3)
         assertEquals(1L, res3?.book?.id)
         assertEquals("书本 1", res3?.book?.title)
@@ -147,12 +147,8 @@ class ShelfEntryTest {
             createShelfItem(book2.copy(isHidden = true), 2000L),
             createShelfItem(book3.copy(isHidden = true), 3000L)
         )
-        val res4 = resolveContinueReading(shelf4, showHidden = false)
+        val res4 = resolveContinueReading(shelf4)
         assertNull("所有已读书均隐藏时，续读卡应为 null", res4)
-
-        // 在已隐藏列表页面（showHidden = true），续读卡应始终为 null
-        val resHiddenPage = resolveContinueReading(shelf1, showHidden = true)
-        assertNull("已隐藏管理页面不应展示续读卡", resHiddenPage)
 
         // 取消 book3 隐藏：恢复展示 book3
         val shelf5 = listOf(
@@ -160,7 +156,7 @@ class ShelfEntryTest {
             createShelfItem(book2.copy(isHidden = true), 2000L),
             createShelfItem(book3.copy(isHidden = false), 3000L)
         )
-        val res5 = resolveContinueReading(shelf5, showHidden = false)
+        val res5 = resolveContinueReading(shelf5)
         assertNotNull(res5)
         assertEquals(3L, res5?.book?.id)
     }

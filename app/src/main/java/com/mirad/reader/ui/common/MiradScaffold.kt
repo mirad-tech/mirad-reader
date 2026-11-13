@@ -1,7 +1,5 @@
 package com.mirad.reader.ui.common
 
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.graphics.drawscope.clipRect
 import android.os.Build
 import android.view.View
 import androidx.compose.foundation.layout.*
@@ -140,15 +138,8 @@ fun MiradScaffold(
                         bottom = (maxOf(effectiveBottom, safeInsets.getBottom(density)) + reservedAccessoryHeight).toDp()
                     ) }
                     CompositionLocalProvider(LocalContentColor provides contentColorFor(containerColor)) {
-                        // 只排除系统栏，仍让内容在悬浮玻璃顶栏/底栏后方滚动。
-                        Box(Modifier.fillMaxSize().drawWithContent {
-                            clipRect(
-                                left = safeInsets.getLeft(density, direction).toFloat(),
-                                top = safeInsets.getTop(density).toFloat(),
-                                right = size.width - safeInsets.getRight(density, direction),
-                                bottom = size.height - safeInsets.getBottom(density)
-                            ) { this@drawWithContent.drawContent() }
-                        }) { content(padding) }
+                        // 留白只影响内容的位置，滚动区域可画到透明系统栏后方。
+                        content(padding)
                     }
                 }
             }

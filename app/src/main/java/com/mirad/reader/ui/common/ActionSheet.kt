@@ -78,7 +78,8 @@ fun EmptyState(
     actionText: String? = null,
     onAction: (() -> Unit)? = null,
     @DrawableRes illustrationRes: Int? = null,
-    verticalPadding: Dp = Spacing.xxxl
+    verticalPadding: Dp = Spacing.xxxl,
+    secondaryAction: (@Composable () -> Unit)? = null
 ) {
     Box(modifier = modifier, contentAlignment = Alignment.Center) {
         Column(
@@ -108,6 +109,7 @@ fun EmptyState(
                 Spacer(modifier = Modifier.height(Spacing.lg))
                 MiradOutlinedButton(onClick = onAction) { Text(actionText) }
             }
+            secondaryAction?.invoke()
         }
     }
 }

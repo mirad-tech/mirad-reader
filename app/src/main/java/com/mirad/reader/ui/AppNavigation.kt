@@ -33,6 +33,7 @@ internal class AppNavigationState(saved: List<String> = emptyList()) {
         AppTab.entries.forEach { tab ->
             val restored = saved.drop(1).filter { it.startsWith("${tab.name}|") }
                 .mapNotNull { decodeScreen(it.substringAfter('|')) }
+                .filterNot { tab == AppTab.Shelf && it == Screen.HiddenBooks }
             put(tab, if (restored.firstOrNull() == tab.root) restored else listOf(tab.root))
         }
     }
@@ -41,8 +42,8 @@ internal class AppNavigationState(saved: List<String> = emptyList()) {
     val isRoot: Boolean get() = current == selectedTab.root
     val canGoBack: Boolean get() = !isRoot || selectedTab != AppTab.Shelf
 
-    fun select(tab: AppTab) {
-        if (selectedTab == tab) stacks[tab] = listOf(tab.root)
+    fun select(tab: AppTab, returnToRoot: Boolean = false) {
+        if (returnToRoot || selectedTab == tab) stacks[tab] = listOf(tab.root)
         selectedTab = tab
     }
 

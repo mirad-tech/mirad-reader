@@ -171,6 +171,7 @@
         userScroll.idleTimer = window.setTimeout(function () {
             userScroll.idleTimer = null;
             userScroll.driven = false;
+            if (!userScroll.touching) readingEnd.touch = null;
             flushDeferredRelayout();
         }, 180);
     }
@@ -181,7 +182,7 @@
     // 长帧最多按 50ms 计算，切后台回来不会突然跳过一段。
     // 只在启动/暂停/调速/结束时与原生同步，不逐帧调用 JS Bridge。
 
-    var autoScroll = {active: false, seconds: 30, pxPerMs: 0, raf: 0, lastTs: 0, acc: 0, endSentFor: null};
+    var autoScroll = {active: false, seconds: 30, pxPerMs: 0, raf: 0, lastTs: 0, acc: 0, endSentFor: null, readingIntent: 0};
 
     function readableHeight() {
         return Math.max(1, viewportHeight() - (CFG.padTop || 0) - (CFG.padBottom || 0));
@@ -233,15 +234,19 @@
         if (!autoScroll.lastTs) autoScroll.lastTs = ts;
         var dt = Math.min(50, Math.max(0, ts - autoScroll.lastTs));
         autoScroll.lastTs = ts;
+        var moved = false;
         if (dt > 0) {
             autoScroll.acc += autoScroll.pxPerMs * dt;
             var delta = Math.floor(autoScroll.acc);
             if (delta > 0) {
                 autoScroll.acc -= delta;
-                window.scrollTo(0, (window.scrollY || 0) + delta);
+                var start = window.scrollY || 0;
+                window.scrollTo(0, start + delta);
+                moved = (window.scrollY || 0) > start;
             }
         }
         if (atBottom(2)) {
+            if (moved) checkForwardScrollEnd(autoScroll.readingIntent);
             notifyAutoScrollEnd();
             return;
         }
@@ -260,6 +265,7 @@
         if (autoScroll.active) return;
         cancelScrollMotion();
         cancelPageMotion(true);
+        autoScroll.readingIntent = newReadingIntent();
         autoScroll.active = true;
         autoScroll.lastTs = 0;
         autoScroll.acc = 0;
@@ -340,6 +346,7 @@
     function onScroll() {
         if (CFG.mode !== 'SCROLL') return;
         updateContentClip();
+        checkReadingEndTouchScroll();
         // 触摸期间/惯性期间续期，资源重排会推迟到滚动稳定之后。
         if (userScroll.touching || userScroll.driven) markUserScroll();
         var now = nowMs();

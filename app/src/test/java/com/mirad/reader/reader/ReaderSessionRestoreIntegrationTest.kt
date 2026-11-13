@@ -2,6 +2,8 @@ package com.mirad.reader.reader
 
 import android.app.Application
 import com.mirad.reader.AppContainer
+import com.mirad.reader.core.model.EpubLayoutMode
+import com.mirad.reader.core.model.PageMode
 import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.dao.BookDao
@@ -20,10 +22,12 @@ import com.mirad.reader.data.repo.ChapterTextProvider
 import com.mirad.reader.data.repo.NoteRepository
 import com.mirad.reader.data.repo.StatsRepository
 import java.lang.reflect.Proxy
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -128,15 +132,109 @@ class ReaderSessionRestoreIntegrationTest {
         } finally { fixture.close() }
     }
 
-    private class Fixture(private val test: TestScope, failHighlights: Boolean = false) {
+    @Test fun onlyTheCurrentReadyDocumentCanFinishAndItsWriteIsWaitedOnExit() = runTest {
+        val fixture = Fixture(this)
+        try {
+            fixture.session.prepare(ReaderConfig.DEFAULT, false)
+            fixture.scriptInitialized(epoch = 8)
+            fixture.emitReadToEnd(0, 8)
+            fixture.emitPosition(5000)
+            fixture.emitReadToEnd(0, 8)
+            // 恢复或跳转到 100% 的一般位置回报不能写读完标记。
+            fixture.emitPosition(10_000)
+            fixture.emitReadToEnd(0, 7)
+            fixture.emitReadToEnd(-1, 8)
+            assertTrue(fixture.finishedChapters.isEmpty())
+
+            fixture.emitReadToEnd(0, 8)
+            fixture.emitReadToEnd(0, 8)
+            val writes = fixture.releaseSession()
+            fixture.emitReadToEnd(0, 8)
+            assertEquals(listOf(0), fixture.finishedChapters)
+            assertEquals(2, writes.size)
+
+            val exiting = async { writes.joinAll() }
+            runCurrent()
+            assertFalse(exiting.isCompleted)
+            fixture.finishedWrite.complete(true)
+            exiting.await()
+            assertEquals(10_000, fixture.saved.last().charOffset)
+        } finally {
+            fixture.finishedWrite.complete(false)
+            fixture.close()
+        }
+    }
+
+    @Test fun windowedReadingCanFinishWithThePreviousChapterAtTheTopOfTheViewport() = runTest {
+        val fixture = Fixture(this, chapterCount = 2)
+        try {
+            fixture.session.prepare(ReaderConfig.DEFAULT.copy(pageMode = PageMode.SCROLL), false)
+            fixture.scriptInitialized()
+            fixture.emitPosition(9000)
+            fixture.emitReadToEnd(0, 1)
+            assertTrue(fixture.finishedChapters.isEmpty())
+            fixture.emitReadToEnd(1, 1)
+            assertEquals(listOf(1), fixture.finishedChapters)
+            assertEquals(0, fixture.session.state.value.chapterIndex)
+            assertEquals(9000, fixture.session.state.value.offset)
+        } finally {
+            fixture.finishedWrite.complete(false)
+            fixture.close()
+        }
+    }
+
+    @Test fun singleChapterScrollRejectsABookEndFromAnInactiveChapter() = runTest {
+        val fixture = Fixture(this, chapterCount = 2, format = BookFormat.EPUB)
+        try {
+            fixture.session.prepare(ReaderConfig.DEFAULT.copy(pageMode = PageMode.SCROLL, epubLayoutMode = EpubLayoutMode.ORIGINAL), false)
+            fixture.scriptInitialized()
+            fixture.emitPosition(9000)
+            fixture.emitReadToEnd(1, 1)
+            assertTrue(fixture.finishedChapters.isEmpty())
+        } finally { fixture.close() }
+    }
+
+    @Test fun coveredArrivalWaitsUntilThePreviousPageIsRemoved() = runTest {
+        val fixture = Fixture(this)
+        try {
+            fixture.session.prepare(ReaderConfig.DEFAULT, false)
+            fixture.scriptInitialized()
+            fixture.emitPosition(9000)
+            val interrupted = fixture.session.beginCoverTurn()
+            fixture.emitReadToEnd(0, 1, interrupted)
+            fixture.session.settleCoverTurn(interrupted, completed = false)
+            fixture.emitReadToEnd(0, 1, interrupted)
+            assertTrue(fixture.finishedChapters.isEmpty())
+
+            val completed = fixture.session.beginCoverTurn()
+            fixture.emitReadToEnd(0, 1, completed)
+            assertTrue(fixture.finishedChapters.isEmpty())
+            fixture.session.settleCoverTurn(completed, completed = true)
+            assertEquals(listOf(0), fixture.finishedChapters)
+        } finally {
+            fixture.finishedWrite.complete(false)
+            fixture.close()
+        }
+    }
+
+    private class Fixture(
+        private val test: TestScope,
+        failHighlights: Boolean = false,
+        chapterCount: Int = 1,
+        format: String = BookFormat.TXT
+    ) {
         val saved = mutableListOf<ProgressEntity>()
         val sessions = mutableListOf<ReadingSessionEntity>()
+        val finishedChapters = mutableListOf<Int>()
+        val finishedWrite = CompletableDeferred<Boolean>()
         private val dispatcher = StandardTestDispatcher(test.testScheduler)
         private val appScope = CoroutineScope(SupervisorJob() + dispatcher)
         private val pageScope = CoroutineScope(SupervisorJob() + dispatcher)
         private val original = ProgressEntity(bookId = 1L, charOffset = 5000, pageIndex = 5, pageCount = 10, percent = .5f)
-        private val book = BookEntity(id = 1L, title = "恢复夹具", format = BookFormat.TXT, filePath = "synthetic.txt")
-        private val chapters = listOf(ChapterEntity(bookId = 1L, index = 0, title = "第一章", charCount = 10_000L))
+        private val book = BookEntity(id = 1L, title = "恢复夹具", format = format, filePath = "synthetic.txt")
+        private val chapters = List(chapterCount) { index ->
+            ChapterEntity(bookId = 1L, index = index, title = "第 ${index + 1} 章", charCount = 10_000L)
+        }
         private val books = BookRepository(
             bookDao = proxy<BookDao> { method, _ -> if (method == "getById") book else Unit },
             chapterDao = proxy<ChapterDao> { method, _ -> if (method == "getForBook") chapters else error(method) },
@@ -167,16 +265,26 @@ class ReaderSessionRestoreIntegrationTest {
             setField(it, "textProvider", ChapterTextProvider())
             setField(it, "appScope", appScope)
         }
-        val session = ReaderSession(container, book, pageScope)
+        val session = ReaderSession(container, book, pageScope) { chapterIndex ->
+            finishedChapters += chapterIndex
+            finishedWrite
+        }
         private val bridge = field(session, "bridge") as ReaderJsBridge
         private var released = false
 
         // 只替代Android页面回调的到达时机，状态处理执行真实桥接构造回调。
-        fun scriptInitialized() { setField(session, "chapterRendered", true) }
+        fun scriptInitialized(epoch: Int = 1) {
+            setField(session, "chapterRendered", true)
+            setField(session, "documentEpoch", epoch)
+        }
         @Suppress("UNCHECKED_CAST")
         fun emitReady() { (field(bridge, "onReady") as (Int, Int) -> Unit)(10, 10_000) }
         @Suppress("UNCHECKED_CAST")
         fun emitPosition(offset: Int) { (field(bridge, "onState") as (Int, Int, Int, Int) -> Unit)(offset / 1000, 10, offset, 10_000) }
+        @Suppress("UNCHECKED_CAST")
+        fun emitReadToEnd(chapterIndex: Int, epoch: Int, coverTurnId: Int = 0) {
+            (field(bridge, "onReadToEnd") as (Int, Int, Int) -> Unit)(chapterIndex, epoch, coverTurnId)
+        }
         fun elapseRecordedSession() {
             val progress = field(session, "progressTracker")!!
             val started = progress.javaClass.getDeclaredField("sessionStartedAt").apply { isAccessible = true }
@@ -186,7 +294,11 @@ class ReaderSessionRestoreIntegrationTest {
             test.runCurrent()
             appScope.coroutineContext[Job]!!.children.toList().joinAll()
         }
-        fun releaseSession() { if (!released) { session.release(); released = true } }
+        fun releaseSession(): List<Job> {
+            if (released) return emptyList()
+            released = true
+            return session.release()
+        }
         suspend fun close() {
             releaseSession()
             pageScope.cancel()

@@ -8,14 +8,19 @@ import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
+import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.repo.BookRepository
+import com.mirad.reader.data.repo.ChapterTextProvider
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import java.io.File
 
 internal class EditionChanged : Exception("旧书或阅读记录已变化，请重新核对")
 
-internal class BookEditionUpdater(private val db: AppDatabase, private val books: BookRepository) {
+internal class BookEditionUpdater(
+    private val db: AppDatabase,
+    private val books: BookRepository,
+    private val contentAccess: BookContentAccess = BookContentAccess()
+) {
     internal data class Records(
         val book: BookEntity,
         val chapters: List<ChapterEntity>,
@@ -44,8 +49,8 @@ internal class BookEditionUpdater(private val db: AppDatabase, private val books
     suspend fun inspect(candidate: EditionCandidate, incoming: BookEntity, chapters: List<ChapterEntity>): Update {
         val old = db.withTransaction { read(candidate.book.id) } ?: throw EditionChanged()
         if (!sameContentVersion(old.book, candidate.book) ||
-            old.book.contentPath?.let { File(it).lastModified() } != candidate.normalizedModified) throw EditionChanged()
-        return map(old, incoming, chapters, candidate.relation)
+            EditionMatcher.versionModified(contentAccess, old.book) != candidate.normalizedModified) throw EditionChanged()
+        return map(old, incoming, chapters, candidate.relation, ChapterTextProvider(contentAccess = contentAccess))
     }
 
     /** 文件已完全准备好，单个事务只发布新文件引用和对应的索引、定位。 */
@@ -87,9 +92,13 @@ internal class BookEditionUpdater(private val db: AppDatabase, private val books
 
     companion object {
         internal suspend fun map(
-            old: Records, incoming: BookEntity, chapters: List<ChapterEntity>, relation: EditionRelation
+            old: Records,
+            incoming: BookEntity,
+            chapters: List<ChapterEntity>,
+            relation: EditionRelation,
+            textProvider: ChapterTextProvider = ChapterTextProvider()
         ): Update {
-            val anchors = EditionAnchors(old.book, old.chapters, incoming, chapters, relation)
+            val anchors = EditionAnchors(old.book, old.chapters, incoming, chapters, relation, textProvider)
             val progress = old.progress
             val exact = progress?.let { anchors.point(it.chapterIndex, it.charOffset) }
             val position = exact ?: progress?.let { anchors.chapterStart(it.chapterIndex) }

@@ -38,6 +38,7 @@ class BookRepository(
     private val sessionDao: SessionDao? = null
 ) {
     private val contentLocks = ConcurrentHashMap<Long, Mutex>()
+    private val finishedWrites = Mutex()
 
     /** 阅读会话及改变正文或章节的操作共用同一本书的锁。 */
     internal fun contentLock(id: Long): Mutex = contentLocks.computeIfAbsent(id) { Mutex() }
@@ -79,7 +80,8 @@ class BookRepository(
 
     suspend fun setGroup(id: Long, groupId: Long?) = bookDao.setGroup(id, groupId)
 
-    suspend fun setFinished(id: Long, finished: Boolean) = bookDao.setFinished(id, finished)
+    internal suspend fun setFinished(id: Long, finished: Boolean, endChapterIndex: Int?): Boolean =
+        finishedWrites.withLock { bookDao.setFinished(id, finished, endChapterIndex) > 0 }
 
     suspend fun touchLastRead(id: Long, time: Long = System.currentTimeMillis()) = bookDao.touchLastRead(id, time)
 
@@ -120,7 +122,7 @@ class BookRepository(
     private suspend fun deleteCurrentBook(id: Long) {
         val book = bookDao.getById(id) ?: return
         // 先删数据库行（外键 CASCADE 清理章节/进度/划线/书签；另清 FTS 与阅读会话），
-        // 文件删除放最后：行已删而文件残留可以重试删除；反过来会留下"有行无文件"的死链书。
+        // 文件删除放最后：仅清理应用内部 books/<uuid> 托管副本与封面小图，绝不触碰用户手机原文件。
         val block: suspend () -> Unit = {
             searchFtsDao?.deleteForBook(book.id)
             sessionDao?.deleteForBook(book.id)
@@ -128,11 +130,13 @@ class BookRepository(
         }
         val db = appDatabase
         if (db != null) db.withTransaction { block() } else block()
-        paths.deleteBookFiles(tokenOf(book), book.coverPath)
+        paths.deleteManagedBookStorage(book.filePath, book.contentPath, book.coverPath)
     }
 
     fun tokenOf(book: BookEntity): String =
-        File(book.filePath).parentFile?.name ?: book.id.toString()
+        com.mirad.reader.data.io.BookContentAccess.managedBookToken(paths, book.filePath)
+            ?: com.mirad.reader.data.io.BookContentAccess.managedBookToken(paths, book.contentPath)
+            ?: book.id.toString()
 
     fun originalFileOf(book: BookEntity): File = File(book.filePath)
 }

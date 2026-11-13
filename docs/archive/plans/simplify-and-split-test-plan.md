@@ -91,7 +91,7 @@ ADB 的安装、启动和按 serial 定向控制参考 [Android 官方 ADB 文�
 npm --prefix tools/browser-checks test
 ```
 
-本机上一轮使用的 Chromium 缓存为 `build/verification/simplify-and-split/playwright`。确认缓存存在且与锁定的 Playwright 匹配后，可以只在测试进程中设置 `PLAYWRIGHT_BROWSERS_PATH` 复用它；不可把缺少浏览器当作业务测试失败。工具缺失时先按[开发文档](../DEVELOPMENT.md)核对环境，不升级依赖来规避失败。
+本机上一轮使用的 Chromium 缓存为 `build/verification/simplify-and-split/playwright`。确认缓存存在且与锁定的 Playwright 匹配后，可以只在测试进程中设置 `PLAYWRIGHT_BROWSERS_PATH` 复用它；不可把缺少浏览器当作业务测试失败。工具缺失时先按[开发文档](../../DEVELOPMENT.md)核对环境，不升级依赖来规避失败。
 
 验收时解析 XML/JSON 报告并检查实际失败、错误、跳过数量，不只看终端 `BUILD SUCCESSFUL`。原有用例不得减少；用例数或套件数变化必须说明原因。Lint 与现有基线逐项比较，避免仅比较总数量而漏掉新增问题。
 
@@ -165,7 +165,7 @@ TTS 的“实际出声”和“控制链工作”分别记结果。只有可听�
 
 ## 7 Preview 专项用例
 
-沿用[隔离预览说明](../../tools/glass-preview/README.md)，使用本轮新的 `RunId`，所有套件固定同一个候选 Preview APK。每个套件使用新的输出子目录，不能覆盖或重命名旧截图充当新结果。
+沿用[隔离预览说明](../../../tools/glass-preview/README.md)，使用本轮新的 `RunId`，所有套件固定同一个候选 Preview APK。每个套件使用新的输出子目录，不能覆盖或重命名旧截图充当新结果。
 
 | 入口 | 执行范围 | 核查内容 |
 | --- | --- | --- |
@@ -288,5 +288,5 @@ build/verification/app-qa/<RunId>/
 ## 12 简短执行提示词
 
 ```text
-按 G:\mirad\mirad-server\book\docs\plans\simplify-and-split-test-plan.md 执行测试，包含当前未提交改动。完成真实 Debug 包功能、隔离 Preview、JVM/Lint/浏览器/构建、持久化、基线对照和稳定性检查。仅用本任务独占模拟器与测试数据，不操作真机、不改产品逻辑、不提交或发布。逐项保存结果和证据，区分失败、阻塞与未测；按计划清理自建实例和一次性脚本，交付简短报告。
+按 G:\mirad\mirad-server\book\docs\archive\plans\simplify-and-split-test-plan.md 执行测试，包含当前未提交改动。完成真实 Debug 包功能、隔离 Preview、JVM/Lint/浏览器/构建、持久化、基线对照和稳定性检查。仅用本任务独占模拟器与测试数据，不操作真机、不改产品逻辑、不提交或发布。逐项保存结果和证据，区分失败、阻塞与未测；按计划清理自建实例和一次性脚本，交付简短报告。
 ```

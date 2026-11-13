@@ -2,14 +2,17 @@ package com.mirad.reader.data.imports
 
 import com.mirad.reader.core.epub.ZipEntryReader
 import com.mirad.reader.core.html.Html
+import com.mirad.reader.core.text.StreamingTxtProcessor
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
+import com.mirad.reader.data.io.BookContentAccess
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.BufferedReader
 import java.io.File
 import java.io.IOException
+import java.io.Reader
 import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.Locale
@@ -32,6 +35,7 @@ internal data class EditionCandidate(
     val authorConflict: Boolean,
     val normalizedModified: Long?
 )
+
 internal data class EditionMatch(
     val duplicate: EditionCandidate? = null,
     val candidates: List<EditionCandidate> = emptyList()
@@ -41,8 +45,12 @@ internal data class EditionMatch(
 }
 
 /** 小样本只用于筛选。自动更新或跳过必须有完整的正文证据。 */
-internal class EditionMatcher(private val chapters: suspend (Long) -> List<ChapterEntity>) {
-    private data class SampleKey(val path: String, val bytes: Long, val modified: Long)
+internal class EditionMatcher(
+    private val contentAccess: BookContentAccess,
+    private val chapters: suspend (Long) -> List<ChapterEntity>
+) {
+    constructor(chapters: suspend (Long) -> List<ChapterEntity>) : this(BookContentAccess(), chapters)
+    private data class SampleKey(val path: String, val bytes: Long, val modified: Long, val encoding: String?)
     private val txtSamples = mutableMapOf<SampleKey, String?>()
     private val epubSamples = mutableMapOf<SampleKey, EpubChapterSignature?>()
 
@@ -53,24 +61,40 @@ internal class EditionMatcher(private val chapters: suspend (Long) -> List<Chapt
         shelf: List<BookEntity>
     ): EditionMatch {
         val epubOpening = epub?.firstOrNull { it.readableText }
-        val txtOpening = if (incoming.format == BookFormat.TXT) txtSample(incoming.contentPath) else null
+        val txtOpening = if (incoming.format == BookFormat.TXT) txtSample(incoming) else null
         val titles = setOf(editionKey(incoming.title), editionKey(displayTitle)) - ""
         val author = editionKey(incoming.author.orEmpty())
         val candidates = mutableListOf<EditionCandidate>()
         for (old in shelf) {
             currentCoroutineContext().ensureActive()
             if (old.format != incoming.format) continue
+            val sameUnderlyingSource = old.filePath == incoming.filePath &&
+                old.contentPath.isNullOrBlank() && incoming.contentPath.isNullOrBlank()
             val titleMatch = editionKey(old.title) in titles
-            val sourceMatch = incoming.sourceUri != null && incoming.sourceUri == old.sourceUri
+            val sourceMatch = (incoming.sourceUri != null && incoming.sourceUri == old.sourceUri) || sameUnderlyingSource
             val oldAuthor = editionKey(old.author.orEmpty())
             val authorConflict = author.isNotEmpty() && oldAuthor.isNotEmpty() && author != oldAuthor
-            val normalizedModified = old.contentPath?.let { File(it).lastModified() }
+            val normalizedModified = versionModified(contentAccess, old)
+
+            // 同一外部 URI 原地被用户替换文件后重新导入：旧文件的原始内容已变成新内容，按已入库元数据区分未变与已变
+            if (sameUnderlyingSource) {
+                val unchanged = old.fileSize == incoming.fileSize &&
+                    old.totalChapters == incoming.totalChapters &&
+                    old.totalChars == incoming.totalChars
+                val relation = if (unchanged) EditionRelation.SAME else EditionRelation.UNKNOWN
+                val candidate = EditionCandidate(old, relation, authorConflict, normalizedModified)
+                if (!authorConflict && relation == EditionRelation.SAME) {
+                    return EditionMatch(duplicate = candidate)
+                }
+                candidates += candidate
+                continue
+            }
+
             val (openingMatches, relation) = if (old.format == BookFormat.TXT) {
-                val opening = txtSample(old.contentPath)
+                val opening = txtSample(old)
                 val matches = !opening.isNullOrBlank() && !txtOpening.isNullOrBlank() &&
                     (opening.startsWith(txtOpening) || txtOpening.startsWith(opening))
-                matches to if (matches) compareTxt(File(checkNotNull(old.contentPath)), File(checkNotNull(incoming.contentPath)))
-                else EditionRelation.UNKNOWN
+                matches to if (matches) compareTxt(old, incoming) else EditionRelation.UNKNOWN
             } else {
                 val opening = if (epubOpening != null) epubSample(old) else null
                 val matches = opening != null && opening == epubOpening
@@ -85,35 +109,66 @@ internal class EditionMatcher(private val chapters: suspend (Long) -> List<Chapt
         return EditionMatch(candidates = candidates)
     }
 
-    private fun txtSample(path: String?): String? {
-        val file = path?.let(::File) ?: return null
-        val key = SampleKey(path, file.length(), file.lastModified())
-        if (key !in txtSamples) txtSamples[key] = try {
-            file.bufferedReader().use { reader ->
-                val head = CharArray(1024)
-                val count = reader.read(head)
-                if (count > 0) String(head, 0, count).trimEnd() else null
+    private fun txtSample(book: BookEntity): String? {
+        val targetPath = book.contentPath?.takeIf { it.isNotBlank() } ?: book.filePath
+        val size = contentAccess.size(targetPath)
+        if (size < 0L) return null
+        val modified = versionModified(contentAccess, book) ?: 0L
+        val key = SampleKey(targetPath, size, modified, book.encoding)
+        if (key !in txtSamples) {
+            txtSamples[key] = try {
+                openNormalizedBookReader(book).buffered().use { reader ->
+                    val head = CharArray(1024)
+                    val count = reader.read(head)
+                    if (count > 0) String(head, 0, count).trimEnd() else null
+                }
+            } catch (_: Exception) {
+                null
             }
-        } catch (_: IOException) { null }
+        }
         return txtSamples[key]
     }
 
+    private fun openNormalizedBookReader(book: BookEntity): Reader {
+        val legacyPath = book.contentPath
+        if (!legacyPath.isNullOrBlank()) {
+            return File(legacyPath).reader(Charsets.UTF_8)
+        }
+        return StreamingTxtProcessor.openNormalizedReader(
+            openStream = { contentAccess.openStream(book.filePath) },
+            charsetName = book.encoding
+        )
+    }
+
+    private suspend fun compareTxt(old: BookEntity, incoming: BookEntity): EditionRelation {
+        return try {
+            compareReaders(
+                openFirst = { BufferedReader(openNormalizedBookReader(old)) },
+                openSecond = { BufferedReader(openNormalizedBookReader(incoming)) }
+            )
+        } catch (_: Exception) {
+            EditionRelation.UNKNOWN
+        }
+    }
+
     private suspend fun epubSample(book: BookEntity): EpubChapterSignature? {
-        val file = File(book.filePath)
-        val key = SampleKey(file.path, file.length(), file.lastModified())
+        val size = contentAccess.size(book.filePath)
+        if (size < 0L) return null
+        val modified = contentAccess.lastModified(book.filePath) ?: 0L
+        val key = SampleKey(book.filePath, size, modified, null)
         if (key !in epubSamples) epubSamples[key] = try {
             val spine = chapters(book.id)
-            ZipEntryReader.open(file).use { zip ->
+            contentAccess.openZip(book.filePath).use { zip ->
                 spine.firstOrNull { it.charCount > 0L }?.let { signature(zip, it) }?.takeIf { it.readableText }
             }
-        } catch (_: IOException) { null }
+        } catch (_: Exception) { null }
         return epubSamples[key]
     }
 
     private suspend fun compareEpub(old: BookEntity, incoming: List<EpubChapterSignature>): EditionRelation {
         return try {
             val spine = chapters(old.id)
-            ZipEntryReader.open(File(old.filePath)).use { zip ->
+            contentAccess.openZip(old.filePath).use { zip ->
                 val shared = minOf(spine.size, incoming.size)
                 for (index in 0 until shared) {
                     currentCoroutineContext().ensureActive()
@@ -136,7 +191,7 @@ internal class EditionMatcher(private val chapters: suspend (Long) -> List<Chapt
                     }
                 }
             }
-        } catch (_: IOException) { EditionRelation.UNKNOWN }
+        } catch (_: Exception) { EditionRelation.UNKNOWN }
     }
 
     private fun signature(zip: ZipEntryReader, chapter: ChapterEntity): EpubChapterSignature? {
@@ -146,12 +201,24 @@ internal class EditionMatcher(private val chapters: suspend (Long) -> List<Chapt
     }
 
     companion object {
+        internal fun versionModified(access: BookContentAccess, book: BookEntity): Long? {
+            val legacy = book.contentPath?.takeIf { it.isNotBlank() }
+            return if (legacy != null) File(legacy).takeIf { it.isFile }?.lastModified()
+            else access.lastModified(book.filePath)
+        }
+
         /** 仅忽略文件末尾空白，正文中间的差异不会被误判为续章。 */
-        internal suspend fun compareTxt(old: File, incoming: File): EditionRelation {
+        internal suspend fun compareTxt(old: File, incoming: File): EditionRelation =
+            compareReaders({ old.bufferedReader() }, { incoming.bufferedReader() })
+
+        internal suspend fun compareReaders(
+            openFirst: () -> BufferedReader,
+            openSecond: () -> BufferedReader
+        ): EditionRelation {
             return try {
                 val context = currentCoroutineContext()
-                old.bufferedReader().use { a ->
-                    incoming.bufferedReader().use { b ->
+                openFirst().use { a ->
+                    openSecond().use { b ->
                         var compared = 0
                         var sharedText = false
                         var left = a.read()

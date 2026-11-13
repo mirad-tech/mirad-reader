@@ -43,6 +43,20 @@ class FeedbackStateTest {
         assertNull(state.message)
     }
 
+    @Test fun onlyTheCurrentFeedbackActionCanRunAndItRunsOnce() {
+        val state = FeedbackState("notes")
+        val restored = mutableListOf<Long>()
+        state.show("已删除划线", action = FeedbackAction("撤销") { restored += 1L })
+        val first = state.message!!.id
+        state.show("已删除书签", action = FeedbackAction("撤销") { restored += 2L })
+        val second = state.message!!.id
+        state.performAction(first)
+        state.performAction(second)
+        state.performAction(second)
+        assertEquals(listOf(2L), restored)
+        assertNull(state.message)
+    }
+
     @Test fun hidesPrivateFilesystemPathsInErrors() {
         val message = publicError("无法读取 G:\\private\\book.txt 和 /data/user/0/app/books/book.txt")
         assertFalse(message.contains("private"))

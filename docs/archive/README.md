@@ -5,9 +5,9 @@
 ## 计划
 
 - [全仓审计问题修复（2026-11-02，14项已验收）](plans/repo-audit-goal-fix-plan-20261102.md)
-
 - [玻璃边缘优化与日夜背景接入（2026-11-01）](plans/liquid-glass-edge-plan.md)
 - [上下栏磨砂玻璃透色修复（2026-10-30）](plans/glass-bars-white-tint-fix-plan.md)
+- [精简重构测试计划（2026-10-27）](plans/simplify-and-split-test-plan.md)
 - [阅读外观与交互修复（2026-10-26）](plans/reading-appearance-interaction-fix-plan-2026-10-26.md)
 - [验收补修（2026-10-26）](plans/full-repo-followup-fix-plan-2026-10-26.md)
 - [全仓审查修复（2026-10-25）](plans/full-repo-fix-plan-2026-10-25.md)
@@ -22,6 +22,7 @@
 
 - [共享玻璃边缘、线条背景与目录快滚（Codex 分支，2026-11-01）](reports/liquid-glass-edge-20261101.md)
 - [上下栏磨砂玻璃透色修复（2026-10-30）](reports/glass-bars-white-tint-fix-20261030.md)
+- [代码精简与按职责拆分（2026-10-28）](reports/simplify-and-split-report.md)
 - [阅读交互与玻璃质感（2026-10-26）](reports/reader-polish-2026-10-26.md)
 - [阅读外观与交互（2026-10-26）](reports/reading-appearance-fix-2026-10-26.md)
 - [设置重构计划 v3（2026-10-25）](reports/glm5.3-settings-refactor-plan3-report-2026-10-25.md)

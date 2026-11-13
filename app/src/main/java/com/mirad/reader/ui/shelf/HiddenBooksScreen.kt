@@ -35,11 +35,10 @@ import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
 
 /**
- * 隐藏的书籍：把书架上「隐藏」过的书集中在这里，可以恢复或删除。
- * （之前只有隐藏入口没有恢复入口，是个死路。）
+ * 集中阅读、恢复或删除隐藏的书籍。打开阅读不改变隐藏状态。
  */
 @Composable
-fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
+fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit, onOpenBook: (Long) -> Unit) {
     val scope = rememberCoroutineScope()
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("hidden")
     var deleteTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.BookEntity?>(null) }
@@ -84,6 +83,7 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit) {
                     ListRow(
                         title = item.book.title,
                         subtitle = "${item.book.author ?: "未知作者"} · ${item.book.totalChapters} 章",
+                        onClick = { onOpenBook(item.book.id) },
                         leading = {
                             BookCover(
                                 book = item.book,

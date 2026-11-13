@@ -24,10 +24,12 @@ class NoteRepository(
     suspend fun addHighlight(highlight: HighlightEntity): Long = highlightDao.insert(highlight)
 
     suspend fun deleteHighlight(highlight: HighlightEntity) = highlightDao.delete(highlight)
+    internal suspend fun deleteHighlightForUndo(id: Long): HighlightEntity? = highlightDao.deleteForUndo(id)
 
     suspend fun addBookmark(bookmark: BookmarkEntity): Long = bookmarkDao.insert(bookmark)
 
     suspend fun deleteBookmark(bookmark: BookmarkEntity) = bookmarkDao.delete(bookmark)
+    internal suspend fun deleteBookmarkForUndo(id: Long): BookmarkEntity? = bookmarkDao.deleteForUndo(id)
 
     suspend fun findBookmark(bookId: Long, chapterIndex: Int, charOffset: Int): BookmarkEntity? =
         bookmarkDao.find(bookId, chapterIndex, charOffset)

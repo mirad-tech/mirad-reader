@@ -271,8 +271,17 @@ class SearchRepository(
                 }
                 val db = database
                 if (db == null) publish() else db.withTransaction {
-                    // 阅读会话退出时搜索可能还在收尾，不能把旧正文索引写回新版。
-                    if (db.bookDao().getById(book.id)?.filePath == book.filePath) publish()
+                    // 阅读会话退出时搜索可能还在收尾，不能把旧正文索引写回新版或重新识别后的状态。
+                    val latest = db.bookDao().getById(book.id)
+                    if (latest != null &&
+                        latest.filePath == book.filePath &&
+                        latest.contentPath == book.contentPath &&
+                        latest.encoding == book.encoding &&
+                        latest.totalChapters == book.totalChapters &&
+                        latest.totalChars == book.totalChars
+                    ) {
+                        publish()
+                    }
                 }
             }
         }

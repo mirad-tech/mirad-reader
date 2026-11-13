@@ -8,8 +8,10 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -75,15 +77,31 @@ fun BookCover(
     book: BookEntity,
     modifier: Modifier = Modifier,
     titleSize: Int = 19,
-    titleTopInset: Dp = 0.dp
+    titleTopInset: Dp = 0.dp,
+    progress: Float = 0f
 ) {
     var bitmap by remember(book.id, book.coverPath) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(book.id, book.coverPath) {
         bitmap = book.coverPath?.let { CoverCache.load(it) }
     }
+    CoverArtwork(book.title, book.id, modifier, book.author, titleSize, titleTopInset, progress, bitmap)
+}
+
+/** 书架与搜书结果共用题签绘制。 */
+@Composable
+internal fun CoverArtwork(
+    title: String,
+    colorSeed: Long,
+    modifier: Modifier = Modifier,
+    author: String? = null,
+    titleSize: Int = 19,
+    titleTopInset: Dp = 0.dp,
+    progress: Float = 0f,
+    bitmap: ImageBitmap? = null
+) {
     val shape = RoundedCornerShape(Sizes.coverCorner)
     val tones = LocalMiradColors.current.coverTones
-    val tone = tones[Math.floorMod(book.id, tones.size.toLong()).toInt()]
+    val tone = tones[Math.floorMod(colorSeed, tones.size.toLong()).toInt()]
     BoxWithConstraints(
         modifier = modifier
             .clip(shape)
@@ -91,11 +109,10 @@ fun BookCover(
             .border(.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = .3f), shape),
         contentAlignment = Alignment.Center
     ) {
-        val loaded = bitmap
-        if (loaded != null) {
+        if (bitmap != null) {
             Image(
-                bitmap = loaded,
-                contentDescription = book.title,
+                bitmap = bitmap,
+                contentDescription = title,
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop
             )
@@ -123,7 +140,7 @@ fun BookCover(
                 ) {
                     Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                         Text(
-                            text = book.title,
+                            text = title,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontFamily = MiradSerif, fontWeight = FontWeight.Normal,
                                 fontSize = fontSize.sp, lineHeight = (fontSize * 1.4f).sp
@@ -134,9 +151,9 @@ fun BookCover(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                    if (!compact && !book.author.isNullOrBlank()) {
+                    if (!compact && !author.isNullOrBlank()) {
                         Text(
-                            text = book.author,
+                            text = author,
                             style = MaterialTheme.typography.labelSmall,
                             color = tone.onContainer.copy(alpha = .85f),
                             maxLines = 1,
@@ -145,6 +162,12 @@ fun BookCover(
                         )
                     }
                 }
+            }
+        }
+        if (progress > 0f) {
+            // 实色轨道让已读段与文字、图片封面的底色都能分开。
+            Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(tone.container)) {
+                Box(Modifier.fillMaxWidth(progress.coerceAtMost(1f)).fillMaxHeight().background(tone.onContainer))
             }
         }
     }

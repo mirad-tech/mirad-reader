@@ -16,6 +16,11 @@
         cancelPageMotion(true);
         // 用户开始操作后，取消"保持章末"的意图，改以当前锚点为准
         state.pendingEndAnchor = false;
+        startReadingEndTouch(e.touches && e.touches.length === 1 ? e.touches[0] : null);
+    }, {passive: true});
+
+    document.addEventListener('touchmove', function (e) {
+        if (e.touches && e.touches.length === 1) moveReadingEndTouch(e.touches[0]);
     }, {passive: true});
 
     document.addEventListener('touchend', function (e) {
@@ -32,6 +37,7 @@
         gesture.startY = null;
         gesture.startAtTop = false;
         gesture.startAtBottom = false;
+        if (e.changedTouches && e.changedTouches.length === 1) moveReadingEndTouch(e.changedTouches[0]);
         // 短章一屏内同时是章首和章末：按滑动方向决定上一章/下一章。
         // 每次手势最多换一章（只执行一个分支）。
         if (dy <= -48 && startedAtBottom) {

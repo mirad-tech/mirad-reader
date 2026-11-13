@@ -30,7 +30,16 @@ enum class FeedbackKind { INFO, SUCCESS, ERROR }
 
 val LocalRootFeedback = staticCompositionLocalOf<FeedbackState?> { null }
 
-data class UiFeedback(val id: Long, val owner: String, val text: String, val kind: FeedbackKind)
+data class FeedbackAction(val label: String, val onClick: () -> Unit)
+
+data class UiFeedback(
+    val id: Long,
+    val owner: String,
+    val text: String,
+    val kind: FeedbackKind,
+    val action: FeedbackAction? = null,
+    val timeoutMillis: Long = 3000L
+)
 
 /** A disposed screen cannot publish late callbacks, even if its work continues elsewhere. */
 @Stable
@@ -40,8 +49,19 @@ class FeedbackState(val owner: String) {
     private var sequence = 0L
     private var active = true
 
-    fun show(text: String, kind: FeedbackKind = FeedbackKind.INFO) {
-        if (active) message = UiFeedback(++sequence, owner, text, kind)
+    fun show(
+        text: String,
+        kind: FeedbackKind = FeedbackKind.INFO,
+        action: FeedbackAction? = null,
+        timeoutMillis: Long = 3000L
+    ) {
+        if (active) message = UiFeedback(++sequence, owner, text, kind, action, timeoutMillis)
+    }
+
+    fun performAction(id: Long) {
+        val action = message?.takeIf { it.id == id }?.action ?: return
+        dismiss(id)
+        action.onClick()
     }
 
     fun dismiss(id: Long? = message?.id) {
@@ -63,7 +83,7 @@ fun rememberFeedbackState(owner: String): FeedbackState {
 }
 
 @Composable
-fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier) {
+fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier, actionEnabled: Boolean = true) {
     val message = state.message
     var displayed by remember { mutableStateOf<UiFeedback?>(null) }
     SideEffect { if (message != null) displayed = message }
@@ -71,9 +91,9 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier) {
     LaunchedEffect(message?.id) {
         if (message != null) {
             delay(accessibility?.calculateRecommendedTimeoutMillis(
-                originalTimeoutMillis = 3000L, containsIcons = true,
+                originalTimeoutMillis = message.timeoutMillis, containsIcons = true,
                 containsText = true, containsControls = true
-            ) ?: 3000L)
+            ) ?: message.timeoutMillis)
             state.dismiss(message.id)
         }
     }
@@ -107,6 +127,12 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier) {
                     }, tint = if (value.kind == FeedbackKind.ERROR) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                     Text(value.text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    value.action?.let { action ->
+                        MiradTextButton(
+                            onClick = { state.performAction(value.id) },
+                            enabled = actionEnabled && message?.id == value.id
+                        ) { Text(action.label) }
+                    }
                     IconButton(onClick = { state.dismiss(value.id) }) {
                         Icon(Icons.Default.Close, "关闭提示", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }

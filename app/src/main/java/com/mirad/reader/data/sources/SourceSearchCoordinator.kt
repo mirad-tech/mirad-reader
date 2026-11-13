@@ -8,6 +8,7 @@ import com.mirad.reader.core.sources.SourceComparisonEntry
 import com.mirad.reader.core.sources.SourceComparisonState
 import com.mirad.reader.core.sources.SourceFailure
 import com.mirad.reader.core.sources.SourceRepository
+import com.mirad.reader.core.sources.SourceRetryProgress
 import com.mirad.reader.core.sources.SourceSearch
 import com.mirad.reader.core.sources.SourceSearchState
 import kotlinx.coroutines.CancellationException
@@ -40,46 +41,86 @@ class SourceSearchCoordinator(
 
     override fun search(query: String) {
         synchronized(guard) {
-            val generation = ++searchGeneration
-            searchJob?.cancel()
             val text = query.trim()
             val sources = enabledSources()
-            mutableState.value = SourceSearchState(query = text, running = text.isNotEmpty() && sources.isNotEmpty(),
-                totalSources = sources.size, message = if (sources.isEmpty()) "没有启用且可用的书源" else null)
-            if (text.isEmpty() || sources.isEmpty()) return
-            searchJob = scope.launch {
-                coroutineScope {
-                    sources.forEach { source -> launch { workers.withPermit {
-                        var books = emptyList<RemoteBook>()
-                        var failure: SourceFailure? = null
-                        try {
-                            books = engine.search(source, text)
-                        } catch (error: CancellationException) { throw error
-                        } catch (error: Exception) { failure = failure(source, error) }
-                        synchronized(guard) {
-                            if (generation != searchGeneration) return@synchronized
-                            val current = mutableState.value
-                            mutableState.value = current.copy(
-                                matches = group(current.matches.flatMap { it.books } + books),
-                                completedSources = current.completedSources + 1,
-                                failures = current.failures + listOfNotNull(failure)
-                            )
+            startSearchBatch(
+                SourceSearchState(
+                    query = text,
+                    running = text.isNotEmpty() && sources.isNotEmpty(),
+                    totalSources = sources.size,
+                    message = if (sources.isEmpty()) "没有启用且可用的书源" else null
+                ),
+                sources
+            )
+        }
+    }
+
+    override fun retryFailures() {
+        synchronized(guard) {
+            val current = mutableState.value
+            if (current.running || current.query.isBlank() || current.failures.isEmpty()) return
+            val failedIds = current.failures.mapTo(hashSetOf()) { it.sourceId }
+            val sources = enabledSources().filter { it.id in failedIds }
+            if (sources.isEmpty()) return
+            startSearchBatch(
+                current.copy(running = true, retry = SourceRetryProgress(totalSources = sources.size)),
+                sources
+            )
+        }
+    }
+
+    /** 由持有 guard 的调用者开启，搜索与重试共用代次和取消入口。 */
+    private fun startSearchBatch(initial: SourceSearchState, sources: List<BookSource>) {
+        val generation = ++searchGeneration
+        searchJob?.cancel()
+        mutableState.value = initial
+        searchJob = if (initial.running) scope.launch {
+            coroutineScope {
+                sources.forEach { source ->
+                    launch {
+                        workers.withPermit {
+                            var books = emptyList<RemoteBook>()
+                            var problem: SourceFailure? = null
+                            try {
+                                books = engine.search(source, initial.query)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                problem = failure(source, error)
+                            }
+                            synchronized(guard) {
+                                if (generation != searchGeneration) return@synchronized
+                                val current = mutableState.value
+                                val retry = current.retry
+                                mutableState.value = current.copy(
+                                    matches = if (books.isEmpty()) current.matches
+                                        else group(current.matches.flatMap { it.books } + books),
+                                    completedSources = if (retry == null) current.completedSources + 1
+                                        else current.completedSources,
+                                    failures = current.failures.filterNot { it.sourceId == source.id } + listOfNotNull(problem),
+                                    retry = retry?.let { it.copy(completedSources = it.completedSources + 1) }
+                                )
+                            }
                         }
-                    } } }
-                }
-                synchronized(guard) {
-                    if (generation == searchGeneration) mutableState.value = mutableState.value.copy(running = false)
+                    }
                 }
             }
-        }
+            synchronized(guard) {
+                if (generation == searchGeneration) mutableState.value = mutableState.value.copy(running = false)
+            }
+        } else null
     }
 
     override fun cancelSearch() {
         synchronized(guard) {
+            val current = mutableState.value
+            if (!current.running) return
             searchGeneration++
             searchJob?.cancel()
             searchJob = null
-            mutableState.value = mutableState.value.copy(running = false)
+            val retry = current.retry
+            mutableState.value = if (retry == null) current.copy(running = false, cancelled = true)
+                else current.copy(running = false, retry = retry.copy(cancelled = true))
         }
     }
 

@@ -1,6 +1,8 @@
 package com.mirad.reader
 
 import android.app.Application
+import android.util.Log
+import androidx.annotation.MainThread
 import androidx.room.Room
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.FontManager
@@ -15,10 +17,15 @@ import com.mirad.reader.data.repo.NoteRepository
 import com.mirad.reader.data.repo.SearchRepository
 import com.mirad.reader.data.repo.SettingsRepository
 import com.mirad.reader.data.repo.StatsRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import com.mirad.reader.core.sources.BookDownloads
 import com.mirad.reader.core.sources.SourceRepository
@@ -47,6 +54,9 @@ class AppContainer(app: Application) {
     internal val shelfResumePrompt = com.mirad.reader.ui.shelf.ShelfResumePromptState()
 
     val paths: AppPaths = AppPaths(app)
+
+    val contentAccess: com.mirad.reader.data.io.BookContentAccess =
+        com.mirad.reader.data.io.BookContentAccess(app)
 
     val database: AppDatabase = Room.databaseBuilder(
         app,
@@ -84,10 +94,10 @@ class AppContainer(app: Application) {
 
     val groups: GroupRepository = GroupRepository(database.groupDao(), database)
 
-    val textProvider: ChapterTextProvider = ChapterTextProvider(paths)
+    val textProvider: ChapterTextProvider = ChapterTextProvider(paths, contentAccess)
 
-    /** 已导入书籍的维护：重新识别编码、重新分章（分章不重写正文文件）。 */
-    val maintenance: BookMaintenance = BookMaintenance(books, paths, database)
+    /** 已导入书籍的维护：重新识别编码、重新分章、重新关联原文件。 */
+    val maintenance: BookMaintenance = BookMaintenance(books, paths, database, contentAccess)
 
     val fonts: FontManager = FontManager(app, paths)
 
@@ -102,7 +112,8 @@ class AppContainer(app: Application) {
         paths = paths,
         books = books,
         scope = appScope,
-        appDatabase = database
+        appDatabase = database,
+        contentAccess = contentAccess
     )
 
     val networkDownloader: com.mirad.reader.data.imports.NetworkBookDownloader =
@@ -115,6 +126,24 @@ class AppContainer(app: Application) {
 
     val openDownloads = MutableStateFlow(false)
     val feedback = com.mirad.reader.ui.common.FeedbackState("application")
+
+    /** 主线程接纳时先排入仓库的写入锁，切页不会取消这次更新。 */
+    @MainThread
+    internal fun queueBookFinished(bookId: Long, finished: Boolean, endChapterIndex: Int? = null): Deferred<Boolean> =
+        appScope.async(start = CoroutineStart.UNDISPATCHED) {
+            try {
+                books.setFinished(bookId, finished, endChapterIndex)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.e("MiradReader", "无法更新书籍的读完状态", error)
+                withContext(Dispatchers.Main.immediate) {
+                    feedback.show("无法更新读完状态，请重试", com.mirad.reader.ui.common.FeedbackKind.ERROR)
+                }
+                false
+            }
+        }
+
     private val sourceHttp = SourceHttpClient()
     private val sourceEngine = DefaultBookSourceEngine(sourceHttp, SandboxRuleExecutor(app))
     val sources: SourceRepository = BookSourceRepository(File(app.filesDir, "book-sources"), sourceHttp, appScope)

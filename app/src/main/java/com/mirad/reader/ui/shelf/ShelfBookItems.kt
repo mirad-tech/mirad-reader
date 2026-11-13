@@ -4,12 +4,14 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,16 +34,20 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.ui.design.Elevation
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Sizes
+import com.mirad.reader.ui.design.Spacing
 
 // ---------------------------------------------------------------- 书籍卡片
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 internal fun BookGridCard(
     item: ShelfBook,
@@ -69,8 +75,8 @@ internal fun BookGridCard(
                 .shadow(Elevation.bookCover, RoundedCornerShape(Sizes.coverCorner))
                 .clip(RoundedCornerShape(Sizes.coverCorner))
         ) {
-            BookCover(book = item.book, modifier = Modifier.fillMaxSize(), titleTopInset = titleTopInset)
-            CoverProgress(item.percent)
+            BookCover(book = item.book, modifier = Modifier.fillMaxSize(),
+                titleTopInset = titleTopInset, progress = if (item.book.finished) 0f else item.percent)
             if (item.book.isPinned) {
                 Badge(text = "置顶", modifier = Modifier.align(Alignment.TopEnd).padding(5.dp))
             }
@@ -103,18 +109,20 @@ internal fun BookGridCard(
             text = item.book.title,
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onBackground,
-            minLines = 2, maxLines = 2,
+            maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Spacer(modifier = Modifier.height(Spacing.sm))
+        FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
                 text = item.book.format,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
+                modifier = Modifier.padding(end = Spacing.xs)
             )
-            if (item.percent > 0f) {
+            if (item.book.finished) {
+                FinishedLabel(MaterialTheme.typography.labelSmall)
+            } else if (item.percent > 0f) {
                 Text(
                     text = "${(item.percent * 100).toInt()}%",
                     style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
@@ -131,6 +139,7 @@ internal fun BookGridCard(
 internal fun BookListRow(
     item: ShelfBook,
     selected: Boolean,
+    percentColumnWidth: Dp,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -167,41 +176,57 @@ internal fun BookListRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                if (item.percent > 0f) {
+                if (!item.book.finished && item.percent > 0f) {
                     Spacer(modifier = Modifier.height(6.dp))
                     InlineProgress(item.percent)
                 }
             }
             Spacer(modifier = Modifier.width(10.dp))
-            if (item.percent > 0f) Text(
-                text = "${(item.percent * 100).toInt()}%",
-                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Medium
-            )
+            Box(Modifier.width(percentColumnWidth), contentAlignment = Alignment.CenterEnd) {
+                if (item.book.finished) {
+                    FinishedLabel(listProgressLabelStyle())
+                } else if (item.percent > 0f) {
+                    Text(
+                        text = "${(item.percent * 100).toInt()}%",
+                        style = listProgressLabelStyle(),
+                        color = MaterialTheme.colorScheme.primary,
+                        maxLines = 1,
+                        softWrap = false
+                    )
+                }
+            }
         }
     }
 }
 
-/** 网格卡片：进度贴在封面底部。 */
+private val FinishedIconSize = 14.dp
+private const val FinishedText = "已读完"
+
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.CoverProgress(percent: Float) {
-    if (percent <= 0f) return
-    Box(
-        modifier = Modifier
-            .align(Alignment.BottomStart)
-            .fillMaxWidth()
-            .height(4.dp)
-            .background(LocalMiradColors.current.coverScrim)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth(percent.coerceIn(0f, 1f))
-                .fillMaxHeight()
-                .background(MaterialTheme.colorScheme.primary)
-        )
+private fun FinishedLabel(style: TextStyle) {
+    val color = MaterialTheme.colorScheme.primary
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+        Icon(Icons.Default.Check, contentDescription = null, tint = color, modifier = Modifier.size(FinishedIconSize))
+        Text(FinishedText, style = style, color = color, maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
     }
 }
+
+@Composable
+internal fun listProgressLabelWidth(): Dp {
+    val measurer = rememberTextMeasurer()
+    val style = listProgressLabelStyle()
+    val percentWidth = measurer.measure("100%", style = style, maxLines = 1).size.width
+    val finishedWidth = measurer.measure(FinishedText, style = style, maxLines = 1).size.width
+    return with(LocalDensity.current) {
+        maxOf(percentWidth, finishedWidth + FinishedIconSize.roundToPx() + Spacing.xs.roundToPx()).toDp()
+    }
+}
+
+@Composable
+private fun listProgressLabelStyle() = MaterialTheme.typography.labelMedium.copy(
+    fontFeatureSettings = "tnum",
+    fontWeight = FontWeight.Medium
+)
 
 /** 列表模式：独立细进度条。 */
 @Composable

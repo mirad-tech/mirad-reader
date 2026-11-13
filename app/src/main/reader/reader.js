@@ -20,6 +20,8 @@
 
     // @include scroll-signals.js
 
+    // @include reading-end.js
+
     // @include chapters.js
     // @include selection-anchors.js
 

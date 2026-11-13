@@ -2,7 +2,6 @@ package com.mirad.reader.data.imports
 
 import com.mirad.reader.core.html.ChapterHtmlBuilder
 import com.mirad.reader.core.model.ChapterTextMap
-import com.mirad.reader.core.text.TextNormalizer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
@@ -34,8 +33,19 @@ internal class EditionAnchors(
     private val titles = newChapters.groupBy { editionKey(it.title) }
     private val txtExtension = oldBook.format == BookFormat.TXT && relation == EditionRelation.EXTENDS
 
+    // 同一外部 URI 被原地修改后重新导入：底层文件已是新内容，不能再用旧章节字节区间去切新文件。
+    private val oldSourceOverwritten =
+        oldBook.filePath == newBook.filePath && oldBook.contentPath.isNullOrBlank()
+
+    // 归一化全局字符起点表：与原文件具体编码（GBK/UTF-8/UTF-16/CRLF）解耦，在零拷贝与旧版模式下均精确成立。
+    private val oldStartChars: LongArray = prefixCharStarts(oldChapters)
+    private val newStartChars: LongArray = prefixCharStarts(newChapters)
+
     fun point(chapter: Int, offset: Int): Point? {
-        val old = text(false, chapter) ?: return null
+        val old = text(false, chapter)
+        if (old == null) {
+            return fallbackPointWhenOldUnreadable(chapter, offset)
+        }
         if (offset !in 0..old.value.length) return null
         if (txtExtension) txtPoint(chapter, offset, old)?.let { return it }
 
@@ -49,14 +59,17 @@ internal class EditionAnchors(
 
     fun chapterStart(chapter: Int): Point? {
         if (txtExtension) {
-            val start = oldChapters.getOrNull(chapter)?.startByte ?: return null
-            return newTxtChapter(start)?.let { Point(it.index, 0) }
+            val startChar = oldStartChars.getOrNull(chapter) ?: return null
+            return newTxtChapterByChar(startChar)?.let { Point(it.index, 0) }
         }
         return targets(chapter).chapter?.let { Point(it, 0) }
     }
 
     fun ranges(chapter: Int, start: Int, end: Int, expected: String): List<Range>? {
-        val old = text(false, chapter)?.value ?: return null
+        val old = text(false, chapter)?.value
+        if (old == null) {
+            return fallbackRangesWhenOldUnreadable(chapter, start, end, expected)
+        }
         if (start < 0 || end <= start || end > old.length || compact(expected).isEmpty() ||
             compact(old.substring(start, end)) != compact(expected)) return null
         val from = point(chapter, start) ?: return null
@@ -71,45 +84,120 @@ internal class EditionAnchors(
         return ranges.takeIf { it.isNotEmpty() && compact(it.joinToString("") { range -> range.text }) == compact(expected) }
     }
 
+    private fun resolveUnreadableTargetChapter(chapter: Int): Int? {
+        val oldCh = oldChapters.getOrNull(chapter) ?: return null
+        val candidates = titles[editionKey(oldCh.title)].orEmpty().filter { it.isVolume == oldCh.isVolume }
+        if (candidates.size == 1) return candidates[0].index
+        if (chapter in newChapters.indices) {
+            val sameIdx = newChapters[chapter]
+            if (sameIdx.isVolume == oldCh.isVolume && editionKey(sameIdx.title) == editionKey(oldCh.title)) {
+                return chapter
+            }
+        }
+        return null
+    }
+
+    private fun fallbackPointWhenOldUnreadable(chapter: Int, offset: Int): Point? {
+        val oldCh = oldChapters.getOrNull(chapter) ?: return null
+        val targetIndex = resolveUnreadableTargetChapter(chapter) ?: return null
+        val newText = text(true, targetIndex)?.value ?: return null
+        return if (oldCh.charCount == newChapters[targetIndex].charCount && offset in 0..newText.length) {
+            Point(targetIndex, offset)
+        } else null
+    }
+
+    private fun fallbackRangesWhenOldUnreadable(chapter: Int, start: Int, end: Int, expected: String): List<Range>? {
+        val compactExpected = compact(expected)
+        if (start < 0 || end <= start || compactExpected.isEmpty()) return null
+        val oldCh = oldChapters.getOrNull(chapter) ?: return null
+        val primaryIndex = resolveUnreadableTargetChapter(chapter)
+        if (primaryIndex != null) {
+            val newText = text(true, primaryIndex)?.value
+            if (newText != null) {
+                if (end <= newText.length && compact(newText.substring(start, end)) == compactExpected) {
+                    return listOf(Range(primaryIndex, start, end, newText.substring(start, end)))
+                }
+                val found = newText.indexOf(expected)
+                if (found >= 0 && newText.indexOf(expected, found + 1) < 0) {
+                    return listOf(Range(primaryIndex, found, found + expected.length, expected))
+                }
+            }
+        }
+
+        // 多卷同名章且下标发生前插/删除偏移时：在全部同名章节中寻找唯一精确命中的原文段落
+        val candidates = titles[editionKey(oldCh.title)].orEmpty().filter { it.isVolume == oldCh.isVolume }
+        val uniqueHits = candidates.mapNotNull { candidate ->
+            val newText = text(true, candidate.index)?.value ?: return@mapNotNull null
+            val first = newText.indexOf(expected)
+            if (first < 0 || newText.indexOf(expected, first + 1) >= 0) null
+            else Range(candidate.index, first, first + expected.length, expected)
+        }
+        return uniqueHits.singleOrNull()?.let { listOf(it) }
+    }
+
     private fun targets(chapter: Int): Targets {
         val old = oldChapters.getOrNull(chapter) ?: return Targets(emptyList(), null)
         if (oldBook.format == BookFormat.EPUB && relation != EditionRelation.UNKNOWN) {
             val index = chapter.takeIf { it in newChapters.indices }
             return Targets(listOfNotNull(index), index)
         }
+        val oldTextValue = text(false, chapter)?.value
         val byTitle = titles[editionKey(old.title)].orEmpty().filter { it.isVolume == old.isVolume }.map { it.index }
         val sameIndex = chapter.takeIf { it in newChapters.indices &&
-            text(false, chapter)?.value?.let { oldText -> oldText.isNotBlank() && oldText == text(true, it)?.value } == true }
+            oldTextValue?.let { oldText -> oldText.isNotBlank() && oldText == text(true, it)?.value } == true }
         val indices = (byTitle + listOfNotNull(sameIndex)).distinct()
         val section = "第 " + (chapter + 1) + " 节"
         val syntheticTitle = old.title == section || old.title == "$section · 自动"
-        val fallback = indices.singleOrNull()?.takeIf { it == sameIndex || !syntheticTitle }
+        var fallback = indices.singleOrNull()?.takeIf { it == sameIndex || !syntheticTitle }
+        if (fallback == null && oldTextValue == null) {
+            fallback = if (oldBook.format == BookFormat.EPUB) {
+                chapter.takeIf { it in newChapters.indices }
+            } else {
+                resolveUnreadableTargetChapter(chapter)?.takeIf { !syntheticTitle }
+            }
+        }
         return Targets(indices, fallback)
     }
 
     private fun txtPoint(chapter: Int, offset: Int, old: Text): Point? {
         val source = old.txtMap?.sourceAt(offset) ?: return null
-        val body = checkNotNull(old.body)
-        val chapterByte = oldChapters[chapter].startByte + TextNormalizer.utf8Length(body, 0, source)
-        val target = newTxtChapter(chapterByte) ?: return null
+        val globalChar = oldStartChars[chapter] + source
+        val target = newTxtChapterByChar(globalChar) ?: return null
+        val targetStartChar = newStartChars[target.index]
         // 旧末尾恰好紧邻新章时先尝试旧章结尾，避免跳到新增章。
-        val indices = if (chapterByte == target.startByte && target.index > 0 && offset == old.value.length) {
+        val indices = if (globalChar == targetStartChar && target.index > 0 && offset == old.value.length) {
             listOf(target.index - 1, target.index)
         } else listOf(target.index)
         return indices.firstNotNullOfOrNull { index ->
             val new = text(true, index) ?: return@firstNotNullOfOrNull null
-            val relative = chapterByte - newChapters[index].startByte
-            val char = charAtByte(checkNotNull(new.body), relative) ?: return@firstNotNullOfOrNull null
-            new.txtMap?.domAt(char)?.let { Point(index, it) }
+            val relativeChar = (globalChar - newStartChars[index]).toInt()
+            val newBody = checkNotNull(new.body)
+            if (relativeChar !in 0..newBody.length) return@firstNotNullOfOrNull null
+            new.txtMap?.domAt(relativeChar)?.let { Point(index, it) }
         }
     }
 
-    private fun newTxtChapter(byte: Long): ChapterEntity? {
-        val index = newChapters.binarySearchBy(byte) { it.startByte }.let { if (it >= 0) it else -it - 2 }
-        return newChapters.getOrNull(index)?.takeIf { byte <= it.endByte }
+    private fun newTxtChapterByChar(globalChar: Long): ChapterEntity? {
+        if (newChapters.isEmpty() || globalChar < 0L) return null
+        var lo = 0
+        var hi = newChapters.lastIndex
+        var found = -1
+        while (lo <= hi) {
+            val mid = (lo + hi) ushr 1
+            if (newStartChars[mid] <= globalChar) {
+                found = mid
+                lo = mid + 1
+            } else {
+                hi = mid - 1
+            }
+        }
+        if (found < 0) return null
+        val endChar = newStartChars[found] + newChapters[found].charCount
+        return newChapters[found].takeIf { globalChar <= endChar }
     }
 
     private fun text(new: Boolean, index: Int): Text? {
+        if (!new && oldSourceOverwritten) return null
         val key = new to index
         if (!texts.containsKey(key)) {
             val book = if (new) newBook else oldBook
@@ -130,11 +218,20 @@ internal class EditionAnchors(
         private val blocks = setOf("p", "div", "li", "dd", "dt", "blockquote", "section", "article", "h1",
             "h2", "h3", "h4", "h5", "h6", "tr", "td", "th", "figcaption", "pre", "body")
 
+        private fun prefixCharStarts(chapters: List<ChapterEntity>): LongArray {
+            val starts = LongArray(chapters.size)
+            var sum = 0L
+            for (i in chapters.indices) {
+                starts[i] = sum
+                sum += chapters[i].charCount.coerceAtLeast(0L)
+            }
+            return starts
+        }
+
         /** 与 reader/runtime.js 的 walkText 一致，不能用搜索用的纯文本作为 EPUB 定位坐标。 */
         internal fun epubReaderText(html: String): String? {
             val wrapped = ChapterHtmlBuilder.wrapBody(html.replace("\r\n", "\n").replace('\r', '\n'), 0)
             val root = Jsoup.parse(wrapped).select("#mirad-content").singleOrNull() ?: return null
-            // 这些节点在两个 DOM 实现中的文本表示不同，不能假装偏移仍然可信。
             if (root.selectFirst("script, style, template, noscript, svg, math") != null) return null
             val text = StringBuilder()
             var lastBlock: Element? = null
@@ -162,16 +259,5 @@ internal class EditionAnchors(
         }
 
         private fun compact(value: String) = value.filterNot(Char::isWhitespace)
-
-        private fun charAtByte(text: String, target: Long): Int? {
-            var bytes = 0L
-            var char = 0
-            while (char < text.length && bytes < target) {
-                val next = char + Character.charCount(text.codePointAt(char))
-                bytes += TextNormalizer.utf8Length(text, char, next)
-                char = next
-            }
-            return char.takeIf { bytes == target }
-        }
     }
 }

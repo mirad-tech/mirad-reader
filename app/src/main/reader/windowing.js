@@ -114,6 +114,7 @@
         buildTextModel(el);
         applyLayout();
         window.scrollTo(0, sectionTop(el) + relInSection);
+        syncReadingEndScrollPosition();
         state.page = Math.floor(relInSection / viewportHeight());
         state.ready = true;
         var b = bridge();
@@ -201,6 +202,7 @@
             var drift = anchorTopAfter - anchorTopBefore;
             if (Math.abs(drift) > 0.5) {
                 window.scrollBy(0, drift);
+                syncReadingEndScrollPosition();
             }
         }
         // Removing earlier chapters changes document scrollY, not the reader's
@@ -257,7 +259,10 @@
                     // 前插把内容整体下移，等量补偿 scrollY 才能保持在原处
                     var after = documentHeight();
                     window.scrollTo(0, Math.max(0, (window.scrollY || 0) + (after - before)));
+                    syncReadingEndScrollPosition();
                     rememberThemePosition(retainedThemeAnchor);
+                } else {
+                    checkAppendedBookEnd(idx);
                 }
                 scheduleTrim();
                 requestVisualSignal();

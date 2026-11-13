@@ -81,6 +81,12 @@ interface SourceRepository {
 
 data class BookMatch(val key: String, val title: String, val author: String, val books: List<RemoteBook>)
 data class SourceFailure(val sourceId: String, val sourceName: String, val message: String)
+data class SourceRetryProgress(
+    val totalSources: Int,
+    val completedSources: Int = 0,
+    val cancelled: Boolean = false
+)
+
 data class SourceSearchState(
     val query: String = "",
     val matches: List<BookMatch> = emptyList(),
@@ -88,7 +94,9 @@ data class SourceSearchState(
     val totalSources: Int = 0,
     val completedSources: Int = 0,
     val failures: List<SourceFailure> = emptyList(),
-    val message: String? = null
+    val message: String? = null,
+    val cancelled: Boolean = false,
+    val retry: SourceRetryProgress? = null
 )
 
 data class SourceComparisonEntry(
@@ -111,6 +119,7 @@ interface SourceSearch {
     val state: StateFlow<SourceSearchState>
     val comparison: StateFlow<SourceComparisonState>
     fun search(query: String)
+    fun retryFailures()
     fun cancelSearch()
     fun compare(match: BookMatch)
     fun clearComparison()

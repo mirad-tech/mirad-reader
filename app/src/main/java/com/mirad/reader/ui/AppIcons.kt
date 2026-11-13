@@ -61,6 +61,16 @@ object MiradIcons {
     val More = lineIcon("More") {
         for (y in listOf(5f, 12f, 19f)) { moveTo(12f, y); lineTo(12f, y + .1f) }
     }
+    val Add = lineIcon("Add") {
+        moveTo(5f, 12f); lineTo(19f, 12f)
+        moveTo(12f, 5f); lineTo(12f, 19f)
+    }
+    val Grid = lineIcon("Grid") {
+        for (x in listOf(4f, 13.5f)) for (y in listOf(4f, 13.5f)) {
+            moveTo(x, y); lineTo(x + 6.5f, y); lineTo(x + 6.5f, y + 6.5f)
+            lineTo(x, y + 6.5f); close()
+        }
+    }
     val ChevronRight = lineIcon("ChevronRight", mirrored = true) {
         moveTo(9f, 6f); lineTo(15f, 12f); lineTo(9f, 18f)
     }
@@ -81,6 +91,22 @@ object MiradIcons {
         lineTo(7f, 21.5f); quadTo(5f, 21.5f, 5f, 19.5f)
         lineTo(5f, 4.5f); quadTo(5f, 2.5f, 7f, 2.5f)
         moveTo(10f, 18f); lineTo(14f, 18f)
+    }
+    val PageTurn = lineIcon("PageTurn", mirrored = true) {
+        moveTo(10f, 4f); lineTo(5f, 4f); quadTo(3f, 4f, 3f, 6f)
+        lineTo(3f, 18f); quadTo(3f, 20f, 5f, 20f); lineTo(16f, 20f)
+        quadTo(18f, 20f, 18f, 18f); lineTo(18f, 16f)
+        moveTo(8f, 12f); lineTo(21f, 12f); moveTo(16f, 7f); lineTo(21f, 12f); lineTo(16f, 17f)
+    }
+    val HeaderFooter = lineIcon("HeaderFooter") {
+        moveTo(5f, 3f); lineTo(19f, 3f); lineTo(19f, 21f); lineTo(5f, 21f); close()
+        moveTo(5f, 7f); lineTo(19f, 7f)
+        moveTo(5f, 17f); lineTo(19f, 17f)
+    }
+    val Epub = lineIcon("Epub") {
+        moveTo(5f, 3f); lineTo(14f, 3f); lineTo(19f, 8f); lineTo(19f, 21f); lineTo(5f, 21f); close()
+        moveTo(14f, 3f); lineTo(14f, 8f); lineTo(19f, 8f)
+        moveTo(9f, 12f); lineTo(15f, 12f); moveTo(9f, 16f); lineTo(15f, 16f)
     }
     val Speech = lineIcon("Speech") {
         moveTo(3f, 9f); lineTo(7f, 9f); lineTo(12f, 5f); lineTo(12f, 19f)

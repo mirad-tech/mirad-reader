@@ -37,7 +37,7 @@ class ShelfQueryTest {
     private val all = listOf(
         shelf(1, book(1, "风雪归人", "张三", addedAt = 100, groupId = 7L), lastReadAt = 500),
         shelf(2, book(2, "星辰之下", "李四", addedAt = 300, isPinned = true), lastReadAt = 0),
-        shelf(3, book(3, "旧书残卷", null, addedAt = 200, isHidden = true), lastReadAt = 0),
+        shelf(3, book(3, "旧书残卷", null, addedAt = 200, isHidden = true, groupId = 7L), lastReadAt = 0),
         shelf(4, book(4, "雪夜行", "张三", addedAt = 400, size = 999), lastReadAt = 100)
     )
 
@@ -56,11 +56,10 @@ class ShelfQueryTest {
     }
 
     @Test
-    fun onlyHiddenShowsJustTheHiddenOnes() {
-        val result = ShelfQuery.apply(all, ShelfSort.RECENT, onlyHidden = true)
-        assertEquals(1, result.size)
-        assertTrue(result.all { it.book.isHidden })
-        assertEquals(3L, result.first().book.id)
+    fun hiddenBooksStayExcludedWhenTitleOrGroupMatches() {
+        assertTrue(ShelfQuery.apply(all, ShelfSort.RECENT, query = "旧书").isEmpty())
+        val group = ShelfQuery.apply(all, ShelfSort.RECENT, groupId = 7L)
+        assertEquals(listOf(1L), group.map { it.book.id })
     }
 
     @Test

@@ -305,7 +305,7 @@ fun SearchSheet(
         }
         when {
             searchError != null -> BouncingSheetEmpty(searchError ?: "搜索失败")
-            !searched -> BouncingSheetEmpty("输入关键词后点右上角「搜索」，会在全书逐章查找。")
+            !searched -> BouncingSheetEmpty("结果会按章节列出，点一条直接跳到原文")
             scanning && results.isEmpty() -> BouncingSheetEmpty("正在查找…")
             results.isEmpty() -> BouncingSheetEmpty("没有找到「$query」")
             else -> BouncingLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {

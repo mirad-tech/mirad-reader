@@ -2,7 +2,7 @@
 
 报告日期：2026-10-28。分支：`codex/simplify-and-split`。基线提交：`c970ed21575a5370b20b4d082caea5f6597904d4`。版本仍为 `1.1.3 / versionCode 22`，重构改动尚未提交。
 
-本文保留合并前的精简与 QA 快照。后续合并和本地安装包交付状态见 [1.1.4 版本说明](../releases/1.1.4.md)，不改写下文当时的验收结果。
+本文保留合并前的精简与 QA 快照。后续合并和本地安装包交付状态见 [1.1.4 版本说明](../../releases/1.1.4.md)，不改写下文当时的验收结果。
 
 **结论：已完成按职责拆分和重复实现合并，达到有效代码净减少要求，但净减量有限。生产有效代码减少 97 行，全库手写有效代码减少 20 行；完整设备验收尚未完成，不能据此宣称全部功能已验证无回归。**
 
@@ -38,7 +38,7 @@
 
 拆分后的主要职责文件控制在约 600 行或以下。阅读会话和正文组合分别保留 638、630 行，以保持协调逻辑完整；没有为满足机械行数上限继续拆碎。大型玻璃测试和预览文件也已按职责拆分，原有用例与场景保留。
 
-主要入口：[阅读会话](../../app/src/main/java/com/mirad/reader/reader/ReaderSession.kt)、[阅读页面组合](../../app/src/main/java/com/mirad/reader/ui/reader/ReaderContent.kt)、[JS 拼接入口](../../app/src/main/reader/reader.js)。
+主要入口：[阅读会话](../../../app/src/main/java/com/mirad/reader/reader/ReaderSession.kt)、[阅读页面组合](../../../app/src/main/java/com/mirad/reader/ui/reader/ReaderContent.kt)、[JS 拼接入口](../../../app/src/main/reader/reader.js)。
 
 ## 3 实质精简内容
 

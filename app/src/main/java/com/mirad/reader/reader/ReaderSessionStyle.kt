@@ -158,12 +158,15 @@ internal class ReaderSessionStyle(
             else -> "SLIDE"
         }
         // 窗口滚动引擎已长期稳定，不再作为可配置项：滚动模式一律启用 3 章滑动窗口。
-        val isWindowed = ReaderSession.WINDOWED_SCROLL && !(book.format == BookFormat.EPUB && config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
+        val isWindowed = allowsWindowedScroll(config)
         return """{mode:"$mode",gap:${pad * 2},pad:$pad,colMax:$colMax,""" +
             """padTop:$insetTopDp,padBottom:$insetBottomDp,anim:"$anim",""" +
             """clipTop:$insetClipTopDp,clipBottom:$insetClipBottomDp,""" +
             """chapterCount:${chapterCount},windowedScroll:$isWindowed}"""
     }
+
+    fun allowsWindowedScroll(config: ReaderConfig): Boolean =
+        ReaderSession.WINDOWED_SCROLL && !(book.format == BookFormat.EPUB && config.epubLayoutMode == EpubLayoutMode.ORIGINAL)
 
     /**
      * 系统栏预留：正文避开状态栏与手势条，但背景层仍然满屏（沉浸式不破坏）。

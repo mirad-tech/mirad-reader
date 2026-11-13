@@ -5,8 +5,7 @@ import com.mirad.reader.data.repo.ShelfBook
 /**
  * 书架的筛选与排序（纯函数，可单元测试）。
  *
- * 从 Composable 里抽出来，顺便把"是否显示隐藏书籍"变成显式参数，
- * 避免隐藏书籍在界面上无处可去。
+ * 书架默认排除隐藏书籍，再按分组和关键词筛选。
  */
 object ShelfQuery {
 
@@ -18,20 +17,12 @@ object ShelfQuery {
         sort: ShelfSort,
         groupId: Long? = null,
         query: String = "",
-        includeHidden: Boolean = false,
-        /** 只看隐藏的书（书架上的「已隐藏 N」筛选）。 */
-        onlyHidden: Boolean = false
+        includeHidden: Boolean = false
     ): List<ShelfBook> {
         val keyword = query.trim()
         return all
             .asSequence()
-            .filter {
-                when {
-                    onlyHidden -> it.book.isHidden
-                    includeHidden -> true
-                    else -> !it.book.isHidden
-                }
-            }
+            .filter { includeHidden || !it.book.isHidden }
             .filter {
                 when (groupId) {
                     null -> true

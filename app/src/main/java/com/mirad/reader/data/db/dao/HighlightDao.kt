@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Update
 import com.mirad.reader.data.db.entity.HighlightEntity
 import kotlinx.coroutines.flow.Flow
@@ -19,6 +20,17 @@ interface HighlightDao {
 
     @Delete
     suspend fun delete(highlight: HighlightEntity)
+
+    @Query("SELECT * FROM highlights WHERE id = :id")
+    suspend fun getById(id: Long): HighlightEntity?
+
+    @Transaction
+    suspend fun deleteForUndo(id: Long): HighlightEntity? {
+        val record = getById(id) ?: return null
+        delete(record)
+        return record
+    }
+
 
     @Query("DELETE FROM highlights WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Long)

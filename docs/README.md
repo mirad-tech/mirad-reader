@@ -4,20 +4,21 @@
 
 - [开发、构建与验证](DEVELOPMENT.md)
 - [书源管理、全源搜索与离线下载](BOOK_SOURCES.md)
-- [精简重构测试计划](plans/simplify-and-split-test-plan.md)
-- [代码精简报告](reports/simplify-and-split-report.md)
 - [阅读玻璃与统一外观](reader-liquid-glass.md)
 - [文档收尾与归档规则](DEVELOPMENT.md#文档收尾)
 - [安装包归档约定](DEVELOPMENT.md#仓库与发布约定)；本机安装包目录 `artifacts/apk/` 不入 Git。
 
 ## 版本说明
 
+- [1.3.13](releases/1.3.13.md)
+- [1.3.12](releases/1.3.12.md)
+- [1.3.11](releases/1.3.11.md)
 - [1.3.10](releases/1.3.10.md)
 - [1.3.9](releases/1.3.9.md)
 - [1.3.8](releases/1.3.8.md)
 - [1.3.7](releases/1.3.7.md)
 - [1.3.6](releases/1.3.6.md)
-
+- [1.3.5](releases/1.3.5.md)
 - [1.3.4](releases/1.3.4.md)
 - [1.3.3](releases/1.3.3.md)
 - [1.3.2](releases/1.3.2.md)

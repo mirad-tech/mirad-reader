@@ -24,9 +24,7 @@ import com.mirad.reader.core.model.ReaderConfig
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.settings.ReadingSettingsPage
 import com.mirad.reader.ui.settings.canEditReaderTypography
-import com.mirad.reader.ui.settings.reading.AppModeQuickRow
 import com.mirad.reader.ui.settings.reading.FontSizeControl
-import com.mirad.reader.ui.settings.reading.QuickThemeSwatches
 import com.mirad.reader.ui.settings.reading.ReadingSettingsHost
 import com.mirad.reader.ui.settings.readingSettingsPages
 import com.mirad.reader.ui.common.CardDivider
@@ -110,11 +108,7 @@ internal fun ReaderSettingsPanel(
         Column(Modifier.fillMaxWidth().bouncingVerticalScroll(page?.let { scrollStates.getValue(it) } ?: homeScroll).padding(horizontal = Spacing.xl)) {
             val selected = page
             if (selected == null) {
-                // 快捷调节卡放最前：窄屏大字体下面板高度受限时，日夜模式与主题色块仍要一眼可达。
                 SettingCard {
-                    AppModeQuickRow()
-                    QuickThemeSwatches(config, onChange)
-                    CardDivider()
                     SegmentedRow(
                         options = listOf(PageMode.PAGED to "左右翻页", PageMode.SCROLL to "上下滚动"),
                         selected = config.pageMode,

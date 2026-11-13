@@ -1,29 +1,32 @@
 package com.mirad.reader.data.imports
 
+import com.mirad.reader.data.io.BookContentAccess
 import java.io.File
 import java.security.MessageDigest
 
 /**
  * 文件内容指纹，用于导入去重。
  *
- * 旧的去重键是「文件名去扩展名 + 字节数」，会把**同名同长度的不同书**误判成重复而静默跳过
- * （用户在书架里看不到新书，还以为是导入失败）。这里改成内容指纹，
- * 并且只采样首/中/尾各 64KB——不必为了一次去重把几百 MB 读进内存。
- *
- * 采样仅用于快速排除；相同采样必须再由 [sameContent] 逐字节确认，不能据此直接跳过导入。
- * 指纹不落库、比对时两端现场重算，算法演进无兼容负担。
+ * 只采样首/中/尾各 64KB 作快速排除；相同采样必须再由 [sameContent] 逐字节确认，不能据此直接跳过导入。
+ * 同时支持本地 [File] 与外部 `content://` 数据源。
  */
 object FileFingerprint {
 
     private const val SAMPLE = 64 * 1024
 
     /** 只有完整读取并逐字节相同时才确认重复；任一端读取失败都保守地允许导入。 */
-    fun sameContent(first: File, second: File): Boolean = runCatching {
-        if (!first.isFile || !second.isFile || first.length() != second.length()) return false
-        val firstSample = of(first) ?: return false
-        if (firstSample != of(second)) return false
-        first.inputStream().use { left ->
-            second.inputStream().use { right ->
+    fun sameContent(first: File, second: File): Boolean =
+        sameContent(BookContentAccess(), first.absolutePath, second.absolutePath)
+
+    fun sameContent(access: BookContentAccess, firstPath: String, secondPath: String): Boolean = runCatching {
+        val firstLen = access.size(firstPath)
+        val secondLen = access.size(secondPath)
+        if (firstLen < 0L || secondLen < 0L || firstLen != secondLen) return false
+        if (firstPath == secondPath) return access.isReadable(firstPath)
+        val firstSample = of(access, firstPath) ?: return false
+        if (firstSample != of(access, secondPath)) return false
+        access.openStream(firstPath).use { left ->
+            access.openStream(secondPath).use { right ->
                 val leftBytes = ByteArray(SAMPLE)
                 val rightBytes = ByteArray(SAMPLE)
                 var count = left.read(leftBytes)
@@ -45,41 +48,21 @@ object FileFingerprint {
     }.getOrDefault(false)
 
     /** 读取文件并计算指纹；文件不存在或读取失败返回 null（调用方据此保守处理，不判定为重复）。 */
-    fun of(file: File): String? = runCatching {
-        if (!file.exists()) return null
-        val length = file.length()
+    fun of(file: File): String? = of(BookContentAccess(), file.absolutePath)
+
+    fun of(access: BookContentAccess, path: String): String? = runCatching {
+        val length = access.size(path)
+        if (length < 0L) return null
         val headSize = minOf(SAMPLE.toLong(), length).toInt()
         val tailSize = minOf(SAMPLE.toLong(), (length - headSize).coerceAtLeast(0L)).toInt()
         val middleSize = minOf(SAMPLE.toLong(), (length - headSize - tailSize).coerceAtLeast(0L)).toInt()
-        val head = ByteArray(headSize)
-        val middle = ByteArray(middleSize)
-        val tail = ByteArray(tailSize)
-        file.inputStream().use { input ->
-            var read = 0
-            while (read < headSize) {
-                val n = input.read(head, read, headSize - read)
-                if (n <= 0) break
-                read += n
-            }
-            if (middleSize > 0) {
-                input.channel.position((length - middleSize) / 2)
-                read = 0
-                while (read < middleSize) {
-                    val n = input.read(middle, read, middleSize - read)
-                    if (n <= 0) break
-                    read += n
-                }
-            }
-            if (tailSize > 0) {
-                input.channel.position(length - tailSize)
-                read = 0
-                while (read < tailSize) {
-                    val n = input.read(tail, read, tailSize - read)
-                    if (n <= 0) break
-                    read += n
-                }
-            }
-        }
+        val head = if (headSize > 0) access.readRange(path, 0L, headSize) ?: return null else ByteArray(0)
+        val middle = if (middleSize > 0) {
+            access.readRange(path, (length - middleSize) / 2L, middleSize) ?: return null
+        } else ByteArray(0)
+        val tail = if (tailSize > 0) {
+            access.readRange(path, length - tailSize, tailSize) ?: return null
+        } else ByteArray(0)
         digest(length, head, tail, middle)
     }.getOrNull()
 

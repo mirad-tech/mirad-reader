@@ -9,11 +9,14 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
 import com.mirad.reader.MainActivity
+import com.mirad.reader.MiradApp
 import com.mirad.reader.R
 import java.util.Locale
 
@@ -22,6 +25,8 @@ import java.util.Locale
  */
 class TtsService : Service(), TextToSpeech.OnInitListener {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var destroyed = false
     private var engine: TextToSpeech? = null
     private var engineReady = false
 
@@ -49,6 +54,11 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onInit(status: Int) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mainHandler.post { onInit(status) }
+            return
+        }
+        if (destroyed) return
         engineReady = status == TextToSpeech.SUCCESS
         if (!engineReady) {
             // 初始化失败要结束等待：否则界面会永久停在"正在播放"
@@ -62,37 +72,20 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
             override fun onStart(utteranceId: String?) = Unit
 
             override fun onDone(utteranceId: String?) {
-                if (!playing) return
-                if (index >= texts.size - 1) {
-                    // 本章读完：服务侧同步退出播放态，否则通知栏的"继续"会把最后一句再读一遍
-                    playing = false
-                    chapterDone = true
-                    TtsBus.markChapterFinished()
-                    notifyUpdate()
-                } else {
-                    index++
-                    speakCurrent()
-                }
+                mainHandler.post { handleDone(utteranceId) }
             }
 
             @Deprecated("Deprecated in Java")
             override fun onError(utteranceId: String?) {
-                playing = false
-                TtsBus.update { it.copy(playing = false, error = "朗读出错") }
-                notifyUpdate()
+                mainHandler.post { handleFailure(utteranceId, "朗读出错") }
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                playing = false
-                TtsBus.update { it.copy(playing = false, error = "朗读出错（$errorCode）") }
-                notifyUpdate()
+                mainHandler.post { handleFailure(utteranceId, "朗读出错（$errorCode）") }
             }
 
             override fun onStop(utteranceId: String?, interrupted: Boolean) {
-                // QUEUE_FLUSH 换句（上一句/下一句/换章）同样会触发 onStop：
-                // 只有用户主动暂停/停止（playing 已为 false）才同步到 bus，
-                // 否则会把刚开始的下一句误标为已暂停。
-                if (!playing) TtsBus.update { it.copy(playing = false) }
+                mainHandler.post { handleFailure(utteranceId, null) }
             }
         })
         // 只续播"初始化期间用户确实请求过"的播放；服务因别的原因启动时不应自动开口
@@ -102,9 +95,48 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun handleDone(utteranceId: String?) {
+        if (destroyed || !playing) return
+        val token = playlistToken ?: return
+        when (val completion = TtsBus.completeUtterance(token, utteranceId) { playlist ->
+            playing = false
+            chapterDone = true
+            // 最终是否为末章由数据库在写入时核验；与自动接章设置无关。
+            (application as MiradApp).container.queueBookFinished(
+                bookId = playlist.bookId,
+                finished = true,
+                endChapterIndex = playlist.chapterIndex
+            )
+            TtsBus.markChapterFinished()
+        }) {
+            is TtsBus.Completion.NextSentence -> {
+                index = completion.index
+                speakCurrent()
+            }
+            TtsBus.Completion.ChapterFinished -> notifyUpdate()
+            null -> Unit
+        }
+    }
+
+    private fun handleFailure(utteranceId: String?, message: String?) {
+        if (destroyed) return
+        val token = playlistToken ?: return
+        var accepted = false
+        TtsBus.consumeUtterance(token, utteranceId) { _, spokenIndex ->
+            if (!playing || index != spokenIndex) return@consumeUtterance
+            playing = false
+            pendingPlay = false
+            TtsBus.blockPlayback(token)
+            TtsBus.update { it.copy(playing = false, error = message ?: it.error) }
+            accepted = true
+        }
+        if (accepted) notifyUpdate()
+    }
+
     /** 引擎就绪就立刻朗读；未就绪则记下这一请求，等 onInit 回调再续播。 */
     private fun playOrDefer() {
         if (texts.isEmpty()) return
+        if (TtsBus.isPlaybackBlocked(playlistToken)) return
         if (engineReady) {
             playing = true
             speakCurrent()
@@ -138,14 +170,14 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                     is TtsBus.PlayRequest.Ready -> playOrDefer()
                 }
             }
-            TtsBus.ACTION_PAUSE -> {
+            TtsBus.ACTION_PAUSE -> if (acceptControl(intent) != null) {
                 pendingPlay = false
                 playing = false
                 engine?.stop()
                 TtsBus.update { it.copy(playing = false) }
                 notifyUpdate()
             }
-            TtsBus.ACTION_RESUME -> {
+            TtsBus.ACTION_RESUME -> if (acceptControl(intent, resume = true) != null) {
                 if (texts.isNotEmpty()) {
                     if (chapterDone) {
                         index = 0
@@ -154,25 +186,41 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                     playOrDefer()
                 }
             }
-            TtsBus.ACTION_NEXT -> {
+            TtsBus.ACTION_NEXT -> acceptControl(intent, resume = true)?.let { wasBlocked ->
                 if (index < texts.size - 1) {
                     index++
                     chapterDone = false
                     playOrDefer()
+                } else if (wasBlocked && playing) {
+                    speakCurrent()
                 }
             }
-            TtsBus.ACTION_PREV -> {
+            TtsBus.ACTION_PREV -> acceptControl(intent, resume = true)?.let { wasBlocked ->
                 if (index > 0) {
                     index--
                     chapterDone = false
                     playOrDefer()
+                } else if (wasBlocked && playing) {
+                    speakCurrent()
                 }
             }
-            TtsBus.ACTION_STOP -> {
+            TtsBus.ACTION_STOP -> if (acceptControl(intent) != null) {
                 stopEverything(startId)
             }
         }
         return START_NOT_STICKY
+    }
+
+    private fun acceptControl(intent: Intent?, resume: Boolean = false): Boolean? {
+        val token = intent?.getStringExtra(TtsBus.EXTRA_TOKEN) ?: return null
+        if (token != playlistToken) return null
+        val revision = if (intent.hasExtra(TtsBus.EXTRA_CONTROL_REVISION)) {
+            intent.getLongExtra(TtsBus.EXTRA_CONTROL_REVISION, -1L)
+        } else {
+            // 通知栏事件到达主线程后才生成代次，与页面异步指令遵循同一顺序。
+            TtsBus.prepareControl(token, intent.action ?: return null) ?: return null
+        }
+        return TtsBus.acceptControl(token, revision, resume)
     }
 
     /**
@@ -183,6 +231,7 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
      */
     private fun readPlaylist(intent: Intent, playlist: TtsBus.Playlist) {
         playlistToken = playlist.token
+        pendingPlay = false
         texts = playlist.texts
         starts = playlist.starts
         ends = playlist.ends
@@ -200,7 +249,7 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
         TtsBus.update {
             TtsBus.TtsState(
                 active = true,
-                playing = true,
+                playing = !TtsBus.isPlaybackBlocked(playlist.token),
                 bookId = playlist.bookId,
                 chapterIndex = playlist.chapterIndex,
                 index = index,
@@ -214,6 +263,8 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     private fun speakCurrent() {
         if (!engineReady || texts.isEmpty()) return
         val text = texts.getOrNull(index) ?: return
+        val token = playlistToken ?: return
+        val utteranceId = TtsBus.beginUtterance(token, index) ?: return
         TtsBus.update {
             it.copy(
                 active = true,
@@ -226,10 +277,9 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
                 error = null
             )
         }
-        val speakResult = engine?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), UTTERANCE_ID)
+        val speakResult = engine?.speak(text, TextToSpeech.QUEUE_FLUSH, Bundle(), utteranceId)
         if (speakResult != TextToSpeech.SUCCESS) {
-            playing = false
-            TtsBus.update { it.copy(playing = false, error = "语音引擎拒绝播放") }
+            handleFailure(utteranceId, "语音引擎拒绝播放")
         }
         notifyUpdate()
     }
@@ -244,8 +294,10 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        destroyed = true
         pendingPlay = false
         playing = false
+        TtsBus.blockPlayback(playlistToken)
         engine?.stop()
         engine?.shutdown()
         engine = null
@@ -300,7 +352,9 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun action(actionName: String, requestCode: Int): PendingIntent {
-        val intent = Intent(this, TtsService::class.java).setAction(actionName)
+        val intent = Intent(this, TtsService::class.java)
+            .setAction(actionName)
+            .putExtra(TtsBus.EXTRA_TOKEN, playlistToken)
         return PendingIntent.getService(
             this,
             requestCode,
@@ -319,8 +373,6 @@ class TtsService : Service(), TextToSpeech.OnInitListener {
     companion object {
         private const val CHANNEL_ID = "mirad_tts"
         private const val NOTIFICATION_ID = 0x7A11
-        private const val UTTERANCE_ID = "mirad-tts"
-
         fun intent(context: Context, action: String): Intent =
             Intent(context, TtsService::class.java).setAction(action)
     }

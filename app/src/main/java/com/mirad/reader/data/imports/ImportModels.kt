@@ -7,7 +7,13 @@ import java.io.File
 sealed interface ImportSource {
     val displayName: String
 
-    data class FromUri(val uri: Uri, override val displayName: String) : ImportSource
+    data class FromUri(
+        val uri: Uri?,
+        override val displayName: String,
+        val uriString: String = uri?.toString().orEmpty()
+    ) : ImportSource {
+        constructor(uri: Uri, displayName: String) : this(uri, displayName, uri.toString())
+    }
 
     data class FromFile(
         val file: File,

@@ -47,7 +47,7 @@
 | [GlassSurface.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassSurface.kt)，`glassBackground`，约 203–205、307–341 行 | 有硬件源且 API 31+ 时转入 `hardwareGlassBackground`；另一条 Compose 路径使用 BlurEffect 加公共边缘描边，没有同等的 RuntimeShader 折射 |
 | [LiquidGlassMaterial.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassMaterial.kt)，`LiquidBackdropRenderer.draw`、`LiquidEdgeRefraction.effect`，约 147–183、208–266 行 | 已有边缘折射。API 33+、边缘开启且轮廓非 `Outline.Generic` 才启用；shader 按圆角距离场法线移动采样，位移权重为 `weight²`。当前效果链是 `edge(blur(content))`；零模糊时仍能单独折射 |
 | [LiquidGlassPolicy.kt](../../../app/src/main/java/com/mirad/reader/ui/common/LiquidGlassPolicy.kt)，约 87–109 行 | 当前最大位移 **2.1dp**，边缘影响带为 `min(6dp, 短边 × 12%)`；默认 60 档 Toolbar 模糊 8.5dp、Panel 11.9dp。位移和影响带不是用户锁死的验收数值 |
-| [GlassEdgeProfile.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeProfile.kt)，约 6–48 行；[GlassEdgeTexture.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassEdgeTexture.kt)，约 26–68、140–175 行 | 当前只有 **1 层**散射带，带宽随清晰度从 3.2dp 到 1.8dp；高光描边宽 1dp 到 0.65dp。高光是按高度渐变的 Brush，没有随圆角法线变化的光照；描边居中且向轮廓内裁切，细线可见宽度约为设定宽度一半 |
+| `app/src/main/java/com/mirad/reader/ui/common/GlassEdgeProfile.kt`（1.3.5 已移除），约 6–48 行；`app/src/main/java/com/mirad/reader/ui/common/GlassEdgeTexture.kt`（1.3.5 已移除），约 26–68、140–175 行 | 当前只有 **1 层**散射带，带宽随清晰度从 3.2dp 到 1.8dp；高光描边宽 1dp 到 0.65dp。高光是按高度渐变的 Brush，没有随圆角法线变化的光照；描边居中且向轮廓内裁切，细线可见宽度约为设定宽度一半 |
 | [GlassAppearance.kt](../../../app/src/main/java/com/mirad/reader/ui/common/GlassAppearance.kt)，约 10–35 行 | 默认清晰度 60；开关与清晰度分离。`transparencyPercent` 是旧键兼容投影，不应拿它重新定义 UI 清晰度 |
 | [HardwareGlassBackdrop.kt](../../../app/src/main/java/com/mirad/reader/ui/common/HardwareGlassBackdrop.kt)，`recordMaterial`、诊断摘要，约 281–315 行 | 可记录 `refractionActive`、`baseOpacity`、`blurDp`、材质就绪等状态。状态可证明分支，但不能证明边缘肉眼可见 |
 | [SettingsImmersionPreviewActivity.kt](../../../app/src/preview/java/com/mirad/reader/preview/SettingsImmersionPreviewActivity.kt)，约 73、136、191、239 行 | 有 `hardware=true` 生产组件预览，以及 `edge` 开关；可做同包、同场景的边缘开／关对照，无须新增产品设置 |
@@ -98,7 +98,7 @@
 
 ### 第四步：同步必要测试和文档
 
-- 按实际变更更新 [GlassEdgeProfileTest.kt](../../../app/src/test/java/com/mirad/reader/ui/common/GlassEdgeProfileTest.kt) 与 [LiquidGlassPolicyTest.kt](../../../app/src/test/java/com/mirad/reader/ui/common/LiquidGlassPolicyTest.kt)。旧测试中的“永远极薄”精确数值可以随新视觉目标调整，但不能删除小控件限幅、合法透明度、零模糊采样留白等必要约束。
+- 按实际变更更新 `app/src/test/java/com/mirad/reader/ui/common/GlassEdgeProfileTest.kt`（1.3.5 已移除）与 [LiquidGlassPolicyTest.kt](../../../app/src/test/java/com/mirad/reader/ui/common/LiquidGlassPolicyTest.kt)。旧测试中的“永远极薄”精确数值可以随新视觉目标调整，但不能删除小控件限幅、合法透明度、零模糊采样留白等必要约束。
 - 测试应验证新增曲线的边界内连续性、有限值、小控件限制和采样范围等真实风险；不要堆砌只重复常量的测试。Android shader 的编译和最终像素效果必须在隔离实例确认，JVM 通过不能代替。
 - 更新 `docs/reader-liquid-glass.md` 中此次相关的现状说明，区分当前值和历史记录；不顺手归档无关文件或改版本号。
 

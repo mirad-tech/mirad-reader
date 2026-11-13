@@ -105,6 +105,157 @@ class SourceSearchCoordinatorTest {
         assertEquals("新", coordinator.state.value.query)
         coordinator.cancelSearch()
         assertFalse(coordinator.state.value.running)
+        assertFalse(coordinator.state.value.cancelled)
+    }
+
+    @Test
+    fun cancellationKeepsPartialResultsAndNewSearchClearsCancelledStatus() = runTest {
+        val sources = listOf(source("fast"), source("slow"))
+        val engine = object : Engine() {
+            override suspend fun search(source: BookSource, query: String, page: Int): List<RemoteBook> {
+                if (query == "首次" && source.id == "slow") delay(1000)
+                return listOf(book(source, query))
+            }
+        }
+        val coordinator = SourceSearchCoordinator(Repository(sources), engine, this)
+        coordinator.search("首次")
+        runCurrent()
+        coordinator.cancelSearch()
+        advanceUntilIdle()
+        assertTrue(coordinator.state.value.cancelled)
+        assertEquals(1, coordinator.state.value.completedSources)
+        assertEquals("首次", coordinator.state.value.matches.single().title)
+
+        coordinator.search("第二次")
+        advanceUntilIdle()
+        assertFalse(coordinator.state.value.cancelled)
+        assertEquals(2, coordinator.state.value.completedSources)
+        assertEquals("第二次", coordinator.state.value.matches.single().title)
+    }
+
+    @Test
+    fun retryOnlyRequestsAvailableFailedSourcesAndMergesTheirResults() = runTest {
+        val sources = listOf("good", "fixed", "bad", "disabled", "unsupported", "removed").map(::source)
+        val repository = Repository(sources)
+        val calls = mutableListOf<Pair<String, String>>()
+        var retrying = false
+        val engine = object : Engine() {
+            override suspend fun search(source: BookSource, query: String, page: Int): List<RemoteBook> {
+                calls += source.id to query
+                if (!retrying && source.id != "good") throw IOException("首次失败")
+                if (source.id == "bad") {
+                    delay(200)
+                    throw IOException("重试失败")
+                }
+                val result = book(source, query)
+                return listOf(result, result)
+            }
+        }
+        val coordinator = SourceSearchCoordinator(repository, engine, this)
+        coordinator.search(" 原关键词 ")
+        advanceUntilIdle()
+        val original = coordinator.state.value
+        repository.sources.value = sources.filterNot { it.id == "removed" }.map {
+            when (it.id) {
+                "disabled" -> it.copy(enabled = false)
+                "unsupported" -> it.copy(unsupportedReason = "不支持")
+                else -> it
+            }
+        } + source("added")
+        calls.clear()
+        retrying = true
+
+        coordinator.retryFailures()
+        runCurrent()
+        val partial = coordinator.state.value
+        assertTrue(partial.running)
+        assertEquals(2, partial.retry?.totalSources)
+        assertEquals(1, partial.retry?.completedSources)
+        assertEquals(original.totalSources, partial.totalSources)
+        assertEquals(original.completedSources, partial.completedSources)
+        assertEquals(listOf("fixed", "good"), partial.matches.single().books.map { it.sourceId })
+        assertEquals(setOf("bad", "disabled", "unsupported", "removed"), partial.failures.map { it.sourceId }.toSet())
+        assertEquals("首次失败", partial.failures.single { it.sourceId == "bad" }.message)
+        coordinator.retryFailures()
+        advanceUntilIdle()
+
+        val done = coordinator.state.value
+        assertFalse(done.running)
+        assertEquals(2, done.retry?.completedSources)
+        assertEquals("重试失败", done.failures.single { it.sourceId == "bad" }.message)
+        assertEquals(setOf("fixed" to "原关键词", "bad" to "原关键词"), calls.toSet())
+        assertEquals(2, calls.size)
+
+        repository.sources.value = repository.sources.value.filterNot { it.id == "bad" }
+        coordinator.retryFailures()
+        advanceUntilIdle()
+        assertEquals(2, calls.size)
+        assertEquals(done, coordinator.state.value)
+    }
+
+    @Test
+    fun cancellingRetryKeepsReturnedResultsAndRejectsLateResponses() = runTest {
+        var retrying = false
+        var lateResponseReturned = false
+        val engine = object : Engine() {
+            override suspend fun search(source: BookSource, query: String, page: Int): List<RemoteBook> {
+                if (!retrying && source.id != "good") throw IOException("首次失败")
+                if (source.id == "slow") {
+                    withContext(NonCancellable) { delay(1000) }
+                    lateResponseReturned = true
+                }
+                return listOf(book(source, query))
+            }
+        }
+        val coordinator = SourceSearchCoordinator(Repository(listOf(source("good"), source("fixed"), source("slow"))), engine, this)
+        coordinator.search("同一关键词")
+        advanceUntilIdle()
+        retrying = true
+        coordinator.retryFailures()
+        runCurrent()
+        coordinator.cancelSearch()
+
+        val cancelled = coordinator.state.value
+        assertFalse(cancelled.running)
+        assertFalse(cancelled.cancelled)
+        assertEquals(true, cancelled.retry?.cancelled)
+        assertEquals(1, cancelled.retry?.completedSources)
+        assertEquals(listOf("fixed", "good"), cancelled.matches.single().books.map { it.sourceId })
+        assertEquals("slow", cancelled.failures.single().sourceId)
+        advanceUntilIdle()
+        assertTrue(lateResponseReturned)
+        assertEquals(cancelled, coordinator.state.value)
+    }
+
+    @Test
+    fun newSearchSupersedesAnInFlightRetry() = runTest {
+        var retrying = false
+        val engine = object : Engine() {
+            override suspend fun search(source: BookSource, query: String, page: Int): List<RemoteBook> {
+                if (query == "旧") {
+                    if (!retrying) throw IOException("首次失败")
+                    withContext(NonCancellable) { delay(1000) }
+                }
+                return listOf(book(source, query))
+            }
+        }
+        val coordinator = SourceSearchCoordinator(Repository(listOf(source("a"))), engine, this)
+        coordinator.search("旧")
+        advanceUntilIdle()
+        retrying = true
+        coordinator.retryFailures()
+        runCurrent()
+        assertTrue(coordinator.state.value.running)
+        coordinator.search("新")
+        advanceUntilIdle()
+
+        val state = coordinator.state.value
+        assertEquals("新", state.query)
+        assertEquals("新", state.matches.single().title)
+        assertEquals(1, state.completedSources)
+        assertTrue(state.failures.isEmpty())
+        assertEquals(null, state.retry)
+        assertFalse(state.running)
     }
 
     @Test

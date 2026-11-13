@@ -383,20 +383,22 @@ fun <T> SegmentedRow(
     options: List<Pair<T, String>>,
     selected: T,
     onSelect: (T) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
+    selectedColor: Color = MaterialTheme.colorScheme.surface
 ) {
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(MiradButtonShape)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(trackColor)
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         options.forEach { (value, text) ->
             val isSelected = value == selected
             val segmentColor by animateColorAsState(
-                if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                if (isSelected) selectedColor else Color.Transparent,
                 tween(120),
                 label = "segment"
             )

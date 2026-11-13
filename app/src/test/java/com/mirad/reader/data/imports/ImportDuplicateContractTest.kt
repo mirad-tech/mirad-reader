@@ -12,10 +12,14 @@ import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
 import com.mirad.reader.data.repo.BookRepository
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -34,7 +38,7 @@ class ImportDuplicateContractTest {
         override fun getFilesDir(): File = directory
     }
 
-    private class Books(initial: List<BookEntity>) : BookDao {
+    private class Books(initial: List<BookEntity>, private val beforeFinishedWrite: suspend () -> Unit = {}) : BookDao {
         val records = initial.associateByTo(linkedMapOf()) { it.id }
         private var nextId = (records.keys.maxOrNull() ?: 0L) + 1L
         private val flow = MutableStateFlow(records.values.toList())
@@ -55,7 +59,13 @@ class ImportDuplicateContractTest {
         override suspend fun setGroup(id: Long, groupId: Long?) { records[id]?.let { update(it.copy(groupId = groupId)) } }
         override suspend fun touchLastRead(id: Long, time: Long) { records[id]?.let { update(it.copy(lastReadAt = time)) } }
         override suspend fun updateMeta(id: Long, title: String, author: String?) { records[id]?.let { update(it.copy(title = title, author = author)) } }
-        override suspend fun setFinished(id: Long, finished: Boolean) { records[id]?.let { update(it.copy(finished = finished)) } }
+        override suspend fun setFinished(id: Long, finished: Boolean, endChapterIndex: Int?): Int {
+            val book = records[id] ?: return 0
+            if (endChapterIndex != null && (endChapterIndex < 0 || book.totalChapters != endChapterIndex + 1)) return 0
+            beforeFinishedWrite()
+            update(book.copy(finished = finished))
+            return 1
+        }
         override suspend fun updateCounts(id: Long, chapters: Int, chars: Long) { records[id]?.let { update(it.copy(totalChapters = chapters, totalChars = chars)) } }
         override suspend fun updateIndexInfo(id: Long, chapters: Int, chars: Long, ruleId: String?, regex: String?, encoding: String?) {
             records[id]?.let { update(it.copy(totalChapters = chapters, totalChars = chars, chapterRuleId = ruleId, chapterRegex = regex, encoding = encoding)) }
@@ -92,6 +102,34 @@ class ImportDuplicateContractTest {
         val context = TestContext(temp.newFolder())
         val paths = AppPaths(context)
         return ImportPipeline(context, paths, BookRepository(books, Chapters(), Progress(), paths), scope)
+    }
+
+    @Test fun manualClearWinsOverAnAcceptedFinishWriteWithoutMovingTheReadPosition() = runBlocking {
+        val firstWriteStarted = CompletableDeferred<Unit>()
+        val releaseWrite = CompletableDeferred<Unit>()
+        val book = metadata(1, file("existing/finished.txt", byteArrayOf())).copy(totalChapters = 3)
+        val dao = Books(listOf(book)) {
+            firstWriteStarted.complete(Unit)
+            releaseWrite.await()
+        }
+        val progress = ProgressEntity(bookId = book.id, chapterIndex = 2, charOffset = 25, percent = .93f)
+        val repository = BookRepository(dao, Chapters(), Progress(), AppPaths(TestContext(temp.newFolder())))
+        repository.saveProgress(progress)
+        assertFalse(repository.setFinished(book.id, true, endChapterIndex = 1))
+        val finish = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.setFinished(book.id, true, endChapterIndex = 2)
+        }
+        firstWriteStarted.await()
+        val clear = async(start = CoroutineStart.UNDISPATCHED) {
+            repository.setFinished(book.id, false, endChapterIndex = null)
+        }
+        val clearWaited = !clear.isCompleted
+        releaseWrite.complete(Unit)
+        assertTrue(clearWaited)
+        assertTrue(finish.await())
+        assertTrue(clear.await())
+        assertEquals(false, repository.getBook(book.id)?.finished)
+        assertEquals(progress, repository.getProgress(book.id))
     }
 
     @Test fun differentUnsampledBytesAreImportedRatherThanSkipped() = runBlocking {

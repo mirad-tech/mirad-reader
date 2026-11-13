@@ -148,14 +148,12 @@ private class ShelfInteractionFixture(intent: Intent) {
         add(BookEntity(1, "测试书甲", format = BookFormat.TXT, filePath = "memory-a.txt", groupId = 7, isPinned = true))
         add(BookEntity(2, "测试书乙", format = BookFormat.EPUB, filePath = "memory-b.epub", groupId = 7))
         if (intent.getBooleanExtra("hidden", false)) {
-            add(BookEntity(3, "隐藏测试书", format = BookFormat.TXT, filePath = "memory-hidden.txt", isHidden = true))
+            add(BookEntity(3, "隐藏测试书", format = BookFormat.TXT, filePath = "memory-hidden.txt", groupId = 7, isHidden = true))
         }
     })
     var selectedGroup by mutableStateOf<Long?>(if (intent.getBooleanExtra("selectGroup", false)) 7 else null)
     var selection by mutableStateOf(emptySet<Long>())
     var actionBook by mutableStateOf<BookEntity?>(null)
-    var groupAction by mutableStateOf<GroupEntity?>(null)
-    var groupDelete by mutableStateOf<GroupEntity?>(null)
     var showGroups by mutableStateOf(false)
     var confirmDelete by mutableStateOf(false)
     var singleDelete = false
@@ -165,7 +163,9 @@ private class ShelfInteractionFixture(intent: Intent) {
     var disabledClicks = 0
     var semanticClickAccepted = false
 
-    fun shelf() = books.map { ShelfBook(it, null, 0f, 0L) }
+    fun shelf() = books.map {
+        ShelfBook(it, null, when (it.id) { 1L -> 0.68f; 2L -> 1f; else -> 0f }, 0L)
+    }
     fun visible() = ShelfQuery.apply(shelf(), ShelfSort.RECENT, selectedGroup)
     fun setPinned(id: Long, pinned: Boolean) { books = books.map { if (it.id == id) it.copy(isPinned = pinned) else it } }
     fun deleteGroup(id: Long) {
@@ -183,15 +183,15 @@ private class ShelfInteractionFixture(intent: Intent) {
 private fun ShelfFixture(state: ShelfInteractionFixture) {
     val scope = rememberCoroutineScope()
     ShelfContent(
-        ShelfContentState(shelf = state.shelf(), visible = state.visible(), groups = state.groups,
-            layout = state.layout, selectedGroup = state.selectedGroup, selection = state.selection),
+        ShelfContentState(shelf = state.shelf(), visible = state.visible(),
+            layout = state.layout, selectedGroup = state.selectedGroup, selection = state.selection,
+            selectedGroupName = state.groups.firstOrNull { it.id == state.selectedGroup }?.name),
         ShelfContentActions(
             onOpenBook = { state.openedBook = it },
             onLayoutChange = { state.layout = it },
-            onSelectGroup = { id, _ -> state.selectedGroup = id },
+            onClearGroupFilter = { state.selectedGroup = null },
             onSelectionChange = { state.selection = it },
             onBookAction = { state.actionBook = it },
-            onGroupAction = { state.groupAction = it },
             onManageGroups = { state.showGroups = true },
             onSelectAll = { state.selection = state.visible().map { it.book.id }.toSet() },
             onPinSelected = { scope.launch {
@@ -203,12 +203,16 @@ private fun ShelfFixture(state: ShelfInteractionFixture) {
             onDeleteSelected = { state.singleDelete = false; state.confirmDelete = true }
         )
     )
-    state.actionBook?.let { book ->
+    state.actionBook?.let { selectedBook ->
+        val book = state.books.firstOrNull { it.id == selectedBook.id } ?: selectedBook
         ActionSheet(book.title, onDismiss = { state.actionBook = null },
             items = ShelfGroupActions.bookActionItems(book,
                 onOpen = { state.openedBook = book.id },
-                onUnhide = {}, onEdit = {},
+                onEdit = {},
                 onTogglePinned = { state.setPinned(book.id, !book.isPinned) },
+                onSetFinished = { finished ->
+                    state.books = state.books.map { if (it.id == book.id) it.copy(finished = finished) else it }
+                },
                 onMoveToGroup = {}, onHide = {}, onChapters = {}, onEncoding = {},
                 onDelete = { state.selection = setOf(book.id); state.singleDelete = true; state.confirmDelete = true },
                 onMultiSelect = { state.selection = setOf(book.id) }))
@@ -218,22 +222,11 @@ private fun ShelfFixture(state: ShelfInteractionFixture) {
         onRename = { _, _ -> },
         onDelete = { group -> scope.launch {
             state.selectedGroup = ShelfGroupActions.commitDeleteGroup(group.id, { state.selectedGroup }) { state.deleteGroup(it) }
-        } }, onDismiss = { state.showGroups = false })
-    state.groupAction?.let { group ->
-        ActionSheet(group.name, onDismiss = { state.groupAction = null },
-            items = ShelfGroupActions.groupActionItems(group,
-                onSelect = { state.selectedGroup = group.id }, onRename = {}, onDelete = { state.groupDelete = group }))
-    }
-    state.groupDelete?.let { group ->
-        MiradDialog(onDismissRequest = { state.groupDelete = null },
-            title = { Text("删除分组「${group.name}」") },
-            text = { Text("组内书籍会回到「未分组」，书籍本身不会被删除。") },
-            confirmButton = { MiradTextButton(danger = true, onClick = { scope.launch {
-                state.selectedGroup = ShelfGroupActions.commitDeleteGroup(group.id, { state.selectedGroup }) { state.deleteGroup(it) }
-                state.groupDelete = null
-            } }) { Text("删除") } },
-            dismissButton = { MiradTextButton(onClick = { state.groupDelete = null }) { Text("取消") } })
-    }
+        } }, onDismiss = { state.showGroups = false },
+        visibleBookCounts = state.groups.associate { group ->
+            group.id to state.books.count { !it.isHidden && it.groupId == group.id }
+        },
+        onOpenGroup = { state.selectedGroup = it.id; state.showGroups = false })
     if (state.confirmDelete) MiradDialog(onDismissRequest = state::dismissDelete,
         title = { Text(if (state.selection.size == 1) "删除这本书" else "删除 ${state.selection.size} 本书籍") },
         text = { Text("将删除所选书籍及其阅读记录、书签与笔记，无法恢复。") },

@@ -29,17 +29,15 @@ import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
 
 /**
- * 分组管理：集中重命名与删除分组。
- *
- * 之前只能靠"长按书架上的分组胶囊"，功能存在但没人猜得到；这里给出可见入口，
- * 从书架的「⋯ → 分组管理」进入。
+ * 分组管理：集中重命名与删除分组。从书架进入时也可打开分组。
  */
 @Composable
 fun GroupManagerSheet(
     container: AppContainer,
     onDismiss: () -> Unit,
     currentSelectedGroupId: () -> Long? = { null },
-    onSelectedGroupChange: (Long?) -> Unit = {}
+    onSelectedGroupChange: (Long?) -> Unit = {},
+    onOpenGroup: ((GroupEntity) -> Unit)? = null
 ) {
     val scope = rememberCoroutineScope()
     val selectedGroupNow by rememberUpdatedState(currentSelectedGroupId)
@@ -49,6 +47,10 @@ fun GroupManagerSheet(
     GroupManagerContent(
         groups = groups,
         bookCounts = groups.associate { group -> group.id to shelf.count { it.book.groupId == group.id } },
+        visibleBookCounts = groups.associate { group ->
+            group.id to shelf.count { !it.book.isHidden && it.book.groupId == group.id }
+        },
+        onOpenGroup = onOpenGroup,
         onRename = { group, name -> scope.launch { container.groups.rename(group, name) } },
         onDelete = { group -> scope.launch {
             val nextSelection = ShelfGroupActions.commitDeleteGroup(group.id, { selectedGroupNow() }) {
@@ -67,7 +69,9 @@ internal fun GroupManagerContent(
     bookCounts: Map<Long, Int>,
     onRename: (GroupEntity, String) -> Unit,
     onDelete: (GroupEntity) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    visibleBookCounts: Map<Long, Int> = bookCounts,
+    onOpenGroup: ((GroupEntity) -> Unit)? = null
 ) {
     var renameTarget by remember { mutableStateOf<GroupEntity?>(null) }
     var renameDraft by remember { mutableStateOf("") }
@@ -98,10 +102,11 @@ internal fun GroupManagerContent(
             )
             }
                 items(groups, key = { it.id }) { group ->
-                    val count = bookCounts[group.id] ?: 0
+                    val count = visibleBookCounts[group.id] ?: 0
                     ListRow(
                         title = group.name,
                         meta = "$count 本",
+                        onClick = onOpenGroup?.let { open -> { open(group) } },
                         trailing = {
                             Column {
                                 MiradTextButton(onClick = {
