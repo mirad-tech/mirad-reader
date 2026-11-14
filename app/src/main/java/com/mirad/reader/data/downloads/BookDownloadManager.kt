@@ -215,7 +215,7 @@ class BookDownloadManager(
             DownloadedEpubWriter.write(epub, id, task.catalog, { store.readChapter(id, it) }, { context.ensureActive() })
             val result = importer.importAndWait(listOf(ImportSource.FromFile(epub, task.catalog.book.bookUrl, id)))
             val bookId = result.bookIds.singleOrNull()
-            check(result.failed == 0 && result.success + result.skipped == 1 && bookId != null) {
+            check(result.failed == 0 && result.success + result.updated + result.skipped == 1 && bookId != null) {
                 result.messages.firstOrNull() ?: "下载完成，但加入书架失败"
             }
             update(id) { it.copy(status = COMPLETED, bookId = bookId, message = null) }?.let { onProgress(it) }

@@ -54,7 +54,10 @@ internal class ImportBatchQueue {
     }
 
     @Synchronized
-    fun complete(batch: Batch): ImportSummary {
+    fun complete(
+        batch: Batch,
+        shouldPublishSummary: (ImportSummary) -> Boolean = { true }
+    ): ImportSummary {
         val items = _state.value.items.filter { it.id in batch.itemIds }
         check(items.size == batch.itemIds.size && items.all { it.stage in TERMINAL }) {
             "Cannot complete a batch with unfinished items"
@@ -62,9 +65,12 @@ internal class ImportBatchQueue {
         val result = Result(batch.id, items)
         val remaining = _state.value.items.filterNot { it.id in batch.itemIds }
         _state.value = ImportState(remaining, running = remaining.isNotEmpty())
-        pendingResults.addLast(result)
-        _summary.value = pendingResults.firstOrNull()?.let(::summarize)
-        return summarize(result)
+        val summary = summarize(result)
+        if (shouldPublishSummary(summary) || summary.pending.isNotEmpty()) {
+            pendingResults.addLast(result)
+            _summary.value = pendingResults.firstOrNull()?.let(::summarize)
+        }
+        return summary
     }
 
     @Synchronized

@@ -66,7 +66,8 @@ fun ReaderScreen(
             try {
                 BookContentAccess.tryTakePersistableReadPermission(context, uri)
                 val uriText = uri.toString()
-                container.maintenance.relinkSource(bookId, uriText, uriText)
+                val displayName = com.mirad.reader.data.imports.ImportSources.nameOf(context, uri)
+                container.maintenance.relinkSource(bookId, uriText, uriText, displayName)
                 error = null
                 missingSource = false
                 reloadKey++

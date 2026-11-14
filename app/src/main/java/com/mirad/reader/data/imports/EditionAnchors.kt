@@ -17,7 +17,8 @@ internal class EditionAnchors(
     private val newBook: BookEntity,
     private val newChapters: List<ChapterEntity>,
     private val relation: EditionRelation,
-    private val textProvider: ChapterTextProvider = ChapterTextProvider()
+    private val textProvider: ChapterTextProvider = ChapterTextProvider(),
+    private val exactTxtCharPrefix: Boolean = (oldBook.format == BookFormat.TXT && relation == EditionRelation.EXTENDS)
 ) {
     data class Point(val chapter: Int, val offset: Int)
     data class Range(val chapter: Int, val start: Int, val end: Int, val text: String)
@@ -41,13 +42,32 @@ internal class EditionAnchors(
     private val oldStartChars: LongArray = prefixCharStarts(oldChapters)
     private val newStartChars: LongArray = prefixCharStarts(newChapters)
 
+    // 仅在全书逐字符前缀严格一致（exactTxtCharPrefix == true，非忽略空白/跳过首章前简介的兜底匹配）时启用全局字符坐标映射
+    private val strictTxtCharPrefix: Boolean by lazy {
+        if (!txtExtension || !exactTxtCharPrefix || oldChapters.isEmpty() || newChapters.isEmpty()) return@lazy false
+        val oldFirst = text(false, 0)?.body ?: return@lazy false
+        val newFirst = text(true, 0)?.body ?: return@lazy false
+        newFirst.startsWith(oldFirst) || oldFirst.startsWith(newFirst)
+    }
+
+    // 核验修订版 EPUB 是否有同序号可读章节完全一致（证明两书为同一 spine 序列，允许无目录合成标题按同序号回退章首）
+    private val epubSpineAligned: Boolean by lazy {
+        if (oldBook.format != BookFormat.EPUB) return@lazy false
+        val shared = minOf(oldChapters.size, newChapters.size)
+        (0 until shared).any { idx ->
+            val a = text(false, idx)?.value
+            val b = text(true, idx)?.value
+            !a.isNullOrBlank() && a == b
+        }
+    }
+
     fun point(chapter: Int, offset: Int): Point? {
         val old = text(false, chapter)
         if (old == null) {
             return fallbackPointWhenOldUnreadable(chapter, offset)
         }
         if (offset !in 0..old.value.length) return null
-        if (txtExtension) txtPoint(chapter, offset, old)?.let { return it }
+        if (strictTxtCharPrefix) txtPoint(chapter, offset, old)?.let { return it }
 
         val targets = targets(chapter)
         val matches = targets.exact.mapNotNull { index ->
@@ -58,7 +78,7 @@ internal class EditionAnchors(
     }
 
     fun chapterStart(chapter: Int): Point? {
-        if (txtExtension) {
+        if (strictTxtCharPrefix) {
             val startChar = oldStartChars.getOrNull(chapter) ?: return null
             return newTxtChapterByChar(startChar)?.let { Point(it.index, 0) }
         }
@@ -145,15 +165,18 @@ internal class EditionAnchors(
         val byTitle = titles[editionKey(old.title)].orEmpty().filter { it.isVolume == old.isVolume }.map { it.index }
         val sameIndex = chapter.takeIf { it in newChapters.indices &&
             oldTextValue?.let { oldText -> oldText.isNotBlank() && oldText == text(true, it)?.value } == true }
-        val indices = (byTitle + listOfNotNull(sameIndex)).distinct()
+        val extraIndex = if (oldBook.format == BookFormat.EPUB && chapter in newChapters.indices) listOf(chapter) else emptyList()
+        val indices = (byTitle + listOfNotNull(sameIndex) + extraIndex).distinct()
         val section = "第 " + (chapter + 1) + " 节"
         val syntheticTitle = old.title == section || old.title == "$section · 自动"
         var fallback = indices.singleOrNull()?.takeIf { it == sameIndex || !syntheticTitle }
-        if (fallback == null && oldTextValue == null) {
-            fallback = if (oldBook.format == BookFormat.EPUB) {
-                chapter.takeIf { it in newChapters.indices }
-            } else {
-                resolveUnreadableTargetChapter(chapter)?.takeIf { !syntheticTitle }
+        if (fallback == null) {
+            if (oldBook.format == BookFormat.EPUB && chapter in newChapters.indices &&
+                (oldTextValue == null || epubSpineAligned)
+            ) {
+                fallback = chapter
+            } else if (oldTextValue == null) {
+                fallback = resolveUnreadableTargetChapter(chapter)?.takeIf { !syntheticTitle }
             }
         }
         return Targets(indices, fallback)

@@ -141,11 +141,11 @@ class NetworkBookDownloader(
                 currentTempFile = targetFile
                 targetFile.writeText(parsed.content, Charsets.UTF_8)
                 currentCoroutineContext().ensureActive()
-                val summary = importer.importAndWait(listOf(ImportSource.FromFile(targetFile)))
+                val summary = importer.importAndWait(listOf(ImportSource.FromFile(targetFile, originUrl = trimmedUrl)))
                 targetFile.delete()
                 currentTempFile = null
 
-                if (summary.success > 0) {
+                if (summary.success > 0 || summary.updated > 0 || summary.pending.isNotEmpty()) {
                     _progress.value = DownloadProgress.Success(targetFile, parsed.title)
                     return@withContext true
                 } else if (summary.skipped > 0) {
@@ -221,11 +221,11 @@ class NetworkBookDownloader(
                 val title = finalFile.nameWithoutExtension
                 currentCoroutineContext().ensureActive()
                 // 等导入把文件复制进书籍目录后再删除缓存源文件，避免 cacheDir 只增不减。
-                val summary = importer.importAndWait(listOf(ImportSource.FromFile(finalFile)))
+                val summary = importer.importAndWait(listOf(ImportSource.FromFile(finalFile, originUrl = trimmedUrl)))
                 finalFile.delete()
                 currentTempFile = null
 
-                if (summary.success > 0) {
+                if (summary.success > 0 || summary.updated > 0 || summary.pending.isNotEmpty()) {
                     _progress.value = DownloadProgress.Success(finalFile, title)
                     return@withContext true
                 } else if (summary.skipped > 0) {

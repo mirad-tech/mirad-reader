@@ -68,6 +68,10 @@ object CoverCache {
         return bitmap
     }
 
+    fun evict(path: String?) {
+        if (!path.isNullOrBlank()) cache.remove(path)
+    }
+
     fun clear() = cache.evictAll()
 }
 

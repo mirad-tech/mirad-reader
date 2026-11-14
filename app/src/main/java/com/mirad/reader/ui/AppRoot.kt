@@ -290,8 +290,30 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
             previousRoutes = routes
         }
         val chrome = remember { PagerChrome() }
+        val importSummary by container.importer.lastSummary.collectAsState()
+        var notifiedReaderImportKey by rememberSaveable { mutableStateOf("") }
         if (current is Screen.Reader) {
             LaunchedEffect(current) { motion.cancelDrag() }
+            val readerSummary = importSummary
+            val noticeKey = readerSummary?.let {
+                "${it.batchId}:${it.pending.map { p -> "${p.id}:${p.stage}" }}:${it.updated}:${it.success}"
+            }.orEmpty()
+            LaunchedEffect(noticeKey) {
+                val activeSummary = importSummary
+                if (activeSummary != null && noticeKey.isNotEmpty() && notifiedReaderImportKey != noticeKey) {
+                    notifiedReaderImportKey = noticeKey
+                    val msg = when {
+                        activeSummary.pending.any { it.stage == com.mirad.reader.data.imports.ImportStage.WAITING_READER } ->
+                            "已收到新版书籍，退出阅读后将自动更新"
+                        activeSummary.pending.isNotEmpty() ->
+                            "已收到新版书籍，退出阅读后可确认更新"
+                        activeSummary.updated > 0 || activeSummary.success > 0 ->
+                            "后台导入已完成，退出阅读可查看结果"
+                        else -> null
+                    }
+                    if (msg != null) container.feedback.show(msg)
+                }
+            }
             renderScreen(navigation.selectedTab, current)
         } else {
             PagerChromeHost(chrome, navigation.selectedTab.name, pageProgress = { motion.progress },
@@ -319,6 +341,16 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
                         renderScreen(tab, if (route is Screen.Reader) tab.root else route)
                     }
                 }
+            }
+            if (current != Screen.Shelf && importSummary != null) {
+                val result = importSummary!!
+                com.mirad.reader.ui.shelf.ImportResultDialog(
+                    result = result,
+                    onPreview = container.importer::previewUpdate,
+                    onUpdate = container.importer::confirmUpdate,
+                    onResolveWithoutUpdate = container.importer::resolveWithoutUpdate,
+                    onDismiss = { container.importer.clearSummary(result.batchId) }
+                )
             }
         }
 

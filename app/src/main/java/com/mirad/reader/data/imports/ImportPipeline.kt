@@ -44,23 +44,47 @@ interface BookImporter {
  * - 具备持久读取权限的手机本地文件（SAF）：零拷贝记录原文件 URI，直接流式/随机解析章节；
  * - 临时分享流、网址下载与书源下载：仅保留单份原始文件，TXT 不再生成第二份 `content.utf8.txt`。
  */
-class ImportPipeline(
+class ImportPipeline internal constructor(
     private val context: Context,
     private val paths: AppPaths,
     private val books: BookRepository,
     private val scope: CoroutineScope,
     private val appDatabase: com.mirad.reader.data.db.AppDatabase? = null,
-    private val contentAccess: BookContentAccess = BookContentAccess(context)
+    private val contentAccess: BookContentAccess = BookContentAccess(context),
+    bookmarkDao: com.mirad.reader.data.db.dao.BookmarkDao? = appDatabase?.bookmarkDao(),
+    highlightDao: com.mirad.reader.data.db.dao.HighlightDao? = appDatabase?.highlightDao(),
+    preferenceDao: com.mirad.reader.data.db.dao.PreferenceDao? = appDatabase?.preferenceDao()
 ) : BookImporter {
+
+    constructor(
+        context: Context,
+        paths: AppPaths,
+        books: BookRepository,
+        scope: CoroutineScope,
+        appDatabase: com.mirad.reader.data.db.AppDatabase? = null,
+        contentAccess: BookContentAccess = BookContentAccess(context)
+    ) : this(
+        context = context,
+        paths = paths,
+        books = books,
+        scope = scope,
+        appDatabase = appDatabase,
+        contentAccess = contentAccess,
+        bookmarkDao = appDatabase?.bookmarkDao(),
+        highlightDao = appDatabase?.highlightDao(),
+        preferenceDao = appDatabase?.preferenceDao()
+    )
 
     private val batches = ImportBatchQueue()
     val state: StateFlow<ImportState> = batches.state
     val lastSummary: StateFlow<ImportSummary?> = batches.summary
     private val mutex = Mutex()
-    private val downloadReceipts = appDatabase?.let {
-        DownloadImportReceipts(it.preferenceDao()) { bookId -> books.getBook(bookId) != null }
+    private val downloadReceipts = preferenceDao?.let {
+        DownloadImportReceipts(it) { bookId -> books.getBook(bookId) != null }
     }
-    private val editions = appDatabase?.let { BookEditionUpdater(it, books, contentAccess) }
+    private val editions = if (bookmarkDao != null && highlightDao != null) {
+        BookEditionUpdater(books, bookmarkDao, highlightDao, appDatabase, contentAccess)
+    } else null
     private val staging = LocalImportStaging(paths)
     private val pending = mutableMapOf<String, PendingEdition>()
     private var recovered = false
@@ -86,7 +110,16 @@ class ImportPipeline(
         if (sources.isEmpty()) return null
         val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
         val batch = batches.enqueue(items)
-        scope.launch { runBatch(batch, sources, items, force, local = !force && editions != null) }
+        scope.launch {
+            runBatch(
+                batch = batch,
+                sources = sources,
+                items = items,
+                force = force,
+                local = !force && editions != null,
+                shouldPublishSummary = { true }
+            )
+        }
         return batch.id
     }
 
@@ -94,21 +127,46 @@ class ImportPipeline(
         if (sources.isEmpty()) return ImportSummary(0, 0, 0, emptyList())
         val items = sources.map { ImportItem(UUID.randomUUID().toString(), it.displayName) }
         val batch = batches.enqueue(items)
-        return runBatch(batch, sources, items, force, local = false)
+        val isBackgroundDownloadTask = sources.all { (it as? ImportSource.FromFile)?.downloadTaskId != null }
+        return runBatch(
+            batch = batch,
+            sources = sources,
+            items = items,
+            force = force,
+            local = !force && editions != null,
+            shouldPublishSummary = { summary -> !isBackgroundDownloadTask && summary.updated > 0 }
+        )
     }
 
     private suspend fun runBatch(
-        batch: ImportBatchQueue.Batch, sources: List<ImportSource>, items: List<ImportItem>, force: Boolean, local: Boolean
+        batch: ImportBatchQueue.Batch,
+        sources: List<ImportSource>,
+        items: List<ImportItem>,
+        force: Boolean,
+        local: Boolean,
+        shouldPublishSummary: (ImportSummary) -> Boolean
     ): ImportSummary {
         var summary: ImportSummary? = null
         BatchCompletionGuard(
             abort = { reason -> batches.abort(batch, reason) },
-            complete = { summary = batches.complete(batch) }
+            complete = { summary = batches.complete(batch, shouldPublishSummary) }
         ).run {
             mutex.withLock {
                 if (local) recoverLocalImports()
-                val matcher = if (local) EditionMatcher(contentAccess, books::getChapters) else null
-                for (index in sources.indices) importOne(sources[index], items[index].id, force, matcher)
+                val matcher = if (local) {
+                    EditionMatcher(contentAccess, books::getChapters, books.sourceStampStore)
+                } else null
+                val batchInserted = mutableMapOf<Long, String>()
+                for (index in sources.indices) {
+                    importOne(
+                        source = sources[index],
+                        itemId = items[index].id,
+                        batchItemIds = batch.itemIds,
+                        batchInserted = batchInserted,
+                        force = force,
+                        matcher = matcher
+                    )
+                }
             }
         }
         return checkNotNull(summary)
@@ -120,7 +178,14 @@ class ImportPipeline(
     private fun sameContent(incomingPath: String, existing: BookEntity): Boolean =
         FileFingerprint.sameContent(contentAccess, incomingPath, existing.filePath)
 
-    private suspend fun importOne(source: ImportSource, itemId: String, force: Boolean, matcher: EditionMatcher?) {
+    private suspend fun importOne(
+        source: ImportSource,
+        itemId: String,
+        batchItemIds: Set<String>,
+        batchInserted: MutableMap<Long, String>,
+        force: Boolean,
+        matcher: EditionMatcher?
+    ) {
         val token = UUID.randomUUID().toString()
         val local = matcher != null
         val downloadTaskId = (source as? ImportSource.FromFile)?.downloadTaskId
@@ -173,6 +238,25 @@ class ImportPipeline(
             val format = if (extension == EPUB_EXT) BookFormat.EPUB else BookFormat.TXT
             val shelf = if (local) books.getAllBooks().filter { it.format == format } else emptyList()
             if (!force) {
+                // 文件夹同步快速通道：同一零拷贝 URI 若快照大小、修改时间与采样指纹均未变，直接跳过全书解码/解压
+                if (local) {
+                    val sameSourceBook = shelf.firstOrNull {
+                        it.filePath == bookFilePath && it.contentPath.isNullOrBlank() && it.fileSize == size
+                    }
+                    if (sameSourceBook != null) {
+                        val savedStamp = books.sourceStampStore.get(sameSourceBook.id)
+                        if (savedStamp != null && savedStamp.size == size) {
+                            val currentStamp = withContext(Dispatchers.IO) {
+                                BookSourceStampStore.capture(contentAccess, bookFilePath, size)
+                            }
+                            if (currentStamp != null && BookSourceStampStore.matches(currentStamp, savedStamp)) {
+                                skipExistingBook(itemId, sameSourceBook, "书架中已有同一本书")
+                                return
+                            }
+                        }
+                    }
+                }
+
                 val duplicate = (if (local) shelf.filter { it.fileSize == size && it.filePath != bookFilePath }
                     else books.findDuplicateCandidates(displayTitle, size))
                     .firstOrNull { sameContent(bookFilePath, it) }
@@ -181,36 +265,68 @@ class ImportPipeline(
                     downloadTaskId?.let { taskId ->
                         withContext(NonCancellable + Dispatchers.IO) { downloadReceipts?.record(taskId, duplicate.id) }
                     }
-                    updateItem(itemId) {
-                        it.copy(
-                            stage = ImportStage.SKIPPED,
-                            bookId = duplicate.id,
-                            message = "书架中已有同一本书《${duplicate.title}》",
-                            progress = 1f
-                        )
-                    }
+                    skipExistingBook(itemId, duplicate, "书架中已有同一本书")
                     return
                 }
             }
 
             val prepared = withContext(Dispatchers.IO) {
                 if (extension == EPUB_EXT) prepareEpub(source, token, bookFilePath, displayTitle, size, local)
-                else prepareTxt(source, token, bookFilePath, displayTitle, size)
+                else prepareTxt(source, token, bookFilePath, displayTitle, size, local)
             }
 
             if (matcher != null) {
                 val match = matcher.match(prepared.book, displayTitle, prepared.epub, shelf)
                 if (match.duplicate != null) {
+                    downloadTaskId?.let { taskId ->
+                        withContext(NonCancellable + Dispatchers.IO) {
+                            downloadReceipts?.record(taskId, match.duplicate.book.id)
+                        }
+                    }
                     skipDuplicate(itemId, match.duplicate)
                     return
                 }
                 if (match.candidates.isNotEmpty()) {
-                    val entry = PendingEdition(token, displayTitle, prepared, match.candidates)
-                    pending[itemId] = entry
-                    val automatic = match.automatic
-                    if (automatic == null) showReview(itemId, entry)
-                    else attemptUpdate(itemId, entry, automatic, agreed = null)
-                    return
+                    // 后台书源离线下载任务要求同步落定 bookId：仅在满足无损自动续章且锁空闲时原地更新，否则安全另存新书
+                    if (downloadTaskId != null) {
+                        val autoCandidate = match.automatic
+                            ?: match.candidates.singleOrNull()?.takeIf {
+                                !it.authorConflict &&
+                                    !prepared.book.sourceUri.isNullOrBlank() &&
+                                    prepared.book.sourceUri == it.book.sourceUri
+                            }
+                        if (autoCandidate != null) {
+                            val updatedId = tryBackgroundAutoUpdate(
+                                token = token,
+                                prepared = prepared,
+                                candidate = autoCandidate,
+                                downloadTaskId = downloadTaskId
+                            )
+                            if (updatedId != null) {
+                                committedBookId = updatedId.id
+                                updateItem(itemId) {
+                                    it.copy(
+                                        stage = ImportStage.UPDATED,
+                                        progress = 1f,
+                                        bookId = updatedId.id,
+                                        message = formatUpdateMessage(autoCandidate.book, updatedId)
+                                    )
+                                }
+                                return
+                            }
+                        }
+                    } else {
+                        // 同批次多版本去重：若同一批次已有待确认项指向相同候选旧书，只保留较新的那一版
+                        if (dedupIntraBatchPending(itemId, batchItemIds, prepared, match.candidates, matcher)) {
+                            return
+                        }
+                        val entry = PendingEdition(token, displayTitle, prepared, match.candidates, batchItemIds)
+                        pending[itemId] = entry
+                        val automatic = match.automatic
+                        if (automatic == null) presentReview(itemId, entry)
+                        else attemptUpdate(itemId, entry, automatic, agreed = null, batchInserted = batchInserted)
+                        return
+                    }
                 }
             }
 
@@ -218,11 +334,11 @@ class ImportPipeline(
             withContext(NonCancellable + Dispatchers.IO) {
                 val bookId = insertPrepared(prepared, downloadTaskId)
                 committedBookId = bookId
+                batchInserted[bookId] = itemId
                 updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = bookId) }
             }
         } catch (t: Throwable) {
             if (committedBookId != null) {
-                updateItem(itemId) { it.copy(stage = ImportStage.DONE, progress = 1f, bookId = committedBookId) }
                 if (t is CancellationException) throw t
                 return
             }
@@ -243,11 +359,98 @@ class ImportPipeline(
         }
     }
 
+    private suspend fun dedupIntraBatchPending(
+        currentItemId: String,
+        batchItemIds: Set<String>,
+        incoming: PreparedBook,
+        candidates: List<EditionCandidate>,
+        matcher: EditionMatcher
+    ): Boolean {
+        val candidateIds = candidates.map { it.book.id }
+        val sameTargetEntries = pending.entries
+            .filter { (id, entry) ->
+                id in batchItemIds && entry.candidates.map { it.book.id } == candidateIds
+            }
+            .map { it.key to it.value }
+        for ((prevItemId, prevEntry) in sameTargetEntries) {
+            val rel = matcher.compareIncoming(
+                first = prevEntry.prepared.book,
+                firstChapters = prevEntry.prepared.chapters,
+                firstEpub = prevEntry.prepared.epub,
+                second = incoming.book,
+                secondEpub = incoming.epub
+            )
+            when (rel) {
+                EditionRelation.SAME, EditionRelation.OLDER -> {
+                    updateItem(currentItemId) {
+                        it.copy(
+                            stage = ImportStage.SKIPPED,
+                            progress = 1f,
+                            message = "同批次已包含相同或较新版本《${prevEntry.displayTitle}》"
+                        )
+                    }
+                    return true
+                }
+                EditionRelation.EXTENDS -> {
+                    prevEntry.waiter?.cancel()
+                    prevEntry.waiter = null
+                    finishPending(
+                        prevItemId,
+                        prevEntry,
+                        ImportStage.SKIPPED,
+                        message = "已被同批次较新版本《${incoming.book.title}》替代"
+                    )
+                }
+                EditionRelation.UNKNOWN -> Unit
+            }
+        }
+        return false
+    }
+
+    private suspend fun tryBackgroundAutoUpdate(
+        token: String,
+        prepared: PreparedBook,
+        candidate: EditionCandidate,
+        downloadTaskId: String
+    ): BookEntity? {
+        val updater = editions ?: return null
+        val lock = books.contentLock(candidate.book.id)
+        if (!lock.tryLock()) return null
+        try {
+            val update = updater.inspect(candidate, prepared.book, prepared.chapters)
+            val preview = update.preview
+            val needsConfirmation = preview.resume == ResumeImpact.UNAVAILABLE ||
+                preview.resume == ResumeImpact.CHAPTER_START ||
+                preview.lostLocations > 0
+            if (needsConfirmation) return null
+            currentCoroutineContext().ensureActive()
+            return withContext(NonCancellable + Dispatchers.IO) {
+                staging.beforeReplacement(token, update.old.book)
+                updater.publish(
+                    update = update,
+                    incoming = prepared.book,
+                    chapters = prepared.chapters,
+                    sourceStamp = prepared.sourceStamp,
+                    downloadTaskId = downloadTaskId,
+                    downloadReceipts = downloadReceipts,
+                    stagedCoverFile = paths.coverFile(token)
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            return null
+        } finally {
+            lock.unlock()
+        }
+    }
+
     private suspend fun insertPrepared(prepared: PreparedBook, downloadTaskId: String? = null): Long {
         val block: suspend () -> Long = {
             val id = books.insertBook(prepared.book)
             books.saveChapters(id, prepared.chapters.map { it.copy(bookId = id) })
             books.updateIndexInfo(id, prepared.chapters.size, prepared.totalChars, prepared.ruleId, prepared.regex, prepared.encoding)
+            books.sourceStampStore.save(id, prepared.sourceStamp)
             downloadTaskId?.let { downloadReceipts?.record(it, id) }
             id
         }
@@ -261,7 +464,8 @@ class ImportPipeline(
         val ruleId: String?,
         val regex: String?,
         val totalChars: Long,
-        val epub: List<EpubChapterSignature>? = null
+        val epub: List<EpubChapterSignature>? = null,
+        val sourceStamp: BookSourceStampStore.SourceStamp? = null
     )
 
     private class PendingEdition(
@@ -269,6 +473,7 @@ class ImportPipeline(
         val displayTitle: String,
         val prepared: PreparedBook,
         var candidates: List<EditionCandidate>,
+        val batchItemIds: Set<String> = emptySet(),
         var preview: ImportUpdatePreview? = null,
         var waiter: Job? = null
     )
@@ -298,7 +503,7 @@ class ImportPipeline(
                 val entry = pending[itemId] ?: return@withLock
                 if (entry.waiter != null || entry.preview != preview || preview.resume == ResumeImpact.UNAVAILABLE) return@withLock
                 val candidate = entry.candidates.firstOrNull { it.book.id == preview.bookId } ?: return@withLock
-                attemptUpdate(itemId, entry, candidate, agreed = preview)
+                attemptUpdate(itemId, entry, candidate, agreed = preview, batchInserted = null)
             }
         }
     }
@@ -325,12 +530,16 @@ class ImportPipeline(
     }
 
     private suspend fun attemptUpdate(
-        itemId: String, entry: PendingEdition, candidate: EditionCandidate, agreed: ImportUpdatePreview?
+        itemId: String,
+        entry: PendingEdition,
+        candidate: EditionCandidate,
+        agreed: ImportUpdatePreview?,
+        batchInserted: MutableMap<Long, String>?
     ) {
         val lock = books.contentLock(candidate.book.id)
         if (lock.tryLock()) {
             try {
-                applyOrReview(itemId, entry, candidate, agreed)
+                applyOrReview(itemId, entry, candidate, agreed, batchInserted)
             } finally {
                 lock.unlock()
             }
@@ -345,7 +554,7 @@ class ImportPipeline(
                     if (!lock.tryLock()) return@withLock false
                     try {
                         entry.waiter = null
-                        applyOrReview(itemId, entry, candidate, agreed)
+                        applyOrReview(itemId, entry, candidate, agreed, batchInserted = null)
                         true
                     } finally {
                         lock.unlock()
@@ -357,7 +566,11 @@ class ImportPipeline(
     }
 
     private suspend fun applyOrReview(
-        itemId: String, entry: PendingEdition, candidate: EditionCandidate, agreed: ImportUpdatePreview?
+        itemId: String,
+        entry: PendingEdition,
+        candidate: EditionCandidate,
+        agreed: ImportUpdatePreview?,
+        batchInserted: MutableMap<Long, String>?
     ) {
         try {
             val update = inspect(entry, candidate)
@@ -371,8 +584,33 @@ class ImportPipeline(
             currentCoroutineContext().ensureActive()
             withContext(NonCancellable + Dispatchers.IO) {
                 staging.beforeReplacement(entry.token, update.old.book)
-                checkNotNull(editions).publish(update, entry.prepared.book, entry.prepared.chapters)
-                finishPending(itemId, entry, ImportStage.UPDATED, candidate.book.id)
+                val savedBook = checkNotNull(editions).publish(
+                    update = update,
+                    incoming = entry.prepared.book,
+                    chapters = entry.prepared.chapters,
+                    sourceStamp = entry.prepared.sourceStamp,
+                    stagedCoverFile = paths.coverFile(entry.token)
+                )
+                val supersededInSameBatch = batchInserted?.remove(savedBook.id)
+                if (supersededInSameBatch != null) {
+                    updateItem(supersededInSameBatch) {
+                        it.copy(
+                            stage = ImportStage.SKIPPED,
+                            bookId = savedBook.id,
+                            message = "已被同批次较新版本《${savedBook.title}》替代"
+                        )
+                    }
+                    batchInserted[savedBook.id] = itemId
+                    finishPending(itemId, entry, ImportStage.DONE, savedBook.id, message = null)
+                } else {
+                    finishPending(
+                        itemId = itemId,
+                        entry = entry,
+                        stage = ImportStage.UPDATED,
+                        id = savedBook.id,
+                        message = formatUpdateMessage(update.old.book, savedBook)
+                    )
+                }
             }
         } catch (_: EditionChanged) {
             refreshReview(itemId, entry)
@@ -388,7 +626,7 @@ class ImportPipeline(
 
     private suspend fun refreshReview(itemId: String, entry: PendingEdition) {
         val match = try {
-            EditionMatcher(contentAccess, books::getChapters)
+            EditionMatcher(contentAccess, books::getChapters, books.sourceStampStore)
                 .match(entry.prepared.book, entry.displayTitle, entry.prepared.epub, books.getAllBooks())
         } catch (e: CancellationException) {
             throw e
@@ -402,8 +640,27 @@ class ImportPipeline(
             cleanStaging(entry.token)
         } else {
             entry.candidates = match.candidates
-            showReview(itemId, entry, message = "旧书或阅读记录已变化，请重新核对")
+            presentReview(itemId, entry, message = "旧书或阅读记录已变化，请重新核对")
         }
+    }
+
+    /** 唯一候选旧书进入待确认时自动预计算续读影响，免去用户多点一次「核对」。 */
+    private suspend fun presentReview(
+        itemId: String,
+        entry: PendingEdition,
+        preview: ImportUpdatePreview? = null,
+        message: String? = null
+    ) {
+        val effectivePreview = preview ?: if (entry.candidates.size == 1) {
+            try {
+                inspect(entry, entry.candidates.single()).preview
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+        } else null
+        showReview(itemId, entry, effectivePreview, message)
     }
 
     private fun showReview(
@@ -420,12 +677,31 @@ class ImportPipeline(
         }
     }
 
+    private fun hiddenSuffix(book: BookEntity): String =
+        if (book.isHidden) "（位于隐藏书籍）" else ""
+
+    private fun formatUpdateMessage(oldBook: BookEntity, updatedBook: BookEntity): String {
+        val chapterChange = if (oldBook.totalChapters != updatedBook.totalChapters) {
+            "（${oldBook.totalChapters} 章 → ${updatedBook.totalChapters} 章）"
+        } else ""
+        return "已更新《${updatedBook.title}》$chapterChange${hiddenSuffix(updatedBook)}"
+    }
+
+    private fun skipExistingBook(itemId: String, book: BookEntity, prefix: String) {
+        updateItem(itemId) {
+            it.copy(
+                stage = ImportStage.SKIPPED,
+                bookId = book.id,
+                review = null,
+                message = "$prefix《${book.title}》${hiddenSuffix(book)}",
+                progress = 1f
+            )
+        }
+    }
+
     private fun skipDuplicate(itemId: String, candidate: EditionCandidate) {
         val prefix = if (candidate.relation == EditionRelation.OLDER) "书架已保存较新的版本" else "书架中已有同一本书"
-        updateItem(itemId) {
-            it.copy(stage = ImportStage.SKIPPED, progress = 1f, bookId = candidate.book.id,
-                review = null, message = prefix + "《" + candidate.book.title + "》")
-        }
+        skipExistingBook(itemId, candidate.book, prefix)
     }
 
     private suspend fun finishPending(
@@ -461,7 +737,8 @@ class ImportPipeline(
         token: String,
         bookFilePath: String,
         displayTitle: String,
-        size: Long
+        size: Long,
+        local: Boolean
     ): PreparedBook {
         if (size > MAX_TXT_BYTES) {
             throw ImportException("TXT 文件过大（${size / 1024 / 1024} MB，上限 80 MB）")
@@ -498,6 +775,8 @@ class ImportPipeline(
 
         val coverFile = paths.coverFile(token)
         val hasCover = CoverGenerator.generatePlaceholder(displayTitle, null, coverFile)
+        val effectiveSize = streamResult.totalBytes.takeIf { it > 0L } ?: size
+        val stamp = if (local) BookSourceStampStore.capture(contentAccess, bookFilePath, effectiveSize) else null
 
         val book = BookEntity(
             title = displayTitle,
@@ -507,7 +786,7 @@ class ImportPipeline(
             contentPath = null,
             coverPath = if (hasCover) coverFile.absolutePath else null,
             sourceUri = sourceUriOf(source),
-            fileSize = streamResult.totalBytes.takeIf { it > 0L } ?: size,
+            fileSize = effectiveSize,
             encoding = streamResult.charset,
             chapterRuleId = streamResult.ruleId,
             chapterRegex = streamResult.regex,
@@ -521,7 +800,8 @@ class ImportPipeline(
             encoding = streamResult.charset,
             ruleId = streamResult.ruleId,
             regex = streamResult.regex,
-            totalChars = streamResult.totalChars
+            totalChars = streamResult.totalChars,
+            sourceStamp = stamp
         )
     }
 
@@ -579,6 +859,7 @@ class ImportPipeline(
         }
 
         val title = info.title?.takeIf { it.isNotBlank() } ?: displayTitle
+        val stamp = if (local) BookSourceStampStore.capture(contentAccess, bookFilePath, size) else null
         val book = BookEntity(
             title = title,
             author = info.author,
@@ -603,7 +884,8 @@ class ImportPipeline(
             ruleId = null,
             regex = null,
             totalChars = totalChars,
-            epub = signatures
+            epub = signatures,
+            sourceStamp = stamp
         )
     }
 

@@ -303,6 +303,20 @@ class BookContentAccess internal constructor(
             }.getOrNull()
         }
 
+        /**
+         * 核验 [coverPath] 是否位于应用私有 `files/covers/<uuid>.jpg` 托管目录内并返回 `<uuid>`，
+         * 供零拷贝书籍更新封面或删除时安全回收不再引用的旧封面文件。
+         */
+        fun managedCoverToken(paths: AppPaths, coverPath: String?): String? {
+            if (coverPath.isNullOrBlank() || isContentUri(coverPath)) return null
+            return runCatching {
+                val file = resolveLocalFile(coverPath)?.canonicalFile ?: return null
+                if (file.parentFile != paths.coversDir.canonicalFile) return null
+                val stem = file.name.substringBeforeLast('.')
+                if (isValidUuid(stem)) stem else null
+            }.getOrNull()
+        }
+
         fun resolveLocalFile(path: String): File? {
             if (isContentUri(path)) return null
             if (path.startsWith(FILE_SCHEME_PREFIX)) {

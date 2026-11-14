@@ -135,7 +135,8 @@ fun ShelfScreen(
                 try {
                     com.mirad.reader.data.io.BookContentAccess.tryTakePersistableReadPermission(context, uri)
                     val uriText = uri.toString()
-                    val saved = container.maintenance.relinkSource(target.id, uriText, uriText)
+                    val displayName = ImportSources.nameOf(context, uri)
+                    val saved = container.maintenance.relinkSource(target.id, uriText, uriText, displayName)
                     toast = "已重新关联《${saved.title}》"
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -295,12 +296,15 @@ fun ShelfScreen(
             resetDownload = downloader::resetState,
             onDismiss = { showUrlImportDialog = false },
             onSuccess = { bookTitle ->
-                toast = "正在将《$bookTitle》加入书架"
+                if (container.importer.lastSummary.value == null) {
+                    toast = "已将《$bookTitle》加入书架"
+                }
             }
         )
     }
 
-    if (summary != null && !showUrlImportDialog && !groupDialog && editing == null &&
+    val pageActive = com.mirad.reader.ui.common.LocalPagerPageActive.current
+    if (pageActive && summary != null && !showUrlImportDialog && !groupDialog && editing == null &&
         encodingBook == null && chapterBook == null && !confirmDelete && actionBook == null &&
         !showGroupManager) {
         val result = summary!!

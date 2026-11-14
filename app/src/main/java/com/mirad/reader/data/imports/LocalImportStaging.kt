@@ -4,6 +4,7 @@ import android.util.Log
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.io.BookContentAccess
+import com.mirad.reader.ui.shelf.CoverCache
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -23,11 +24,14 @@ internal class LocalImportStaging(private val paths: AppPaths) {
     }
 
     fun beforeReplacement(token: String, old: BookEntity) {
-        val managedToken = BookContentAccess.managedBookToken(paths, old.filePath)
-            ?: BookContentAccess.managedBookToken(paths, old.contentPath)
-        if (managedToken != null) {
+        val managedTokens = listOfNotNull(
+            BookContentAccess.managedBookToken(paths, old.filePath),
+            BookContentAccess.managedBookToken(paths, old.contentPath),
+            BookContentAccess.managedCoverToken(paths, old.coverPath)
+        ).distinct()
+        if (managedTokens.isNotEmpty()) {
             markers.mkdirs()
-            File(markers, token).writeText(managedToken)
+            File(markers, token).writeText(managedTokens.joinToString("\n"))
         }
     }
 
@@ -56,15 +60,22 @@ internal class LocalImportStaging(private val paths: AppPaths) {
     private fun clean(marker: File, referencedTokens: Set<String>, covers: Set<File>) {
         if (!marker.isFile) return
         try {
-            val previous = marker.readText().takeIf(::validToken)
-            val tokens = listOfNotNull(marker.name, previous).distinct()
+            val previous = marker.readText()
+                .lineSequence()
+                .map { it.trim() }
+                .filter(::validToken)
+                .toList()
+            val tokens = (listOf(marker.name) + previous).distinct()
             for (token in tokens) {
                 val directory = File(paths.booksDir, token)
                 val cover = paths.coverFile(token)
                 if (token !in referencedTokens && directory.exists() && !directory.deleteRecursively()) {
                     throw IOException("无法清理导入正文")
                 }
-                if (cover !in covers && cover.exists() && !cover.delete()) throw IOException("无法清理导入封面")
+                if (cover !in covers && cover.exists()) {
+                    if (!cover.delete()) throw IOException("无法清理导入封面")
+                    CoverCache.evict(cover.absolutePath)
+                }
             }
             if (!marker.delete()) throw IOException("无法清理导入标记")
         } catch (e: IOException) {

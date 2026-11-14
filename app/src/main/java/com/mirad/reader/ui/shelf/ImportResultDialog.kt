@@ -62,7 +62,7 @@ internal fun ImportResultDialog(
                             ResumeImpact.UNREAD -> "原书尚未开始阅读"
                             ResumeImpact.EXACT -> "保留原阅读位置 · ${preview.chapterTitle.orEmpty()}"
                             ResumeImpact.CHAPTER_START -> "原文位置已变化，将从「${preview.chapterTitle.orEmpty()}」开头继续"
-                            ResumeImpact.UNAVAILABLE -> "无法确认原阅读章节，请保留旧书"
+                            ResumeImpact.UNAVAILABLE -> "无法确认原阅读章节，为保护阅读进度不可覆盖更新，可另存新书或跳过"
                         }
                         Text(impact)
                         if (preview.lostLocations > 0) Text("${preview.lostLocations} 条书签或划线将失去定位，原摘录和笔记会保留。")
