@@ -51,7 +51,7 @@ internal data class EditionMatch(
 internal class EditionMatcher(
     private val contentAccess: BookContentAccess,
     private val chapters: suspend (Long) -> List<ChapterEntity>,
-    private val sourceStamps: BookSourceStampStore? = null
+    private val sourceVersions: BookSourceVersionStore? = null
 ) {
     constructor(chapters: suspend (Long) -> List<ChapterEntity>) : this(BookContentAccess(), chapters, null)
 
@@ -66,7 +66,8 @@ internal class EditionMatcher(
         incoming: BookEntity,
         displayTitle: String,
         epub: List<EpubChapterSignature>?,
-        shelf: List<BookEntity>
+        shelf: List<BookEntity>,
+        incomingVersion: SourceVersion
     ): EditionMatch {
         val epubOpening = epub?.filter { it.readableText }?.take(EPUB_SAMPLE_CHAPTERS).orEmpty()
         val txtOpening = if (incoming.format == BookFormat.TXT) txtSample(incoming) else null
@@ -90,22 +91,13 @@ internal class EditionMatcher(
             val authorConflict = author.isNotEmpty() && oldAuthor.isNotEmpty() && author != oldAuthor
             val normalizedModified = versionModified(contentAccess, old)
 
-            // 同一外部 URI 重新导入：结合元数据与源文件指纹快照判定是否发生原地变更（包括等长改字）
+            // 同一外部 URI 只有已保存的完整版本与本次解析内容一致时才可判重。
             if (sameUnderlyingSource) {
                 val metaUnchanged = old.fileSize == incoming.fileSize &&
                     old.totalChapters == incoming.totalChapters &&
                     old.totalChars == incoming.totalChars
-                val savedStamp = sourceStamps?.get(old.id)
-                val currentStamp = BookSourceStampStore.capture(contentAccess, incoming.filePath, incoming.fileSize)
-                val stampUnchanged = if (savedStamp != null && currentStamp != null) {
-                    BookSourceStampStore.matches(currentStamp, savedStamp)
-                } else {
-                    true
-                }
-                val unchanged = metaUnchanged && stampUnchanged
-                if (unchanged && savedStamp == null && currentStamp != null) {
-                    sourceStamps?.save(old.id, currentStamp)
-                }
+                val savedVersion = sourceVersions?.get(old.id)
+                val unchanged = metaUnchanged && savedVersion == incomingVersion
                 val relation = if (unchanged) EditionRelation.SAME else EditionRelation.UNKNOWN
                 val candidate = EditionCandidate(old, relation, authorConflict, normalizedModified)
                 if (!authorConflict && relation == EditionRelation.SAME) {

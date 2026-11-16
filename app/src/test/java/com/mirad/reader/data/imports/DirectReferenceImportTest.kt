@@ -9,11 +9,13 @@ import com.mirad.reader.data.db.dao.BookDao
 import com.mirad.reader.data.db.dao.BookmarkDao
 import com.mirad.reader.data.db.dao.ChapterDao
 import com.mirad.reader.data.db.dao.HighlightDao
+import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.dao.ProgressDao
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
+import com.mirad.reader.data.db.entity.PreferenceEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
 import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.repo.BookMaintenance
@@ -151,10 +153,15 @@ class DirectReferenceImportTest {
                         val buf = ByteArray(len)
                         raf.seek(slice.startByte)
                         raf.readFully(buf)
+                        val previousBytes = ByteArray(minOf(2L, slice.startByte).toInt())
+                        raf.seek(slice.startByte - previousBytes.size)
+                        raf.readFully(previousBytes)
                         val decoded = StreamingTxtProcessor.decodeRawSlice(
                             rawBytes = buf,
                             charsetName = rawIndexed.charset,
-                            stripLeadingBom = slice.startByte == 0L
+                            stripLeadingBom = slice.startByte == 0L,
+                            previousRawBytes = previousBytes,
+                            isSourceEnd = slice.endByte == rawFile.length()
                         )
                         assertEquals("[$label] 第 $idx 章字符数必须严格等于 charCount", slice.charCount, decoded.length)
                         assertEquals("[$label] 第 $idx 章标题行字数必须一致", expected.slices[idx].titleLineChars, slice.titleLineChars)
@@ -164,6 +171,95 @@ class DirectReferenceImportTest {
                 assertEquals("[$label] 按原文件字节切片解码拼接必须与归一化全文逐字恒等", expectedFullText, rebuilt.toString())
             }
         }
+    }
+
+    @Test
+    fun rawSlicesPreserveLongLineBoundariesWhitespaceAndCharsetState() {
+        val bodies = listOf(
+            "a".repeat(24576),
+            "a".repeat(65536),
+            "a".repeat(8190) + "  " + "b".repeat(16384),
+            "a".repeat(8191) + "𠮷" + "b".repeat(24576),
+            "山風".repeat(16384)
+        ) + listOf("\n", "\r", "\r\n").map { newline ->
+            "a".repeat(32768) + newline.repeat(4) + "结尾"
+        }
+        val charsets = listOf("UTF-8", "GB18030", "BIG5", "UTF-16LE", "UTF-16BE")
+        for (encoding in charsets) {
+            bodies.forEachIndexed { case, body ->
+                val source = temp.newFile("long_${encoding}_$case.txt")
+                source.writeBytes(body.toByteArray(Charset.forName(encoding)))
+                val normalized = temp.newFile("normalized_${encoding}_$case.txt")
+                val expected = StreamingTxtProcessor.process(source, normalized, encoding)
+                val indexed = StreamingTxtProcessor.indexRaw(source, encoding)
+                val book = BookEntity(
+                    id = 1L, title = "长行", format = "TXT", filePath = source.absolutePath,
+                    fileSize = source.length(), encoding = indexed.charset
+                )
+                val provider = ChapterTextProvider()
+                val rebuilt = indexed.slices.mapIndexed { index, slice ->
+                    val chapter = ChapterEntity(
+                        bookId = book.id, index = index, title = slice.title,
+                        startByte = slice.startByte, endByte = slice.endByte,
+                        charCount = slice.charCount.toLong()
+                    )
+                    val decoded = provider.readTxtTextOrNull(book, chapter)!!
+                    assertEquals("$encoding/$case/$index", chapter.charCount, decoded.length.toLong())
+                    decoded
+                }.joinToString("")
+                assertEquals("$encoding/$case", expected.totalChars, rebuilt.length.toLong())
+                assertEquals("$encoding/$case", normalized.readText(), rebuilt)
+            }
+        }
+    }
+
+    @Test
+    fun persistedOldInternalLineSlicesKeepRecordsWhenReapplyingChapters() = runBlocking {
+        val env = TestHarness(this)
+        val source = temp.newFile("old_long_line.txt").apply { writeText("a".repeat(24576)) }
+        val uri = "content://external/books/old_long_line.txt"
+        env.saf.mount(uri, source)
+        val id = env.books.insertBook(
+            BookEntity(
+                title = "旧版长行", format = "TXT", filePath = uri, sourceUri = uri,
+                fileSize = 24576L, encoding = "UTF-8", totalChapters = 2, totalChars = 24577L
+            )
+        )
+        // 固定旧版已保存的目录，不调用新索引器生成夹具。
+        val chapters = listOf(
+            ChapterEntity(bookId = id, index = 0, title = "第 1 节", startByte = 0L, endByte = 8192L, charCount = 8192L),
+            ChapterEntity(bookId = id, index = 1, title = "第 2 节", startByte = 8192L, endByte = 24576L, charCount = 16385L)
+        )
+        env.books.saveChapters(id, chapters)
+        val book = env.books.getBook(id)!!
+        chapters.forEach { chapter ->
+            assertEquals(chapter.charCount, env.textProvider.readTxtTextOrNull(book, chapter)!!.length.toLong())
+        }
+        env.saf.rangeReads.clear()
+        env.textProvider.readTxtTextOrNull(book, chapters[1])
+        assertEquals(listOf(8192L to 16384, 8190L to 2), env.saf.rangeReads.toList())
+
+        env.books.saveProgress(ProgressEntity(bookId = id, chapterIndex = 0, charOffset = 20))
+        val bookmarkIds = chapters.map { chapter ->
+            env.bookmarkDao.insert(BookmarkEntity(bookId = id, chapterIndex = chapter.index, charOffset = 20, chapterTitle = chapter.title, snippet = "aaaaa"))
+        }
+        val highlightIds = chapters.map { chapter ->
+            env.highlightDao.insert(HighlightEntity(bookId = id, chapterIndex = chapter.index, startOffset = 10, endOffset = 15, text = "aaaaa", color = 1))
+        }
+        val preview = env.maintenance.previewChapters(book)
+        assertEquals(2, env.maintenance.applyChapters(book, preview))
+        assertEquals(0, env.books.getProgress(id)?.chapterIndex)
+        assertEquals(20, env.books.getProgress(id)?.charOffset)
+        bookmarkIds.forEachIndexed { index, bookmarkId ->
+            assertEquals(index, env.bookmarkDao.getById(bookmarkId)?.chapterIndex)
+            assertEquals(20, env.bookmarkDao.getById(bookmarkId)?.charOffset)
+        }
+        highlightIds.forEachIndexed { index, highlightId ->
+            assertEquals(index, env.highlightDao.getById(highlightId)?.chapterIndex)
+            assertEquals(10, env.highlightDao.getById(highlightId)?.startOffset)
+            assertEquals(15, env.highlightDao.getById(highlightId)?.endOffset)
+        }
+        assertTrue(env.paths.booksDir.walkTopDown().none { it.isFile })
     }
 
     @Test
@@ -317,7 +413,7 @@ class DirectReferenceImportTest {
         // 重新关联到移动后的新位置
         val newUri = "content://external/documents/gushu_archived.txt"
         env.saf.mount(newUri, fileInB, persistable = true)
-        val relinked = env.maintenance.relinkSource(book.id, newUri, newUri)
+        val relinked = env.maintenance.relinkSource(book.id, newUri, newUri) { true }!!
 
         assertEquals(newUri, relinked.filePath)
         assertTrue("重关联后应立即恢复可读", env.textProvider.isBookSourceReadable(relinked))
@@ -384,7 +480,8 @@ class DirectReferenceImportTest {
             )
         }
         val matcher = EditionMatcher(env.contentAccess, env.books::getChapters)
-        val match = matcher.match(v2CandidateBook, "边塞行_v2", null, listOf(currentBook))
+        val match = matcher.match(v2CandidateBook, "边塞行_v2", null, listOf(currentBook),
+            SourceVersion.capture(env.contentAccess, v2CandidateBook.filePath))
         assertEquals("零拷贝外部 TXT 续写应自动匹配旧书", currentBook.id, match.automatic?.book?.id)
 
         val update = BookEditionUpdater.map(
@@ -428,7 +525,7 @@ class DirectReferenceImportTest {
         val newUri = "content://external/books/new_utf8.txt"
         env.saf.mount(newUri, utf8File, persistable = true)
 
-        val relinked = env.maintenance.relinkSource(oldBook.id, newUri, newUri)
+        val relinked = env.maintenance.relinkSource(oldBook.id, newUri, newUri) { true }!!
         assertEquals("重关联新文件必须自动识别为 UTF-8，不得沿用旧 GB18030", "UTF-8", relinked.encoding)
         val chapters = env.chapterDao.getForBook(relinked.id)
         assertEquals(2, chapters.size)
@@ -454,7 +551,7 @@ class DirectReferenceImportTest {
         val nonPersistUri = "content://thirdparty.provider/temp/relink.txt"
         env.saf.mount(nonPersistUri, tempFile, persistable = false)
 
-        val relinked = env.maintenance.relinkSource(book.id, nonPersistUri, nonPersistUri)
+        val relinked = env.maintenance.relinkSource(book.id, nonPersistUri, nonPersistUri) { true }!!
         assertFalse("无持久权限的 URI 不得直接存入 filePath", BookContentAccess.isContentUri(relinked.filePath))
         assertNull(relinked.contentPath)
 
@@ -475,7 +572,7 @@ class DirectReferenceImportTest {
         env.saf.mount(oversizedUri, oversized, persistable = true, unknownSize = true)
 
         val error = runCatching {
-            env.maintenance.relinkSource(relinked.id, oversizedUri, oversizedUri)
+            env.maintenance.relinkSource(relinked.id, oversizedUri, oversizedUri) { true }
         }.exceptionOrNull()
         assertTrue("未知大小的超限流必须被拦截", error is IllegalArgumentException && error.message!!.contains("上限"))
         assertTrue("重关联失败后原有的内部单份文件必须完好可读", env.textProvider.isBookSourceReadable(env.books.getBook(relinked.id)!!))
@@ -577,12 +674,12 @@ class DirectReferenceImportTest {
         val v2Uri = "content://external/books/volumes_v2.txt"
         env.saf.mount(v2Uri, v2File, persistable = true)
 
-        env.maintenance.relinkSource(txtBook.id, v2Uri, v2Uri)
+        env.maintenance.relinkSource(txtBook.id, v2Uri, v2Uri) { true }
         val migratedNote = env.highlightDao.getById(hlId)!!
         assertEquals("即使存在多个同名『第一章』且下标偏移，划线仍应精准定位到第二卷的对应章节", 4, migratedNote.chapterIndex)
         assertEquals(targetPhrase, migratedNote.text)
 
-        // 2. 合成标题（“第 1 节”）的 EPUB 原文件丢失后关联修订版：进度应回退到同序号章首而非 UNAVAILABLE
+        // 2. 合成标题的 EPUB 原文件丢失且版本不同时，不能仅凭同序号推测阅读章节。
         val epub1 = buildSampleEpub(
             temp.newFile("synth1.epub"),
             chapters = listOf(
@@ -608,12 +705,20 @@ class DirectReferenceImportTest {
         )
         val epub2Uri = "content://external/books/synth2.epub"
         env.saf.mount(epub2Uri, epub2, persistable = true)
-        env.books.saveProgress(ProgressEntity(epubBook.id, chapterIndex = 1, charOffset = 5, percent = 0.5f))
-        env.maintenance.relinkSource(epubBook.id, epub2Uri, epub2Uri)
-        val epubProgress = env.books.getProgress(epubBook.id)!!
-        assertEquals(1, epubProgress.chapterIndex)
-        assertEquals(0, epubProgress.charOffset)
-        assertEquals(oldEpubChapters.size + 1, env.books.getChapters(epubBook.id).size)
+        val originalProgress = ProgressEntity(epubBook.id, chapterIndex = 1, charOffset = 5, percent = 0.5f)
+        env.books.saveProgress(originalProgress)
+        var confirmationRequested = false
+        val error = runCatching {
+            env.maintenance.relinkSource(epubBook.id, epub2Uri, epub2Uri) {
+                confirmationRequested = true
+                true
+            }
+        }.exceptionOrNull()
+        assertTrue(error is IllegalStateException && error.message!!.contains("无法确认原阅读章节"))
+        assertFalse(confirmationRequested)
+        assertEquals(epubBook, env.books.getBook(epubBook.id))
+        assertEquals(originalProgress, env.books.getProgress(epubBook.id))
+        assertEquals(oldEpubChapters, env.books.getChapters(epubBook.id))
     }
 
     @Test
@@ -637,10 +742,10 @@ class DirectReferenceImportTest {
         assertEquals(20, count)
         assertEquals(14, env.books.getProgress(book.id)?.chapterIndex)
         assertEquals(10, env.books.getProgress(book.id)?.charOffset)
-        // rawSourceDigest 采样至多 3 次 + 旧第14章 1 次 + 候选新章节至多 3 次，远小于全书 20 章全读
+        // 正文仍只按需读取；独立的至多两字节前置上下文不计作整章读取。
         assertTrue(
             "applyChapters 应仅按需读取被引用章节而非全书 20 章，实际 rangeReads=${env.saf.rangeReads.size}",
-            env.saf.rangeReads.size <= 8
+            env.saf.rangeReads.count { it.second > 2 } <= 8
         )
     }
 
@@ -656,7 +761,8 @@ class DirectReferenceImportTest {
         val progressDao = InMemoryProgressDao()
         val bookmarkDao = InMemoryBookmarkDao()
         val highlightDao = InMemoryHighlightDao()
-        val books = BookRepository(bookDao, chapterDao, progressDao, paths)
+        val preferences = InMemoryPreferenceDao()
+        val books = BookRepository(bookDao, chapterDao, progressDao, paths, preferenceDao = preferences)
         val textProvider = ChapterTextProvider(paths, contentAccess)
         val pipeline = ImportPipeline(context, paths, books, scope, appDatabase = null, contentAccess = contentAccess)
         val maintenance = BookMaintenance(books, paths, bookmarkDao, highlightDao, contentAccess = contentAccess)
@@ -807,6 +913,7 @@ class DirectReferenceImportTest {
             map.values.firstOrNull { it.bookId == bookId && it.chapterIndex == chapterIndex && it.charOffset == charOffset }
         override suspend fun getAllForBook(bookId: Long): List<BookmarkEntity> = map.values.filter { it.bookId == bookId }
         override suspend fun getAll(): List<BookmarkEntity> = map.values.toList()
+        override suspend fun contentGeneration(bookId: Long): String? = null
     }
 
     private class InMemoryHighlightDao : HighlightDao {
@@ -826,5 +933,16 @@ class DirectReferenceImportTest {
             map.values.filter { it.bookId == bookId && it.chapterIndex == chapterIndex }
         override suspend fun getAllForBook(bookId: Long): List<HighlightEntity> = map.values.filter { it.bookId == bookId }
         override suspend fun getAll(): List<HighlightEntity> = map.values.toList()
+        override suspend fun contentGeneration(bookId: Long): String? = null
+    }
+
+    private class InMemoryPreferenceDao : PreferenceDao {
+        private val entries = linkedMapOf<String, PreferenceEntity>()
+        override suspend fun put(preference: PreferenceEntity) { entries[preference.key] = preference }
+        override suspend fun get(key: String): String? = entries[key]?.value
+        override fun observe(key: String): Flow<String?> = MutableStateFlow(entries[key]?.value)
+        override suspend fun remove(key: String) { entries.remove(key) }
+        override suspend fun removeByPrefix(prefix: String) { entries.keys.removeAll { it.startsWith(prefix) } }
+        override suspend fun getAll(): List<PreferenceEntity> = entries.values.toList()
     }
 }

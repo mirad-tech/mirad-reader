@@ -60,7 +60,7 @@ internal class BookEditionUpdater internal constructor(
         val highlights: List<HighlightEntity>
     )
 
-    private suspend fun read(id: Long): Records? {
+    internal suspend fun read(id: Long): Records? {
         val book = books.getBook(id) ?: return null
         return Records(
             book, books.getChapters(id), books.getProgress(id),
@@ -69,7 +69,7 @@ internal class BookEditionUpdater internal constructor(
         )
     }
 
-    suspend fun inspect(candidate: EditionCandidate, incoming: BookEntity, chapters: List<ChapterEntity>): Update {
+    suspend fun inspect(candidate: EditionCandidate, incoming: BookEntity, chapters: List<ChapterEntity>, sourceVersion: SourceVersion? = null): Update {
         val old = inTransaction { read(candidate.book.id) } ?: throw EditionChanged()
         if (!sameContentVersion(old.book, candidate.book) ||
             EditionMatcher.versionModified(contentAccess, old.book) != candidate.normalizedModified) throw EditionChanged()
@@ -79,7 +79,8 @@ internal class BookEditionUpdater internal constructor(
             chapters = chapters,
             relation = candidate.relation,
             textProvider = ChapterTextProvider(contentAccess = contentAccess),
-            exactTxtCharPrefix = candidate.exactCharPrefix
+            exactTxtCharPrefix = candidate.exactCharPrefix,
+            sameSourceVersion = sourceVersion != null && books.sourceVersionStore.get(old.book.id) == sourceVersion
         )
     }
 
@@ -88,11 +89,13 @@ internal class BookEditionUpdater internal constructor(
         update: Update,
         incoming: BookEntity,
         chapters: List<ChapterEntity>,
+        sourceVersion: SourceVersion,
         sourceStamp: BookSourceStampStore.SourceStamp? = null,
         downloadTaskId: String? = null,
         downloadReceipts: DownloadImportReceipts? = null,
         stagedCoverFile: File? = incoming.coverPath?.let(::File)
     ): BookEntity {
+        sourceVersion.verify(contentAccess, incoming.filePath)
         var hybridCoverPath: String? = null
         if (update.old.book.format == BookFormat.TXT && stagedCoverFile != null) {
             val snapMeta = books.customMetaStore.resolve(update.old.book, incoming.title, incoming.author)
@@ -165,6 +168,7 @@ internal class BookEditionUpdater internal constructor(
                 if (highlight.id == 0L) highlightDao.insert(highlight) else highlightDao.update(highlight)
             }
             books.sourceStampStore.save(id, sourceStamp)
+            books.sourceVersionStore.save(id, sourceVersion)
             if (downloadTaskId != null) {
                 downloadReceipts?.record(downloadTaskId, id)
             }
@@ -185,7 +189,8 @@ internal class BookEditionUpdater internal constructor(
             chapters: List<ChapterEntity>,
             relation: EditionRelation,
             textProvider: ChapterTextProvider = ChapterTextProvider(),
-            exactTxtCharPrefix: Boolean = (old.book.format == BookFormat.TXT && relation == EditionRelation.EXTENDS)
+            exactTxtCharPrefix: Boolean = (old.book.format == BookFormat.TXT && relation == EditionRelation.EXTENDS),
+            sameSourceVersion: Boolean = false
         ): Update {
             val anchors = EditionAnchors(
                 oldBook = old.book,
@@ -194,7 +199,8 @@ internal class BookEditionUpdater internal constructor(
                 newChapters = chapters,
                 relation = relation,
                 textProvider = textProvider,
-                exactTxtCharPrefix = exactTxtCharPrefix
+                exactTxtCharPrefix = exactTxtCharPrefix,
+                sameSourceVersion = sameSourceVersion
             )
             val progress = old.progress
             val exact = progress?.let { anchors.point(it.chapterIndex, it.charOffset) }
@@ -205,8 +211,10 @@ internal class BookEditionUpdater internal constructor(
                 position != null -> ResumeImpact.CHAPTER_START
                 else -> ResumeImpact.UNAVAILABLE
             }
+            val unchangedCoordinates = sameSourceVersion && old.book.encoding == incoming.encoding &&
+                old.chapters.map { it.copy(id = 0L, bookId = 0L) } == chapters.map { it.copy(id = 0L, bookId = 0L) }
             val newProgress = if (progress != null && position != null) {
-                progress.copy(
+                if (unchangedCoordinates && exact != null) progress else progress.copy(
                     chapterIndex = position.chapter, charOffset = position.offset, pageIndex = 0, pageCount = 0,
                     percent = ProgressMath.percent(chapters.map { it.charCount.coerceAtLeast(1L) }, position.chapter, position.offset)
                 )

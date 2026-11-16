@@ -114,7 +114,7 @@ class EditionUpdateComprehensiveTest {
             incomingOnlyTitleChanged,
             env.books.getChapters(oldId)
         )
-        val publishedOnlyAuthor = updater.publish(inspectedOnlyAuthor, incomingOnlyTitleChanged, env.books.getChapters(oldId))
+        val publishedOnlyAuthor = updater.publish(inspectedOnlyAuthor, incomingOnlyTitleChanged, env.books.getChapters(oldId), SourceVersion.capture(env.contentAccess, incomingOnlyTitleChanged.filePath))
         assertEquals("仅改过作者而未改书名时，书名仍应随新文件更新", "剑来(1-900章)", publishedOnlyAuthor.title)
         assertEquals("用户补填的作者必须保留", "烽火戏诸侯", publishedOnlyAuthor.author)
         assertEquals("仅改作者但书名已更新时，封面路径应切换为新封面而非停留在旧书名封面", incomingOnlyTitleChanged.coverPath, publishedOnlyAuthor.coverPath)
@@ -167,13 +167,13 @@ class EditionUpdateComprehensiveTest {
         }
         val u2 = "content://external/books/诗词选_全本新版.txt"
         env.saf.mount(u2, f2, persistable = true)
-        val relinked = env.maintenance.relinkSource(id, u2, u2, "诗词选_全本新版.txt")
+        val relinked = env.maintenance.relinkSource(id, u2, u2, "诗词选_全本新版.txt") { true }!!
         assertEquals("诗词选_全本新版", relinked.title)
         assertFalse("重关联到续章文件后 finished 应复位", relinked.finished)
 
         // 手动改名后再次重关联：保留手动改过的书名
         env.books.updateMeta(id, "我的诗词选", "白居易")
-        val relinked2 = env.maintenance.relinkSource(id, u2, u2, "随便什么文件名.txt")
+        val relinked2 = env.maintenance.relinkSource(id, u2, u2, "随便什么文件名.txt") { true }!!
         assertEquals("我的诗词选", relinked2.title)
         assertEquals("白居易", relinked2.author)
     }
@@ -636,7 +636,7 @@ class EditionUpdateComprehensiveTest {
 
     // ------------------------------------------------------------------ 测试夹具
 
-    private inner class Harness(scope: CoroutineScope) {
+    internal inner class Harness(scope: CoroutineScope) {
         val context = object : ContextWrapper(null) {
             override fun getFilesDir(): File = rootDir
         }
@@ -672,7 +672,7 @@ class EditionUpdateComprehensiveTest {
         val maintenance = BookMaintenance(books, paths, bookmarkDao, highlightDao, contentAccess = contentAccess)
     }
 
-    private class FakeSaf : BookContentAccess.UriBackend {
+    internal class FakeSaf : BookContentAccess.UriBackend {
         private val files = ConcurrentHashMap<String, File>()
         val zipOpens = AtomicInteger(0)
 
@@ -787,7 +787,7 @@ class EditionUpdateComprehensiveTest {
         return file
     }
 
-    private class MemPreferenceDao : PreferenceDao {
+    internal class MemPreferenceDao : PreferenceDao {
         private val map = ConcurrentHashMap<String, PreferenceEntity>()
         override suspend fun put(preference: PreferenceEntity) { map[preference.key] = preference }
         override suspend fun get(key: String): String? = map[key]?.value
@@ -799,7 +799,7 @@ class EditionUpdateComprehensiveTest {
         override suspend fun getAll(): List<PreferenceEntity> = map.values.toList()
     }
 
-    private class MemBookDao : BookDao {
+    internal class MemBookDao : BookDao {
         val records = linkedMapOf<Long, BookEntity>()
         private var nextId = 1L
         override suspend fun insert(book: BookEntity): Long {
@@ -835,7 +835,7 @@ class EditionUpdateComprehensiveTest {
         }
     }
 
-    private class MemChapterDao : ChapterDao {
+    internal class MemChapterDao : ChapterDao {
         private val items = mutableListOf<ChapterEntity>()
         override suspend fun insertAll(chapters: List<ChapterEntity>) { items += chapters }
         override suspend fun deleteForBook(bookId: Long) { items.removeAll { it.bookId == bookId } }
@@ -844,7 +844,7 @@ class EditionUpdateComprehensiveTest {
         override suspend fun countForBook(bookId: Long): Int = items.count { it.bookId == bookId }
     }
 
-    private class MemProgressDao : ProgressDao {
+    internal class MemProgressDao : ProgressDao {
         private val map = mutableMapOf<Long, ProgressEntity>()
         override suspend fun upsert(progress: ProgressEntity) { map[progress.bookId] = progress }
         override suspend fun get(bookId: Long): ProgressEntity? = map[bookId]
@@ -852,7 +852,7 @@ class EditionUpdateComprehensiveTest {
         override suspend fun deleteForBook(bookId: Long) { map.remove(bookId) }
     }
 
-    private class MemBookmarkDao : BookmarkDao {
+    internal class MemBookmarkDao : BookmarkDao {
         private val map = linkedMapOf<Long, BookmarkEntity>()
         private var nextId = 1L
         override suspend fun insert(bookmark: BookmarkEntity): Long {
@@ -862,6 +862,7 @@ class EditionUpdateComprehensiveTest {
         }
         override suspend fun update(bookmark: BookmarkEntity) { map[bookmark.id] = bookmark }
         override suspend fun delete(bookmark: BookmarkEntity) { map.remove(bookmark.id) }
+        override suspend fun contentGeneration(bookId: Long): String? = null
         override suspend fun getById(id: Long): BookmarkEntity? = map[id]
         override suspend fun deleteForBook(bookId: Long) { map.values.removeAll { it.bookId == bookId } }
         override fun observeForBook(bookId: Long): Flow<List<BookmarkEntity>> = MutableStateFlow(emptyList())
@@ -871,7 +872,7 @@ class EditionUpdateComprehensiveTest {
         override suspend fun getAll(): List<BookmarkEntity> = map.values.toList()
     }
 
-    private class MemHighlightDao : HighlightDao {
+    internal class MemHighlightDao : HighlightDao {
         private val map = linkedMapOf<Long, HighlightEntity>()
         private var nextId = 1L
         override suspend fun insert(highlight: HighlightEntity): Long {
@@ -881,6 +882,7 @@ class EditionUpdateComprehensiveTest {
         }
         override suspend fun update(highlight: HighlightEntity) { map[highlight.id] = highlight }
         override suspend fun delete(highlight: HighlightEntity) { map.remove(highlight.id) }
+        override suspend fun contentGeneration(bookId: Long): String? = null
         override suspend fun getById(id: Long): HighlightEntity? = map[id]
         override suspend fun deleteForBook(bookId: Long) { map.values.removeAll { it.bookId == bookId } }
         override fun observeForBook(bookId: Long): Flow<List<HighlightEntity>> = MutableStateFlow(emptyList())

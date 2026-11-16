@@ -168,7 +168,7 @@ fun NotesScreen(
     fun <T : Any> deleteNote(
         label: String,
         remove: suspend () -> T?,
-        restore: suspend (T) -> Long
+        restore: suspend (T) -> Boolean
     ) {
         changeNotes("删除${label}失败", remove) { removed, refreshed ->
             if (removed != null) {
@@ -177,9 +177,10 @@ fun NotesScreen(
                     kind = FeedbackKind.SUCCESS,
                     timeoutMillis = 5000L,
                     action = FeedbackAction("撤销") {
-                        changeNotes("撤销失败", { restore(removed) }) { _, reloaded ->
+                        changeNotes("撤销失败", { restore(removed) }) { locationInvalidated, reloaded ->
+                            val message = if (locationInvalidated) "已撤销，正文已更新，位置已失效" else "已撤销"
                             feedback.show(
-                                if (reloaded) "已撤销" else "已撤销，列表刷新失败",
+                                if (reloaded) message else "$message，列表刷新失败",
                                 if (reloaded) FeedbackKind.SUCCESS else FeedbackKind.ERROR
                             )
                         }
@@ -296,7 +297,7 @@ fun NotesScreen(
                             onOpen = { onOpenBook(item.bookId) },
                             onDelete = {
                                 deleteNote("划线", { container.notes.deleteHighlightForUndo(item.id) },
-                                    container.notes::addHighlight)
+                                    container.notes::restoreHighlightForUndo)
                             }
                         )
                     }
@@ -313,7 +314,7 @@ fun NotesScreen(
                             onOpen = { onOpenBook(item.bookId) },
                             onDelete = {
                                 deleteNote("书签", { container.notes.deleteBookmarkForUndo(item.id) },
-                                    container.notes::addBookmark)
+                                    container.notes::restoreBookmarkForUndo)
                             }
                         )
                     }

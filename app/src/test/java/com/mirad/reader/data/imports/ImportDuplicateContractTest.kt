@@ -2,6 +2,7 @@ package com.mirad.reader.data.imports
 
 import android.content.ContextWrapper
 import com.mirad.reader.data.AppPaths
+import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.db.dao.BookDao
 import com.mirad.reader.data.db.dao.ChapterDao
 import com.mirad.reader.data.db.dao.ProgressDao
@@ -199,17 +200,24 @@ class ImportDuplicateContractTest {
         val old = txtEdition(8, "旧小说", start + "\n末尾没有改写。\n")
         val incoming = txtEdition(0, "改过文件名", start + "\n末尾没有改写。\n\n第二章\n新正文。")
         val matcher = EditionMatcher { emptyList() }
-        assertEquals(8L, matcher.match(incoming, incoming.title, null, listOf(old)).automatic?.book?.id)
-        assertEquals(EditionRelation.SAME, matcher.match(old.copy(title = "重复副本"), "副本", null, listOf(old)).duplicate?.relation)
-        assertEquals(EditionRelation.OLDER, matcher.match(old, old.title, null, listOf(incoming)).duplicate?.relation)
+        val access = BookContentAccess()
+        val incomingVersion = SourceVersion.capture(access, incoming.filePath)
+        val oldVersion = SourceVersion.capture(access, old.filePath)
+        val duplicate = txtEdition(0, "重复副本", File(old.filePath).readText())
+        assertTrue(duplicate.filePath != old.filePath)
+        assertEquals(8L, matcher.match(incoming, incoming.title, null, listOf(old), incomingVersion).automatic?.book?.id)
+        assertEquals(EditionRelation.SAME, matcher.match(duplicate, "副本", null, listOf(old),
+            SourceVersion.capture(access, duplicate.filePath)).duplicate?.relation)
+        assertEquals(EditionRelation.OLDER, matcher.match(old, old.title, null, listOf(incoming), oldVersion).duplicate?.relation)
 
         val similar = txtEdition(9, "旧小说", start + "\n旧章后面其实是另一个故事。")
-        val review = matcher.match(incoming.copy(title = old.title), old.title, null, listOf(old, similar))
+        val review = matcher.match(incoming.copy(title = old.title), old.title, null, listOf(old, similar), incomingVersion)
         assertEquals(listOf(8L, 9L), review.candidates.map { it.book.id })
         assertEquals(null, review.automatic)
         val unrelated = txtEdition(10, old.title, "完全无关的正文。")
         assertEquals(EditionRelation.UNKNOWN,
-            matcher.match(unrelated, unrelated.title, null, listOf(old)).candidates.single().relation)
+            matcher.match(unrelated, unrelated.title, null, listOf(old),
+                SourceVersion.capture(access, unrelated.filePath)).candidates.single().relation)
     }
 
     @Test fun epubUsesReadingOrderAndIgnoresPackagedChapterPaths() = runBlocking {
@@ -225,9 +233,10 @@ class ImportDuplicateContractTest {
         ))
         val signatures = listOf(body, next).map { EpubChapterSignature.of(com.mirad.reader.core.html.Html.toPlainText(it)) }
         val matcher = EditionMatcher { oldChapters }
-        val match = matcher.match(incoming, incoming.title, signatures, listOf(old))
+        val version = SourceVersion.capture(BookContentAccess(), incoming.filePath)
+        val match = matcher.match(incoming, incoming.title, signatures, listOf(old), version)
         assertEquals(7L, match.automatic?.book?.id)
-        assertEquals(null, matcher.match(incoming, incoming.title, signatures.reversed(), listOf(old)).automatic)
+        assertEquals(null, matcher.match(incoming, incoming.title, signatures.reversed(), listOf(old), version).automatic)
         val model = checkNotNull(EditionAnchors.epubReaderText(body))
         assertEquals("第一章\n雨夜 & 旧城\n灯亮了。", model)
         val progress = ProgressEntity(7L, charOffset = model.indexOf("旧城"), percent = .5f)

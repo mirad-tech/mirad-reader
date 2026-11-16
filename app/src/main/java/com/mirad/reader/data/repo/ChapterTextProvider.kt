@@ -69,11 +69,17 @@ open class ChapterTextProvider(
             return if (contentAccess.isReadable(book.filePath)) "" else null
         }
         val rawBytes = contentAccess.readRange(book.filePath, chapter.startByte, length) ?: return null
+        val prefixLength = minOf(2L, chapter.startByte).toInt()
+        val previousRawBytes = if (prefixLength == 0) ByteArray(0) else {
+            contentAccess.readRange(book.filePath, chapter.startByte - prefixLength, prefixLength) ?: return null
+        }
         return runCatching {
             StreamingTxtProcessor.decodeRawSlice(
                 rawBytes = rawBytes,
                 charsetName = book.encoding,
-                stripLeadingBom = chapter.startByte == 0L
+                stripLeadingBom = chapter.startByte == 0L,
+                previousRawBytes = previousRawBytes,
+                isSourceEnd = chapter.endByte == book.fileSize
             )
         }.getOrNull()
     }

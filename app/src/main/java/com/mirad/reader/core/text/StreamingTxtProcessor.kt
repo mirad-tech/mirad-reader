@@ -114,7 +114,7 @@ object StreamingTxtProcessor {
                 totalChars += len
                 charsSinceLastFallback += len
                 // 仅在 emptyLineStreak == 0（非空行或内部非空块结束）处记录兜底切分点，
-                // 保证下一节独立调用 decodeRawSlice 时初始 emptyLineStreak = 0 与全书流式状态 100% 恒等。
+                // 配合切片的自然行边界上下文，下一节的初始 emptyLineStreak = 0 与全书状态保持一致。
                 if (charsSinceLastFallback >= FALLBACK_CHUNK_CHARS && emptyLineStreak == 0) {
                     fallbackPoints.add(SplitPoint(totalChars.toInt(), rawEndByte))
                     charsSinceLastFallback = 0L
@@ -146,22 +146,40 @@ object StreamingTxtProcessor {
     /**
      * 解码并归一化原文件的单个章节字节切片，与 [indexRaw] 共用同一套行扫描与清洗状态机，
      * 确保产出文本长度与章节的 `charCount`、`titleLineChars` 严格一致。
+     * [previousRawBytes] 为起点前至多两个字节，[isSourceEnd] 区分章节中断与真正文件结尾。
      */
     fun decodeRawSlice(
         rawBytes: ByteArray,
         charsetName: String?,
-        stripLeadingBom: Boolean
+        stripLeadingBom: Boolean,
+        previousRawBytes: ByteArray,
+        isSourceEnd: Boolean
     ): String {
         if (rawBytes.isEmpty()) return ""
         val charset = charsetForNameOrUtf8(charsetName, rawBytes)
         val out = StringBuilder(rawBytes.size)
         val normalizer = LineNormalizer(
             stripLeadingBom = stripLeadingBom,
+            startsInsideLine = previousRawBytes.isNotEmpty() && !endsWithLineBreak(previousRawBytes, charset),
             onTitleCandidate = null,
             onNormalizedPiece = { piece, _, _ -> out.append(piece) }
         )
-        scanRawStream(ByteArrayInputStream(rawBytes), charset, normalizer)
+        scanRawStream(
+            ByteArrayInputStream(rawBytes), charset, normalizer,
+            endsInsideLine = !isSourceEnd && !endsWithLineBreak(rawBytes, charset)
+        )
         return out.toString()
+    }
+
+    /** 切片边界至多需要前一个码元，不从文件开头重扫，也不把行内空白误当作行尾。 */
+    private fun endsWithLineBreak(bytes: ByteArray, charset: Charset): Boolean {
+        if ((charset == Charsets.UTF_16LE || charset == Charsets.UTF_16BE) && bytes.size < 2) return false
+        val unit = when (charset) {
+            Charsets.UTF_16LE -> (bytes[bytes.size - 2].toInt() and 0xFF) or ((bytes.last().toInt() and 0xFF) shl 8)
+            Charsets.UTF_16BE -> ((bytes[bytes.size - 2].toInt() and 0xFF) shl 8) or (bytes.last().toInt() and 0xFF)
+            else -> bytes.last().toInt() and 0xFF
+        }
+        return unit == 0x0A || unit == 0x0D
     }
 
     /**
@@ -280,12 +298,13 @@ object StreamingTxtProcessor {
 
     private class LineNormalizer(
         stripLeadingBom: Boolean,
+        startsInsideLine: Boolean = false,
         private val onTitleCandidate: ((trimmed: String, lineLenWithNewline: Int, startChar: Int, rawLineStartByte: Long) -> Unit)?,
         private val onNormalizedPiece: (piece: String, rawEndByte: Long, emptyLineStreak: Int) -> Unit
     ) {
         private var isFirstChar = stripLeadingBom
         private var emptyLineStreak = 0
-        private var isLineContinuation = false
+        private var isLineContinuation = startsInsideLine
         private var emittedChars = 0
 
         fun onInternalChunk(rawChunk: String, rawEndByte: Long) {
@@ -343,7 +362,8 @@ object StreamingTxtProcessor {
         input: InputStream,
         charset: Charset,
         normalizer: LineNormalizer,
-        maxRawBytes: Long = Long.MAX_VALUE
+        maxRawBytes: Long = Long.MAX_VALUE,
+        endsInsideLine: Boolean = false
     ): Long {
         val scanner = RawChunkScanner(charset, normalizer)
         val readBuf = ByteArray(16 * 1024)
@@ -357,7 +377,7 @@ object StreamingTxtProcessor {
             }
             scanner.feed(readBuf, n)
         }
-        return scanner.finish()
+        return scanner.finish(endsInsideLine)
     }
 
     private fun newReplacingDecoder(charset: Charset): CharsetDecoder =
@@ -400,7 +420,7 @@ object StreamingTxtProcessor {
             if (isUtf16) feedUtf16(chunk, length) else feedByteDelimited(chunk, length)
         }
 
-        fun finish(): Long {
+        fun finish(endsInsideLine: Boolean = false): Long {
             if (isUtf16) {
                 if (seenCR) {
                     seenCR = false
@@ -417,7 +437,8 @@ object StreamingTxtProcessor {
                 if (lineLen > 0) {
                     val lineText = decodeCompleteBytes(lineBuf, lineLen, charset)
                     lineLen = 0
-                    normalizer.onNaturalLine(lineText, lineStartByte, streamPos)
+                    if (endsInsideLine) normalizer.onInternalChunk(lineText, streamPos)
+                    else normalizer.onNaturalLine(lineText, lineStartByte, streamPos)
                     lineStartByte = streamPos
                 }
             } else {
@@ -431,7 +452,8 @@ object StreamingTxtProcessor {
                 } else if (lineLen > 0) {
                     val lineText = decodeCompleteBytes(lineBuf, lineLen, charset)
                     lineLen = 0
-                    normalizer.onNaturalLine(lineText, lineStartByte, streamPos)
+                    if (endsInsideLine) normalizer.onInternalChunk(lineText, streamPos)
+                    else normalizer.onNaturalLine(lineText, lineStartByte, streamPos)
                     lineStartByte = streamPos
                 }
             }

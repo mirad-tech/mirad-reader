@@ -57,17 +57,17 @@ fun ReaderScreen(
     var error by remember(bookId) { mutableStateOf<String?>(null) }
     var missingSource by remember(bookId) { mutableStateOf(false) }
     var reloadKey by remember(bookId) { mutableIntStateOf(0) }
-    var relinking by remember(bookId) { mutableStateOf(false) }
+    val relinkRequest = com.mirad.reader.ui.common.rememberRelinkRequest(container.maintenance, bookId)
+    val relinking = relinkRequest.busy
 
     val relinkPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
-        relinking = true
         scope.launch {
             try {
                 BookContentAccess.tryTakePersistableReadPermission(context, uri)
                 val uriText = uri.toString()
                 val displayName = com.mirad.reader.data.imports.ImportSources.nameOf(context, uri)
-                container.maintenance.relinkSource(bookId, uriText, uriText, displayName)
+                if (relinkRequest.run(bookId, uriText, displayName) == null) return@launch
                 error = null
                 missingSource = false
                 reloadKey++
@@ -75,8 +75,6 @@ fun ReaderScreen(
                 throw e
             } catch (e: Exception) {
                 container.feedback.show(e.message ?: "无法关联所选文件", FeedbackKind.ERROR)
-            } finally {
-                relinking = false
             }
         }
     }

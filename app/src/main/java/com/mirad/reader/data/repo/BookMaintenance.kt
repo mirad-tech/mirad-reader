@@ -28,7 +28,9 @@ import com.mirad.reader.data.imports.CoverGenerator
 import com.mirad.reader.data.imports.EditionRelation
 import com.mirad.reader.data.imports.FileFingerprint
 import com.mirad.reader.data.imports.ImportPipeline
-import com.mirad.reader.data.imports.resolveFinishedAfterUpdate
+import com.mirad.reader.data.imports.ImportUpdatePreview
+import com.mirad.reader.data.imports.ResumeImpact
+import com.mirad.reader.data.imports.SourceVersion
 import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.io.MissingBookSourceException
 import com.mirad.reader.ui.shelf.CoverCache
@@ -260,19 +262,19 @@ class BookMaintenance internal constructor(
                 if (newIndex !in slices.indices) return null
                 if (newMapsCache.containsKey(newIndex)) return newMapsCache[newIndex]
                 val slice = slices[newIndex]
-                val rawLen = (slice.endByte - slice.startByte)
-                val loaded = if (rawLen in 0..Int.MAX_VALUE) {
-                    val rawBytes = if (rawLen == 0L) ByteArray(0)
-                    else contentAccess.readRange(current.filePath, slice.startByte, rawLen.toInt())
-                    rawBytes?.let {
-                        val body = StreamingTxtProcessor.decodeRawSlice(
-                            rawBytes = it,
-                            charsetName = current.encoding,
-                            stripLeadingBom = slice.startByte == 0L
-                        )
-                        ChapterTextMap(body, slice.title, slice.titleLineChars, slice.isVolume, slice.startChar)
-                    }
-                } else null
+                val chapter = ChapterEntity(
+                    bookId = current.id,
+                    index = newIndex,
+                    title = slice.title,
+                    startByte = slice.startByte,
+                    endByte = slice.endByte,
+                    charCount = slice.charCount.toLong(),
+                    titleLineChars = slice.titleLineChars,
+                    isVolume = slice.isVolume
+                )
+                val loaded = textProvider.readTxtTextOrNull(current, chapter)?.let { body ->
+                    ChapterTextMap(body, slice.title, slice.titleLineChars, slice.isVolume, slice.startChar)
+                }
                 newMapsCache[newIndex] = loaded
                 return loaded
             }
@@ -586,9 +588,9 @@ class BookMaintenance internal constructor(
         bookId: Long,
         newPath: String,
         newSourceUri: String? = newPath,
-        newDisplayName: String? = null
-    ): BookEntity = books.contentLock(bookId).withLock {
-        withContext(Dispatchers.IO) {
+        newDisplayName: String? = null,
+        confirmImpact: suspend (ImportUpdatePreview) -> Boolean
+    ): BookEntity? = withContext(Dispatchers.IO) {
             val oldBook = books.getBook(bookId) ?: error("书籍已不存在")
             if (!contentAccess.isReadable(newPath)) {
                 throw MissingBookSourceException("无法读取所选文件")
@@ -634,6 +636,7 @@ class BookMaintenance internal constructor(
                     effectivePath = target.absolutePath
                 }
 
+                val sourceVersion = SourceVersion.capture(contentAccess, effectivePath)
                 val stemFromDisplay = newDisplayName?.substringBeforeLast('.')?.trim()?.takeIf { it.isNotEmpty() }
                 val stemFromSource = (newSourceUri ?: newPath).let(BookCustomMetaStore::extractFileNameStem)
                 val derivedDisplayTitle = stemFromDisplay ?: stemFromSource ?: oldBook.title
@@ -735,145 +738,64 @@ class BookMaintenance internal constructor(
                     )
                 }
 
+                sourceVersion.verify(contentAccess, effectivePath)
                 val capturedStamp = BookSourceStampStore.capture(contentAccess, effectivePath, updatedBook.fileSize)
+                val updater = BookEditionUpdater(books, bookmarkDao, highlightDao, database, contentAccess)
+                val update = books.contentLock(bookId).withLock {
+                    val records = runInTransaction { updater.read(bookId) } ?: error("书籍已不存在")
+                    BookEditionUpdater.map(
+                        old = records,
+                        incoming = updatedBook,
+                        chapters = newChapters,
+                        relation = EditionRelation.UNKNOWN,
+                        textProvider = textProvider,
+                        sameSourceVersion = books.sourceVersionStore.get(bookId) == sourceVersion
+                    )
+                }
+                val preview = update.preview
+                check(preview.resume != ResumeImpact.UNAVAILABLE) { "无法确认原阅读章节，未替换原书" }
+                if ((preview.resume == ResumeImpact.CHAPTER_START || preview.lostLocations > 0) &&
+                    !confirmImpact(preview)) return@withContext null
 
                 currentCoroutineContext().ensureActive()
-
-                val oldManagedTokens = listOfNotNull(
-                    BookContentAccess.managedBookToken(paths, oldBook.filePath),
-                    BookContentAccess.managedBookToken(paths, oldBook.contentPath)
-                ).distinct()
-                val newManagedToken = BookContentAccess.managedBookToken(paths, effectivePath)
-                var obsoleteCoverPath: String? = null
-
-                val saved = withContext(NonCancellable) {
-                    val result = runInTransaction {
-                        obsoleteCoverPath = null
-                        val latest = books.getBook(bookId) ?: error("书籍已不存在")
-                        val oldChapters = books.getChapters(bookId)
-                        val oldProgress = books.getProgress(bookId)
-                        val oldBookmarks = bookmarkDao.getAllForBook(bookId).sortedBy { it.id }
-                        val oldHighlights = highlightDao.getAllForBook(bookId).sortedBy { it.id }
-
-                        val meta = books.customMetaStore.resolve(latest, updatedBook.title, updatedBook.author)
-                        val resolvedCoverPath = if (latest.format == BookFormat.EPUB) {
-                            updatedBook.coverPath ?: latest.coverPath
-                        } else {
-                            if (meta.title == latest.title && meta.author == latest.author) {
-                                latest.coverPath
-                            } else {
-                                updatedBook.coverPath ?: latest.coverPath
-                            }
-                        }
-                        if (!latest.coverPath.isNullOrBlank() && latest.coverPath != resolvedCoverPath) {
-                            obsoleteCoverPath = latest.coverPath
-                        }
-
-                        val identicalStructure = oldChapters.size == newChapters.size &&
-                            oldChapters.indices.all { idx ->
-                                oldChapters[idx].charCount == newChapters[idx].charCount &&
-                                    oldChapters[idx].title == newChapters[idx].title
-                            }
-
-                        val candidateBook = latest.copy(
-                            title = meta.title,
-                            author = meta.author,
-                            coverPath = resolvedCoverPath,
-                            filePath = updatedBook.filePath,
-                            contentPath = null,
-                            sourceUri = updatedBook.sourceUri,
-                            fileSize = updatedBook.fileSize,
-                            encoding = updatedBook.encoding,
-                            chapterRuleId = updatedBook.chapterRuleId,
-                            chapterRegex = updatedBook.chapterRegex,
-                            totalChapters = updatedBook.totalChapters,
-                            totalChars = updatedBook.totalChars,
-                            tocJson = updatedBook.tocJson,
-                            language = updatedBook.language ?: latest.language,
-                            publisher = updatedBook.publisher ?: latest.publisher,
-                            description = updatedBook.description ?: latest.description
+                books.contentLock(bookId).withLock {
+                    // 等待用户期间不持锁；发布重新核验源文件和生成预览时的旧记录。
+                    withContext(NonCancellable) {
+                        val saved = updater.publish(
+                            update = update,
+                            incoming = updatedBook,
+                            chapters = newChapters,
+                            sourceVersion = sourceVersion,
+                            sourceStamp = capturedStamp,
+                            stagedCoverFile = paths.coverFile(assetToken)
                         )
-
-                        var resultingProgress = oldProgress
-                        var mappedResult: BookEditionUpdater.Update? = null
-                        if (!identicalStructure) {
-                            val mapped = BookEditionUpdater.map(
-                                old = BookEditionUpdater.Records(latest, oldChapters, oldProgress, oldBookmarks, oldHighlights),
-                                incoming = candidateBook,
-                                chapters = newChapters,
-                                relation = EditionRelation.UNKNOWN,
-                                textProvider = textProvider
-                            )
-                            mappedResult = mapped
-                            resultingProgress = mapped.progress ?: oldProgress?.let { prev ->
-                                val clampedIdx = prev.chapterIndex.coerceIn(0, (newChapters.size - 1).coerceAtLeast(0))
-                                val maxOff = newChapters.getOrNull(clampedIdx)?.charCount?.toInt() ?: 0
-                                val clampedOff = prev.charOffset.coerceIn(0, maxOff)
-                                prev.copy(
-                                    chapterIndex = clampedIdx,
-                                    charOffset = clampedOff,
-                                    pageIndex = 0,
-                                    pageCount = 0,
-                                    percent = ProgressMath.percent(
-                                        newChapters.map { it.charCount.coerceAtLeast(1L) },
-                                        clampedIdx,
-                                        clampedOff
-                                    )
-                                )
-                            }
+                        committed = true
+                        val old = update.old.book
+                        val oldTokens = listOfNotNull(
+                            BookContentAccess.managedBookToken(paths, old.filePath),
+                            BookContentAccess.managedBookToken(paths, old.contentPath)
+                        ).distinct()
+                        val newToken = BookContentAccess.managedBookToken(paths, saved.filePath)
+                        oldTokens.filter { it != newToken }.forEach { paths.deleteBookFiles(it, null) }
+                        if (old.coverPath != saved.coverPath && old.coverPath != null) {
+                            paths.deleteBookFiles(null, old.coverPath)
+                            CoverCache.evict(old.coverPath)
                         }
-
-                        val finalBook = candidateBook.copy(
-                            finished = resolveFinishedAfterUpdate(
-                                wasFinished = latest.finished,
-                                oldChaptersCount = latest.totalChapters,
-                                oldTotalChars = latest.totalChars,
-                                newChapters = newChapters,
-                                newTotalChars = candidateBook.totalChars,
-                                mappedProgress = resultingProgress
-                            )
-                        )
-
-                        searchFtsDao?.deleteForBook(bookId)
-                        books.saveChapters(bookId, newChapters)
-                        books.updateBook(finalBook)
-                        books.sourceStampStore.save(bookId, capturedStamp)
-
-                        if (mappedResult != null) {
-                            if (resultingProgress != null) books.saveProgress(resultingProgress)
-                            for (bm in mappedResult.bookmarks) bookmarkDao.update(bm)
-                            for (hl in mappedResult.highlights) {
-                                if (hl.id == 0L) highlightDao.insert(hl) else highlightDao.update(hl)
-                            }
+                        if (stagedCoverPath != null && stagedCoverPath != saved.coverPath) {
+                            paths.deleteBookFiles(null, stagedCoverPath)
+                            CoverCache.evict(stagedCoverPath)
                         }
-                        finalBook
+                        saved
                     }
-                    committed = true
-                    result
                 }
-
-                oldManagedTokens.filter { it != newManagedToken }.forEach { oldToken ->
-                    paths.deleteBookFiles(oldToken, null)
-                }
-                if (obsoleteCoverPath != null) {
-                    paths.deleteBookFiles(null, obsoleteCoverPath)
-                    CoverCache.evict(obsoleteCoverPath)
-                }
-                if (stagedCoverPath != null && stagedCoverPath != saved.coverPath) {
-                    paths.deleteBookFiles(null, stagedCoverPath)
-                    CoverCache.evict(stagedCoverPath)
-                }
-                saved
-            } catch (t: Throwable) {
+            } finally {
                 if (!committed) {
                     withContext(NonCancellable) {
                         paths.deleteBookFiles(stagedFallbackToken, stagedCoverPath)
                         CoverCache.evict(stagedCoverPath)
                     }
                 }
-                throw t
             }
-        }
     }
 
     private fun verifyStreamSize(path: String): Long {

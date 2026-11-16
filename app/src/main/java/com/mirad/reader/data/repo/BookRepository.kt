@@ -3,6 +3,7 @@ package com.mirad.reader.data.repo
 import androidx.room.withTransaction
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.AppDatabase
+import com.mirad.reader.data.db.bookContentGenerationKey
 import com.mirad.reader.data.db.dao.BookDao
 import com.mirad.reader.data.db.dao.ChapterDao
 import com.mirad.reader.data.db.dao.PreferenceDao
@@ -12,8 +13,10 @@ import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.db.entity.ProgressEntity
+import com.mirad.reader.data.db.entity.PreferenceEntity
 import com.mirad.reader.data.imports.BookCustomMetaStore
 import com.mirad.reader.data.imports.BookSourceStampStore
+import com.mirad.reader.data.imports.BookSourceVersionStore
 import com.mirad.reader.data.imports.CoverGenerator
 import com.mirad.reader.ui.shelf.CoverCache
 import kotlinx.coroutines.Dispatchers
@@ -50,6 +53,7 @@ class BookRepository(
     private val finishedWrites = Mutex()
     internal val customMetaStore = BookCustomMetaStore(preferenceDao)
     internal val sourceStampStore = BookSourceStampStore(preferenceDao)
+    internal val sourceVersionStore = BookSourceVersionStore(preferenceDao)
 
     /** 阅读会话及改变正文或章节的操作共用同一本书的锁。 */
     internal fun contentLock(id: Long): Mutex = contentLocks.computeIfAbsent(id) { Mutex() }
@@ -174,6 +178,9 @@ class BookRepository(
             searchFtsDao?.deleteForBook(bookId)
             if (chapters.isNotEmpty()) chapterDao.insertAll(chapters)
             bookDao.updateCounts(bookId, chapters.size, chapters.sumOf { it.charCount })
+            preferenceDao?.put(PreferenceEntity(
+                bookContentGenerationKey(bookId), UUID.randomUUID().toString(), System.currentTimeMillis()
+            ))
         }
         val db = appDatabase
         if (db != null) db.withTransaction { block() } else block()
@@ -207,6 +214,8 @@ class BookRepository(
             sessionDao?.deleteForBook(book.id)
             customMetaStore.remove(book.id)
             sourceStampStore.remove(book.id)
+            sourceVersionStore.remove(book.id)
+            preferenceDao?.remove(bookContentGenerationKey(book.id))
             bookDao.delete(book)
         }
         val db = appDatabase

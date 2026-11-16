@@ -30,8 +30,13 @@ internal class BookCustomMetaStore(private val preferences: PreferenceDao?) {
     )
 
     suspend fun get(bookId: Long): CustomMeta {
-        val raw = preferences?.get(key(bookId)) ?: return CustomMeta()
+        val raw = preferences?.get(key(bookId)) ?: return CustomMeta(true, true)
         return decode(raw)
+    }
+
+    /** 仅新导入书籍可确认两个字段均未手动修改；历史记录不能据缺失标记推断。 */
+    suspend fun initialize(bookId: Long) {
+        preferences?.put(PreferenceEntity(key(bookId), encode(CustomMeta()), System.currentTimeMillis()))
     }
 
     suspend fun recordEdit(book: BookEntity, newTitle: String, newAuthor: String?) {
@@ -68,18 +73,14 @@ internal class BookCustomMetaStore(private val preferences: PreferenceDao?) {
         fun key(bookId: Long): String = "$KEY_PREFIX$bookId"
 
         internal fun encode(meta: CustomMeta): String =
-            "t=${if (meta.titleCustomized) 1 else 0}|a=${if (meta.authorCustomized) 1 else 0}"
+            "v=2|t=${if (meta.titleCustomized) 1 else 0}|a=${if (meta.authorCustomized) 1 else 0}"
 
         internal fun decode(raw: String): CustomMeta {
-            var t = false
-            var a = false
-            for (part in raw.split('|')) {
-                when (part.trim()) {
-                    "t=1" -> t = true
-                    "a=1" -> a = true
-                }
-            }
-            return CustomMeta(t, a)
+            val parts = raw.split('|').map { it.trim() }
+            if ("v=2" !in parts || parts.count { it == "t=0" || it == "t=1" } != 1 ||
+                parts.count { it == "a=0" || it == "a=1" } != 1
+            ) return CustomMeta(true, true)
+            return CustomMeta("t=1" in parts, "a=1" in parts)
         }
 
         internal fun resolveWithStored(

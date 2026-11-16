@@ -291,7 +291,7 @@ class SearchRepository(
 
     companion object {
         private const val KEY_INDEX_FORMAT = "search_index_case_fold_version"
-        private const val INDEX_FORMAT = "2"
+        private const val INDEX_FORMAT = "3"
 
         /**
          * 与 Kotlin/JVM 忽略大小写匹配一致的单码点折叠，不使用会展开字符的字符串 lowercase。

@@ -7,7 +7,10 @@ import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
 import com.mirad.reader.data.db.entity.BookmarkEntity
+import com.mirad.reader.data.db.BOOK_CONTENT_GENERATION_PREFIX
 import kotlinx.coroutines.flow.Flow
+
+data class DeletedBookmark(val record: BookmarkEntity, val generation: String?)
 
 @Dao
 interface BookmarkDao {
@@ -24,13 +27,24 @@ interface BookmarkDao {
     @Query("SELECT * FROM bookmarks WHERE id = :id")
     suspend fun getById(id: Long): BookmarkEntity?
 
+    @Query("SELECT value FROM preferences WHERE `key` = '" + BOOK_CONTENT_GENERATION_PREFIX + "' || :bookId")
+    suspend fun contentGeneration(bookId: Long): String?
+
     @Transaction
-    suspend fun deleteForUndo(id: Long): BookmarkEntity? {
+    suspend fun deleteForUndo(id: Long): DeletedBookmark? {
         val record = getById(id) ?: return null
+        val generation = contentGeneration(record.bookId)
         delete(record)
-        return record
+        return DeletedBookmark(record, generation)
     }
 
+    /** 比较与插入共用事务，正文发布不能夹在两者之间。返回定位是否因版本变化失效。 */
+    @Transaction
+    suspend fun restoreForUndo(deleted: DeletedBookmark): Boolean {
+        val changed = contentGeneration(deleted.record.bookId) != deleted.generation
+        insert(if (changed) deleted.record.copy(chapterIndex = -1) else deleted.record)
+        return changed
+    }
 
     @Query("DELETE FROM bookmarks WHERE bookId = :bookId")
     suspend fun deleteForBook(bookId: Long)

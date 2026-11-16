@@ -107,6 +107,7 @@ fun ShelfScreen(
     var encodingBook by remember { mutableStateOf<BookEntity?>(null) }
     var chapterBook by remember { mutableStateOf<BookEntity?>(null) }
     var relinkTarget by remember { mutableStateOf<BookEntity?>(null) }
+    val relinkRequest = com.mirad.reader.ui.common.rememberRelinkRequest(container.maintenance, "shelf")
     var showGroupManager by remember { mutableStateOf(false) }
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("shelf")
     var toast by feedback
@@ -136,7 +137,7 @@ fun ShelfScreen(
                     com.mirad.reader.data.io.BookContentAccess.tryTakePersistableReadPermission(context, uri)
                     val uriText = uri.toString()
                     val displayName = ImportSources.nameOf(context, uri)
-                    val saved = container.maintenance.relinkSource(target.id, uriText, uriText, displayName)
+                    val saved = relinkRequest.run(target.id, uriText, displayName) ?: return@launch
                     toast = "已重新关联《${saved.title}》"
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
@@ -245,7 +246,8 @@ fun ShelfScreen(
                 onEncoding = { encodingBook = book },
                 onDelete = { selection = setOf(book.id); isSingleBookDeleteAction = true; confirmDelete = true },
                 onMultiSelect = { selection = setOf(book.id) },
-                onRelink = {
+                onRelink = relink@ {
+                    if (relinkRequest.busy) return@relink
                     relinkTarget = book
                     val mime = if (book.format == com.mirad.reader.data.db.entity.BookFormat.EPUB) {
                         arrayOf("application/epub+zip", "application/octet-stream", "*/*")

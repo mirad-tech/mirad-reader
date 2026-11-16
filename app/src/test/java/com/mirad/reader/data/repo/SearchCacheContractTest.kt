@@ -146,6 +146,28 @@ class SearchCacheContractTest {
         assertEquals(1, dao.inserts)
     }
 
+    @Test fun oldRawSliceCacheIsRebuiltEvenWhenTheFirst64CharactersMatch() = runBlocking {
+        val corrected = "a".repeat(8190) + "  "
+        val stale = "a".repeat(8190) + "\n"
+        val dao = MemoryFts().apply {
+            rows += ChapterFtsEntity(
+                bookId = 1, chapterIndex = 0, chapterTitle = chapter.title,
+                content = stale, contentLower = stale
+            )
+        }
+        val preferences = Preferences().apply { values["search_index_case_fold_version"] = "2" }
+        val repository = SearchRepository(Text(corrected), dao, preferences)
+        assertEquals(1, results(repository, "aaa", SearchOptions(maxResults = 1)).size)
+        assertEquals(corrected, dao.rows.single().content)
+        assertEquals(1, dao.clears)
+        assertEquals("3", preferences.values["search_index_case_fold_version"])
+
+        val reopened = SearchRepository(Text(corrected), dao, preferences)
+        results(reopened, "aaa", SearchOptions(maxResults = 1))
+        assertEquals(1, dao.clears)
+        assertEquals(1, dao.inserts)
+    }
+
     @Test fun failedFormatMarkerWriteDoesNotReenableTheOldCache() = runBlocking {
         val dao = MemoryFts()
         val preferences = Preferences().apply { failNextPut = true }

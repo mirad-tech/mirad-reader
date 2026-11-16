@@ -18,7 +18,8 @@ internal class EditionAnchors(
     private val newChapters: List<ChapterEntity>,
     private val relation: EditionRelation,
     private val textProvider: ChapterTextProvider = ChapterTextProvider(),
-    private val exactTxtCharPrefix: Boolean = (oldBook.format == BookFormat.TXT && relation == EditionRelation.EXTENDS)
+    private val exactTxtCharPrefix: Boolean = (oldBook.format == BookFormat.TXT && relation == EditionRelation.EXTENDS),
+    private val sameSourceVersion: Boolean = false
 ) {
     data class Point(val chapter: Int, val offset: Int)
     data class Range(val chapter: Int, val start: Int, val end: Int, val text: String)
@@ -108,7 +109,7 @@ internal class EditionAnchors(
         val oldCh = oldChapters.getOrNull(chapter) ?: return null
         val candidates = titles[editionKey(oldCh.title)].orEmpty().filter { it.isVolume == oldCh.isVolume }
         if (candidates.size == 1) return candidates[0].index
-        if (chapter in newChapters.indices) {
+        if (sameSourceVersion && chapter in newChapters.indices) {
             val sameIdx = newChapters[chapter]
             if (sameIdx.isVolume == oldCh.isVolume && editionKey(sameIdx.title) == editionKey(oldCh.title)) {
                 return chapter
@@ -118,10 +119,14 @@ internal class EditionAnchors(
     }
 
     private fun fallbackPointWhenOldUnreadable(chapter: Int, offset: Int): Point? {
+        if (!sameSourceVersion) return null
         val oldCh = oldChapters.getOrNull(chapter) ?: return null
         val targetIndex = resolveUnreadableTargetChapter(chapter) ?: return null
+        val newCh = newChapters[targetIndex]
+        if (oldBook.encoding != newBook.encoding ||
+            oldCh.copy(id = 0L, bookId = 0L) != newCh.copy(id = 0L, bookId = 0L)) return null
         val newText = text(true, targetIndex)?.value ?: return null
-        return if (oldCh.charCount == newChapters[targetIndex].charCount && offset in 0..newText.length) {
+        return if (offset in 0..newText.length) {
             Point(targetIndex, offset)
         } else null
     }
@@ -134,7 +139,8 @@ internal class EditionAnchors(
         if (primaryIndex != null) {
             val newText = text(true, primaryIndex)?.value
             if (newText != null) {
-                if (end <= newText.length && compact(newText.substring(start, end)) == compactExpected) {
+                if (sameSourceVersion && fallbackPointWhenOldUnreadable(chapter, start) == Point(primaryIndex, start) &&
+                    end <= newText.length && compact(newText.substring(start, end)) == compactExpected) {
                     return listOf(Range(primaryIndex, start, end, newText.substring(start, end)))
                 }
                 val found = newText.indexOf(expected)
@@ -149,7 +155,8 @@ internal class EditionAnchors(
         val uniqueHits = candidates.mapNotNull { candidate ->
             val newText = text(true, candidate.index)?.value ?: return@mapNotNull null
             val first = newText.indexOf(expected)
-            if (first < 0 || newText.indexOf(expected, first + 1) >= 0) null
+            if (first >= 0 && newText.indexOf(expected, first + 1) >= 0) return null
+            if (first < 0) null
             else Range(candidate.index, first, first + expected.length, expected)
         }
         return uniqueHits.singleOrNull()?.let { listOf(it) }
@@ -157,14 +164,20 @@ internal class EditionAnchors(
 
     private fun targets(chapter: Int): Targets {
         val old = oldChapters.getOrNull(chapter) ?: return Targets(emptyList(), null)
+        val oldTextValue = text(false, chapter)?.value
+        if (oldTextValue == null) {
+            val section = "第 " + (chapter + 1) + " 节"
+            val syntheticTitle = old.title == section || old.title == "$section · 自动"
+            val target = resolveUnreadableTargetChapter(chapter)?.takeIf { sameSourceVersion || !syntheticTitle }
+            return Targets(emptyList(), target)
+        }
         if (oldBook.format == BookFormat.EPUB && relation != EditionRelation.UNKNOWN) {
             val index = chapter.takeIf { it in newChapters.indices }
             return Targets(listOfNotNull(index), index)
         }
-        val oldTextValue = text(false, chapter)?.value
         val byTitle = titles[editionKey(old.title)].orEmpty().filter { it.isVolume == old.isVolume }.map { it.index }
         val sameIndex = chapter.takeIf { it in newChapters.indices &&
-            oldTextValue?.let { oldText -> oldText.isNotBlank() && oldText == text(true, it)?.value } == true }
+            oldTextValue.isNotBlank() && oldTextValue == text(true, it)?.value }
         val extraIndex = if (oldBook.format == BookFormat.EPUB && chapter in newChapters.indices) listOf(chapter) else emptyList()
         val indices = (byTitle + listOfNotNull(sameIndex) + extraIndex).distinct()
         val section = "第 " + (chapter + 1) + " 节"
@@ -172,11 +185,9 @@ internal class EditionAnchors(
         var fallback = indices.singleOrNull()?.takeIf { it == sameIndex || !syntheticTitle }
         if (fallback == null) {
             if (oldBook.format == BookFormat.EPUB && chapter in newChapters.indices &&
-                (oldTextValue == null || epubSpineAligned)
+                epubSpineAligned
             ) {
                 fallback = chapter
-            } else if (oldTextValue == null) {
-                fallback = resolveUnreadableTargetChapter(chapter)?.takeIf { !syntheticTitle }
             }
         }
         return Targets(indices, fallback)
