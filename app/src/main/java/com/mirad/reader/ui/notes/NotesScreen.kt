@@ -1,6 +1,7 @@
 package com.mirad.reader.ui.notes
 
 import android.util.Log
+import androidx.room.withTransaction
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -63,6 +64,8 @@ import com.mirad.reader.AppContainer
 import com.mirad.reader.R
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
+import com.mirad.reader.data.repo.BookRepository
+import com.mirad.reader.data.repo.NoteRepository
 import com.mirad.reader.core.model.NoteAnchor
 import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.EmptyState
@@ -79,7 +82,9 @@ import com.mirad.reader.ui.theme.MiradSerif
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.mirad.reader.ui.common.rememberMarkdownExporter
@@ -205,18 +210,22 @@ fun NotesScreen(
         return NoteAnchor.isStale(chapterIndex, charOffset, lengths)
     }
 
-    LaunchedEffect(Unit) {
-        val (shelf, lengths) = withContext(Dispatchers.IO) {
-            val entries = container.books.observeShelf().first()
-            entries to entries.associate { entry ->
-                entry.book.id to container.books.getChapters(entry.book.id).map { it.charCount.toInt() }
+    LaunchedEffect(container.books) {
+        container.books.observeShelf().map { entries -> entries.map { it.book } }
+            .distinctUntilChanged().collect { shelf ->
+                val lengths = withContext(Dispatchers.IO) {
+                    shelf.associate { book ->
+                        book.id to container.books.getChapters(book.id).map { it.charCount.toInt() }
+                    }
+                }
+                titles = shelf.associate { it.id to it.title }
+                chapterTotals = shelf.associate { it.id to it.totalChapters }
+                chapterLengths = lengths
+                if (!loaded) {
+                    reloadNotes()
+                    loaded = true
+                }
             }
-        }
-        titles = shelf.associate { it.book.id to it.book.title }
-        chapterTotals = shelf.associate { it.book.id to it.book.totalChapters }
-        chapterLengths = lengths
-        reloadNotes()
-        loaded = true
     }
 
     val exporter = rememberMarkdownExporter { ok ->
@@ -242,12 +251,14 @@ fun NotesScreen(
                     MiradTextButton(
                         onClick = {
                             scope.launch {
-                                if (highlights.isEmpty() && bookmarks.isEmpty()) {
+                                val full = withContext(Dispatchers.IO) {
+                                    container.database.withTransaction {
+                                        buildCurrentFullExport(container.books, container.notes)
+                                    }
+                                }
+                                if (full == null) {
                                     feedback.show("还没有可导出的内容")
                                     return@launch
-                                }
-                                val full = withContext(Dispatchers.IO) {
-                                    buildFullExport(highlights, bookmarks, titles)
                                 }
                                 exporter("墨读-全部读书笔记.md", full)
                             }
@@ -287,11 +298,13 @@ fun NotesScreen(
                     }
                 } else if (tab == 0) {
                     items(highlights, key = { it.id }) { item ->
+                        val stale = anchorStale(item.bookId, item.chapterIndex, item.startOffset)
+                        val title = titles[item.bookId] ?: "未知书籍"
                         NoteCard(
                             quote = item.text,
                             note = item.note,
-                            location = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章",
-                            stale = anchorStale(item.bookId, item.chapterIndex, item.startOffset),
+                            location = if (stale) title else "$title · 第 ${item.chapterIndex + 1} 章",
+                            stale = stale,
                             accent = LocalMiradColors.current.noteHighlight.copy(alpha = 1f),
                             deleteEnabled = pageActive && !changingNote,
                             onOpen = { onOpenBook(item.bookId) },
@@ -303,12 +316,14 @@ fun NotesScreen(
                     }
                 } else {
                     items(bookmarks, key = { it.id }) { item ->
+                        val stale = anchorStale(item.bookId, item.chapterIndex, item.charOffset)
+                        val title = titles[item.bookId] ?: "未知书籍"
                         NoteCard(
                             heading = item.chapterTitle,
                             quote = item.snippet,
                             note = item.note,
-                            location = "${titles[item.bookId] ?: "未知书籍"} · 第 ${item.chapterIndex + 1} 章",
-                            stale = anchorStale(item.bookId, item.chapterIndex, item.charOffset),
+                            location = if (stale) title else "$title · 第 ${item.chapterIndex + 1} 章",
+                            stale = stale,
                             accent = MaterialTheme.colorScheme.primary,
                             deleteEnabled = pageActive && !changingNote,
                             onOpen = { onOpenBook(item.bookId) },
@@ -443,6 +458,15 @@ internal fun LazyItemScope.NotesEmptyState(bookmarks: Boolean, contentPadding: P
             verticalPadding = if (showIllustration) Spacing.xxxl else Spacing.sm
         )
     }
+}
+
+/** 导出时重读书名与笔记，避免页面保持打开期间的版本更新留下旧快照。 */
+internal suspend fun buildCurrentFullExport(books: BookRepository, notes: NoteRepository): String? {
+    val highlights = notes.allHighlights().sortedByDescending { it.createdAt }
+    val bookmarks = notes.allBookmarks().sortedByDescending { it.createdAt }
+    if (highlights.isEmpty() && bookmarks.isEmpty()) return null
+    val titles = books.getAllBooks().associate { it.id to it.title }
+    return buildFullExport(highlights, bookmarks, titles)
 }
 
 /** 把全部书籍的笔记导出成一份 Markdown（按书分节）。 */

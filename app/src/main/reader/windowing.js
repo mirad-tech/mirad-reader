@@ -167,6 +167,7 @@
 
         // 记录活动章在删除前相对于视口顶部的精确坐标
         var anchorTopBefore = win.active.getBoundingClientRect().top;
+        var anchorDocumentTopBefore = anchorTopBefore + (window.scrollY || 0);
         var removedAny = false;
 
         // 1. 处理上方章节：仅当章节在活动章上方两章以上 (idx < activeIdx - 1) 时裁剪
@@ -200,8 +201,10 @@
             // 删除上方节点后，测量活动章的新视口相对位置并补偿差值，确保视口正文绝对稳定
             var anchorTopAfter = win.active.getBoundingClientRect().top;
             var drift = anchorTopAfter - anchorTopBefore;
-            if (Math.abs(drift) > 0.5) {
-                window.scrollBy(0, drift);
+            // 删节点后浏览器可能已夹紧 scrollY；动画需平移完整的文档坐标差，而非剩余视觉差。
+            var documentDrift = anchorTopAfter + (window.scrollY || 0) - anchorDocumentTopBefore;
+            if (Math.abs(drift) > 0.5 || Math.abs(documentDrift) > 0.5) {
+                compensateScrollPosition(drift, documentDrift);
                 syncReadingEndScrollPosition();
             }
         }
@@ -258,7 +261,7 @@
                 if (dir < 0) {
                     // 前插把内容整体下移，等量补偿 scrollY 才能保持在原处
                     var after = documentHeight();
-                    window.scrollTo(0, Math.max(0, (window.scrollY || 0) + (after - before)));
+                    compensateScrollPosition(after - before, after - before);
                     syncReadingEndScrollPosition();
                     rememberThemePosition(retainedThemeAnchor);
                 } else {

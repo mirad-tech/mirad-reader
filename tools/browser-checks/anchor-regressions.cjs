@@ -5,7 +5,9 @@ const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '../..');
 const outDir = path.resolve(root, process.env.MIRAD_ANCHOR_EVIDENCE_DIR || 'build/verification/anchor-regressions');
-const readerJs = require('./reader-source.cjs')();
+const readerJs = process.env.MIRAD_ANCHOR_READER_FILE
+  ? fs.readFileSync(path.resolve(root, process.env.MIRAD_ANCHOR_READER_FILE), 'utf8')
+  : require('./reader-source.cjs')();
 const readerCss = fs.readFileSync(path.join(root, 'app/src/main/assets/reader/reader.css'), 'utf8');
 const theme14 = fs.readFileSync(path.join(__dirname, 'fixtures/theme-14.css'), 'utf8');
 const theme = size => theme14.replace('font-size:14.0px', 'font-size:' + size + 'px');
@@ -64,13 +66,18 @@ async function openFixture(browser, options) {
       };
     }
     if (options.prepend) {
-      let resolveFragment;
-      const requested = new Promise(resolve => { resolveFragment = resolve; });
-      await page.route('**/fragment/0', route => resolveFragment(route));
-      fixture.prepend = async () => {
-        const route = await requestReady(requested);
+      const indices = options.prependIndices || [options.prependIndex === undefined ? 0 : options.prependIndex];
+      const requested = new Map();
+      for (const index of indices) {
+        let resolveFragment;
+        requested.set(index, new Promise(resolve => { resolveFragment = resolve; }));
+        await page.route('**/fragment/' + index, route => resolveFragment(route));
+      }
+      fixture.prepend = async (index = indices[0]) => {
+        const route = await requestReady(requested.get(index));
+        const text = options.prependText || paragraph;
         await route.fulfill({ contentType: 'text/html', body:
-          '<section class="mirad-chapter" data-chapter="0"><p>' + paragraph + '</p><p>' + paragraph + '</p></section>' });
+          '<section class="mirad-chapter" data-chapter="' + index + '"><p>' + text + '</p><p>' + text + '</p></section>' });
       };
     }
     const text = options.text || paragraph;
@@ -93,7 +100,7 @@ async function openFixture(browser, options) {
         onReady() {}, onState() {}, onSelection() {},
         onVisualChanged() { window.__visualReports.push(performance.now()); },
         onMetrics() { window.__layoutReports++; },
-        onChapterChanged(index) { window.__activeChapter = index; }
+        onChapterChanged(index) { window.__activeChapter = index; window.__activeChangedAt = performance.now(); }
       };
       // Fixture paragraphs contain plain text. This DOM oracle does not use
       // the reader's offset/page conversion or reproduce its column calculation.
@@ -171,6 +178,18 @@ async function change(fixture, size) {
     getComputedStyle(document.querySelector(window.__anchorRoot + ' p')).fontSize), size + 'px');
 }
 
+async function searchSnapshot(fixture) {
+  return fixture.page.evaluate(() => {
+    const root = document.querySelector(window.__anchorRoot);
+    const mark = root && root.querySelector('mark.mirad-search');
+    const rect = mark && mark.getBoundingClientRect();
+    return { active: window.__activeChapter, text: mark && mark.textContent,
+      visible: !!rect && rect.top >= 0 && rect.bottom <= innerHeight,
+      top: rect && rect.top, scrollY,
+      chapters: [...document.querySelectorAll('section.mirad-chapter')].map(s => Number(s.dataset.chapter)) };
+  });
+}
+
 function retained(fixture, before, after) {
   assert(after.visible, 'original character left the viewport: ' + JSON.stringify(after.glyph));
   if (fixture.mode === 'SCROLL') {
@@ -191,6 +210,7 @@ async function main() {
   const browser = await chromium.launch({ headless: true });
   const results = [];
   async function run(name, options, check) {
+    if (process.env.MIRAD_ANCHOR_CASE && !name.startsWith(process.env.MIRAD_ANCHOR_CASE)) return;
     const result = { name, states: [] };
     results.push(result);
     let fixture;
@@ -212,6 +232,103 @@ async function main() {
     }
   }
   try {
+    await run('search-animation-prepend', {
+      mode: 'SCROLL', chapters: [11], active: 11, target: 200,
+      text: '第12章目标文字。' + paragraph, prepend: true, prependIndex: 10, clock: true
+    }, async (f, r) => {
+      await change(f, 25);
+      const before = await f.page.evaluate(() => scrollY);
+      assert.strictEqual(await f.page.evaluate(() => MiradReader.findText('第12章目标文字', 0, true)), 0);
+      await f.page.clock.runFor(64);
+      const moving = await f.page.evaluate(() => scrollY);
+      assert(moving < before && moving > 30, '搜索应先运行可观察的定位动画');
+      await f.prepend();
+      await settle(f);
+      assert(await f.page.evaluate(() => !!document.querySelector('section[data-chapter="10"]')));
+      await f.page.clock.runFor(1200);
+      const result = await searchSnapshot(f);
+      r.states.push({ before, moving, ...result });
+      assert.strictEqual(result.active, 11, '前插与动画完成后必须仍在目标第12章');
+      assert.strictEqual(result.text, '第12章目标文字');
+      assert(result.visible, '搜索目标文字必须在视口内：' + JSON.stringify(result));
+      // 补偿过的动画结束后，新动画不能沿用旧平移；取消后也不得继续写入位置。
+      await f.page.evaluate(() => {
+        const length = document.querySelector(window.__anchorRoot + ' p').textContent.length;
+        MiradReader.findText('第12章目标文字', length + 1, true);
+      });
+      await f.page.clock.runFor(64);
+      const cancelledY = await f.page.evaluate(() => {
+        MiradReader.cancelProgrammaticScroll();
+        return scrollY;
+      });
+      assert(cancelledY > result.scrollY, '第二次搜索应实际产生动画位移');
+      await f.page.clock.runFor(400);
+      assert.strictEqual(await f.page.evaluate(() => scrollY), cancelledY, '取消后不能继续沿旧动画移动');
+      await f.page.evaluate(() => MiradReader.findText('第12章目标文字', 0, true));
+      await f.page.clock.runFor(500);
+      const restarted = await searchSnapshot(f);
+      r.states.push(restarted);
+      assert.strictEqual(restarted.active, 11);
+      assert(restarted.visible, '新动画必须清除上一次结构补偿');
+    });
+    await run('search-animation-repeated-prepend', {
+      mode: 'SCROLL', chapters: [11], active: 11, target: 40,
+      text: '第12章目标文字。' + paragraph, prepend: true, prependIndices: [10, 9],
+      prependText: '上一章的短正文。', clock: true
+    }, async (f, r) => {
+      await change(f, 25);
+      await f.page.evaluate(() => MiradReader.findText('第12章目标文字', 0, true));
+      await f.page.clock.runFor(64);
+      await f.prepend(10);
+      await settle(f);
+      await f.page.clock.runFor(500);
+      const first = await searchSnapshot(f);
+      r.states.push(first);
+      assert.strictEqual(first.active, 11);
+      assert(first.visible);
+      // 第一轮的真实 scroll 回调会请求更前一章，下一轮动画再跨越其完成时刻。
+      await f.page.evaluate(() => MiradReader.findText('第12章目标文字', 0, true));
+      await f.prepend(9);
+      await settle(f);
+      await f.page.clock.runFor(1200);
+      const result = await searchSnapshot(f);
+      r.states.push(result);
+      assert.deepStrictEqual(result.chapters, [9, 10, 11]);
+      assert.strictEqual(result.active, 11, '连续两次前插不能覆盖此前的动画坐标补偿');
+      assert(result.visible, '连续前插后搜索目标必须仍可见');
+    });
+    for (const active of [2, 4]) await run('search-animation-trim-' + active, {
+      mode: 'SCROLL', chapters: [0, 1, 2, 3, 4, 5], active,
+      text: '裁剪后仍应可见的目标文字。' + paragraph, clock: true
+    }, async (f, r) => {
+      // 活动章变化后生产代码在 800ms 裁剪，让搜索动画跨越这次真实裁剪。
+      const wait = await f.page.evaluate(() => 700 - (performance.now() - window.__activeChangedAt));
+      assert(wait > 0, '夹具必须在生产裁剪定时器到期前开始动画');
+      await f.page.clock.runFor(wait);
+      assert.deepStrictEqual((await searchSnapshot(f)).chapters, [0, 1, 2, 3, 4, 5]);
+      await f.page.evaluate(() => {
+        window.__trimCompensations = [];
+        const scroll = window.scrollBy.bind(window);
+        window.scrollBy = (x, y) => {
+          window.__trimCompensations.push({ delta: y, scrollY,
+            maximum: document.documentElement.scrollHeight - innerHeight,
+            rootTop: document.querySelector(window.__anchorRoot).getBoundingClientRect().top + scrollY });
+          scroll(x, y);
+        };
+        MiradReader.findText('裁剪后仍应可见的目标文字', 0, true);
+      });
+      await f.page.clock.runFor(120);
+      const during = await searchSnapshot(f);
+      assert.deepStrictEqual(during.chapters, active === 2 ? [1, 2, 3] : [3, 4, 5], '动画期间必须执行真实窗口裁剪');
+      await f.page.clock.runFor(600);
+      const result = await searchSnapshot(f);
+      r.states.push(during, result);
+      r.compensations = await f.page.evaluate(() => window.__trimCompensations);
+      if (active === 4) assert(r.compensations.some(c => Math.abs(c.scrollY - c.maximum) <= 1),
+        '后部章夹具必须触发浏览器在删节点后夹紧scrollY');
+      assert.strictEqual(result.active, active, '裁剪上方章节不能使动画落到另一章');
+      assert(result.visible, '裁剪补偿后搜索目标必须仍可见');
+    });
     for (const chapters of [[], [0, 1, 2]]) {
       await run('scroll-safe-area-' + (chapters.length ? 'windowed' : 'single'),
         { mode: 'SCROLL', chapters, cutouts: true }, async (f, r) => {

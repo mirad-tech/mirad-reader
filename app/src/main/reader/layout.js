@@ -317,6 +317,12 @@
         }
     }
 
+    /** 窗口增删上方章节时，同步补偿视口与在途动画的坐标。 */
+    function compensateScrollPosition(scrollDelta, motionDelta) {
+        if (scrollMotion.raf) scrollMotion.shift += motionDelta;
+        window.scrollBy(0, scrollDelta);
+    }
+
     function animateScrollLeft(el, target, onSettled) {
         cancelPageMotion(false);
         var token = pageMotion.token;
@@ -353,6 +359,7 @@
     function animateScrollTop(target, onSettled) {
         cancelScrollMotion();
         var token = scrollMotion.token;
+        scrollMotion.shift = 0;
         var start = window.scrollY || 0;
         var duration = 260;
         var startTime = null;
@@ -361,7 +368,7 @@
             if (startTime === null) startTime = ts;
             var t = Math.min(1, (ts - startTime) / duration);
             var eased = 1 - Math.pow(1 - t, 3);
-            window.scrollTo(0, start + (target - start) * eased);
+            window.scrollTo(0, start + (target - start) * eased + scrollMotion.shift);
             if (t < 1) {
                 scrollMotion.raf = window.requestAnimationFrame(frame);
             } else {

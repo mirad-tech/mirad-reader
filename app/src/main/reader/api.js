@@ -337,9 +337,11 @@
                 // 旧实现退回 nearestPoint(offset).pos（段落起点），于是长段落里的跳转又落回段首——
                 // 与 PAGED 分支修掉的是同一个病。
                 cancelScrollMotion();
-                var documentY = sectionTop(activeRoot()) + page;
-                if (animate) animateScrollTop(Math.max(0, documentY - 8));
-                else window.scrollTo(0, Math.max(0, documentY - 8));
+                var rootTop = sectionTop(activeRoot());
+                // 章首命中不能为保留 8px 上下文退入上一章，否则窗口会把上一章选为活动章。
+                var documentY = Math.max(windowed() ? rootTop : 0, rootTop + page - 8);
+                if (animate) animateScrollTop(documentY);
+                else window.scrollTo(0, documentY);
                 var relativeTop = (window.scrollY || 0) - (windowed() ? sectionTop(activeRoot()) : 0);
                 state.page = Math.floor(Math.max(0, relativeTop) / viewportHeight());
                 reportState();
