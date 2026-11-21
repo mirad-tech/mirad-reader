@@ -1,6 +1,6 @@
 # 玻璃边缘优化与日夜背景接入计划
 
-日期：2026-11-01（Asia/Shanghai）。项目：`G:\mirad\mirad-server\book`，墨读 MiradReader。
+日期：2026-11-01（Asia/Shanghai）。项目：`<仓库根目录>`，墨读 MiradReader。
 
 状态：**已实施，验证与隔离实例清理完成**。分支为 `codex/liquid-glass-edges-backgrounds-20261101`；共享边缘、四张背景及用户追加的目录侧边滚动条均已实现。JVM、构建、lint、同场景前后图、独立折射对照、交互／动态及两轮隔离实例Stop结果见[实施记录](../reports/liquid-glass-edge-20261101.md)。旧API真实运行、业务进程重启耐久性及真机性能未验证；模拟器性能仅作有限诊断，不声明无回归。
 
@@ -154,7 +154,7 @@ python tools/check-doc-links.py
 
 本轮使用内置 `image_gen`，先生成两张日间原图，再以各自原图为编辑输入生成相应夜间版，保留枝叶构图、只调整明暗配色。四张都已看图并用本机图像解码器读取成功，均为 **1024 × 1536、RGB、不透明 PNG**；项目副本与工具原文件的 SHA-256 一致。没有把图片复制进产品 `app/src/main/assets/`。
 
-本机交接目录：`G:\mirad\mirad-server\book\artifacts\backgrounds\line-art-20261101\`。该目录受 `/artifacts/` 忽略规则约束，**不会随 Git 克隆自动出现**；跨机器交接必须一并复制整个目录，并对照 `checks.json` 核验。缺少原图时明确报告素材缺失，不用占位图或自行重新生成的不同画面冒充这批素材。
+本机交接目录：`<仓库根目录>\artifacts\backgrounds\line-art-20261101\`。该目录受 `/artifacts/` 忽略规则约束，**不会随 Git 克隆自动出现**；跨机器交接必须一并复制整个目录，并对照 `checks.json` 核验。缺少原图时明确报告素材缺失，不用占位图或自行重新生成的不同画面冒充这批素材。
 
 | 原图文件 | 建议显示名 | 配色与构图 | 拟用 key／URI | 拟用产品素材 | isDark／suggestedTheme |
 | --- | --- | --- | --- | --- | --- |

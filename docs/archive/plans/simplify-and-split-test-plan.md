@@ -10,7 +10,7 @@
 
 | 项目 | 测试对象 |
 | --- | --- |
-| 工作区 | `G:\mirad\mirad-server\book` |
+| 工作区 | `<仓库根目录>` |
 | 分支 | `main`，包含已合并的精简重构 |
 | 重构前基线 | `c970ed21575a5370b20b4d082caea5f6597904d4` |
 | 候选版本 | 当前工作树，包括未提交修改和未跟踪的新源码；不能只构建 HEAD |
@@ -288,5 +288,5 @@ build/verification/app-qa/<RunId>/
 ## 12 简短执行提示词
 
 ```text
-按 G:\mirad\mirad-server\book\docs\archive\plans\simplify-and-split-test-plan.md 执行测试，包含当前未提交改动。完成真实 Debug 包功能、隔离 Preview、JVM/Lint/浏览器/构建、持久化、基线对照和稳定性检查。仅用本任务独占模拟器与测试数据，不操作真机、不改产品逻辑、不提交或发布。逐项保存结果和证据，区分失败、阻塞与未测；按计划清理自建实例和一次性脚本，交付简短报告。
+按 <仓库根目录>\docs\archive\plans\simplify-and-split-test-plan.md 执行测试，包含当前未提交改动。完成真实 Debug 包功能、隔离 Preview、JVM/Lint/浏览器/构建、持久化、基线对照和稳定性检查。仅用本任务独占模拟器与测试数据，不操作真机、不改产品逻辑、不提交或发布。逐项保存结果和证据，区分失败、阻塞与未测；按计划清理自建实例和一次性脚本，交付简短报告。
 ```

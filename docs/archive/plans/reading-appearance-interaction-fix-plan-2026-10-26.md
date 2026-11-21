@@ -6,7 +6,7 @@
 
 ## 1. 当前基线与实施边界
 
-- 仓库：`G:\mirad\mirad-server\book`；本次读取时 HEAD 为 `458f9c9cb388e6160e163e9789e5b2a15a952e9d`。
+- 仓库：`<仓库根目录>`；本次读取时 HEAD 为 `458f9c9cb388e6160e163e9789e5b2a15a952e9d`。
 - 工作区已有其他任务的未提交修改，涉及导入、资源访问、TTS、`ReaderChrome.kt`、`ReaderScreen.kt`、测试与文档。接手先执行 `git status --short` 和相关 `git diff`，以最新文件为准，保留已有工作。尤其保留底栏“自动阅读”和更多菜单内朗读的现有调整。
 - 仅处理本计划五项问题。无需全仓重构、升级依赖、修改 Room 表结构或扩展功能。优先复用现有 Compose、RenderNode、RenderEffect、AGSL 和预览工具。
 - 遵守 `AGENTS.md`：不提交、推送、发版、打 tag 或制作发行签名包；不操作真实手机，不删除历史 APK。测试限自建隔离模拟器和独立预览包。
