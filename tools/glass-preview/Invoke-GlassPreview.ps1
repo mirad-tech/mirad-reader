@@ -1,8 +1,8 @@
 param(
     [Parameter(Mandatory)][ValidateSet('Create', 'Start', 'Status', 'Install', 'Capture', 'Adb', 'Stop')][string]$Action,
     [string]$RunId = 'glass-20261022',
-    [string]$SdkRoot = 'S:\Android\Sdk',
-    [string]$StudioRoot = 'S:\Android\Android Studio',
+    [string]$SdkRoot = $env:ANDROID_HOME,
+    [string]$StudioRoot = $env:ANDROID_STUDIO_HOME,
     [int]$ServerPort = 5049,
     [int]$ConsolePort = 5580,
     [string]$Apk,
