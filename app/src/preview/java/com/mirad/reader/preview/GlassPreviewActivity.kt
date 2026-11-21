@@ -110,6 +110,7 @@ class GlassPreviewActivity : ComponentActivity() {
         )
         val baseline = intent.getBooleanExtra("baseline", false)
         val fallback = intent.getBooleanExtra("fallback", false)
+        val lensEnabled = intent.getBooleanExtra("lensEnabled", true)
         val hasFontScaleOverride = intent.hasExtra("fontScale")
         val fontScaleOverride = intent.getFloatExtra("fontScale", 1f)
         val scrolled = intent.getBooleanExtra("scrolled", false)
@@ -188,6 +189,7 @@ class GlassPreviewActivity : ComponentActivity() {
                 CompositionLocalProvider(
                     LocalGlassLegacy provides baseline,
                     LocalGlassForceFallback provides fallback,
+                    LocalGlassLensEnabled provides lensEnabled,
                     LocalDensity provides Density(density.density, effectiveFontScale),
                     LocalLayoutDirection provides if (rtl) LayoutDirection.Rtl else LayoutDirection.Ltr,
                     LocalGlassAppearance provides glassAppearance,

@@ -4,6 +4,7 @@ import android.graphics.Canvas
 import android.graphics.RenderEffect
 import android.graphics.RenderNode
 import android.graphics.Shader
+import android.os.Build
 import androidx.annotation.RequiresApi
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -15,6 +16,8 @@ import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.luminance
@@ -26,20 +29,32 @@ import androidx.compose.ui.layout.positionInWindow
 import kotlin.math.ceil
 
 /**
- * 背景在独立的硬件层中模糊，按材质角色叠加底色后再绘制前景。
+ * 背景在独立的硬件层中模糊并通过统一 AGSL 透镜着色器（API 33+）完成折射、色散、底色与双瓣亮边，
+ * API 31–32 回退至模糊 + 底色 + 定向渐变描边后再绘制前景。
  */
 @RequiresApi(31)
 internal fun Modifier.hardwareGlassBackground(
-    source: HardwareGlassBackdrop, style: GlassStyle, shape: Shape
+    source: HardwareGlassBackdrop,
+    style: GlassStyle,
+    shape: Shape,
+    role: GlassLensRole = style.defaultLensRole(),
+    flatEdges: GlassFlatEdges = GlassFlatEdges.None,
+    press: Float = 0f
 ): Modifier = composed {
     val appearance = LocalGlassAppearance.current
     val percent = appearance.transparencyPercent
     val clarity = appearance.clarityPercent
+    val lensEnabled = LocalGlassLensEnabled.current
+    val reducedMotion = LocalGlassReducedMotion.current
+    val lightDirState = LocalGlassLightDirection.current
     val surface = MaterialTheme.colorScheme.surface
+    val isDark = surface.luminance() < .5f
     val baseOpacity by animateFloatAsState(
-        liquidSurfaceOpacity(clarity, surface.luminance() < .5f, style),
-        animationSpec = if (appearance.enabled) tween(180) else snap(), label = "liquidTint")
-    val blurDp by animateFloatAsState(liquidBlurDp(style, clarity), tween(180), label = "liquidBlur")
+        liquidSurfaceOpacity(clarity, isDark, style),
+        animationSpec = if (appearance.enabled && !reducedMotion) tween(180) else snap(), label = "liquidTint")
+    val blurDp by animateFloatAsState(
+        liquidBlurDp(style, clarity),
+        animationSpec = if (appearance.enabled && !reducedMotion) tween(180) else snap(), label = "liquidBlur")
     val active = source.renderingActive && source.contentReady && percent > 0
     val renderer = remember { LiquidBackdropRenderer() }
     var coordinates by remember { mutableStateOf<LayoutCoordinates?>(null) }
@@ -81,13 +96,33 @@ internal fun Modifier.hardwareGlassBackground(
             return@drawWithContent
         }
         var hardware = false
+        var lensApplied = false
         drawIntoCanvas { canvas ->
             hardware = canvas.nativeCanvas.isHardwareAccelerated
             if (hardware) {
+                val lightDir = lightDirState.value
                 host.getLocationInWindow(renderer.hostLocation)
-                renderer.draw(canvas.nativeCanvas, node,
-                    position.x - renderer.hostLocation[0], position.y - renderer.hostLocation[1],
-                    size.width, size.height, blurDp * density)
+                lensApplied = renderer.draw(
+                    canvas = canvas.nativeCanvas,
+                    content = node,
+                    x = position.x - renderer.hostLocation[0],
+                    y = position.y - renderer.hostLocation[1],
+                    width = size.width,
+                    height = size.height,
+                    blurRadiusPx = blurDp * density,
+                    outline = outline,
+                    density = density,
+                    clarityPercent = clarity,
+                    surfaceColor = surface,
+                    tintAlpha = baseOpacity,
+                    role = role,
+                    flatEdges = flatEdges,
+                    press = press,
+                    lensEnabled = lensEnabled,
+                    lightX = lightDir.x,
+                    lightY = lightDir.y,
+                    backdropLuminance = source.backdropLuminance.takeIf { source.backdropOverLight != null }
+                )
             }
         }
         if (!hardware) {
@@ -98,7 +133,10 @@ internal fun Modifier.hardwareGlassBackground(
             return@drawWithContent
         }
         source.recordGuard(renderer, "none", active, currentActive, positioned, hasNode, true)
-        drawOutline(outline, surface.copy(alpha = baseOpacity))
+        if (!lensApplied) {
+            drawOutline(outline, surface.copy(alpha = baseOpacity))
+            drawFallbackDualLobeRim(outline, isDark, baseOpacity, flatEdges)
+        }
         drawContent()
 
         source.recordMaterial(baseOpacity, 0f, blurDp,
@@ -110,6 +148,7 @@ internal fun Modifier.hardwareGlassBackground(
 private class LiquidBackdropRenderer {
     val hostLocation = IntArray(2)
     private val material = RenderNode("MiradLiquidMaterial")
+    private val lensEngine = if (Build.VERSION.SDK_INT >= 33) LiquidGlassLensEngine() else null
     private var previousContent: RenderNode? = null
     private var previousX = Float.NaN
     private var previousY = Float.NaN
@@ -126,16 +165,31 @@ private class LiquidBackdropRenderer {
     var materialRecoveries = 0L
         private set
 
-    fun draw(canvas: Canvas, content: RenderNode, x: Float, y: Float, width: Float, height: Float,
-        blurRadiusPx: Float) {
-        // 清晰度 100% 时半径为 0，直接绘制背景节点。
+    fun draw(
+        canvas: Canvas,
+        content: RenderNode,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        blurRadiusPx: Float,
+        outline: Outline,
+        density: Float,
+        clarityPercent: Int,
+        surfaceColor: Color,
+        tintAlpha: Float,
+        role: GlassLensRole,
+        flatEdges: GlassFlatEdges,
+        press: Float,
+        lensEnabled: Boolean,
+        lightX: Float,
+        lightY: Float,
+        backdropLuminance: Float?
+    ): Boolean {
+        // 清晰度 100% 时半径为 0，在 API 33+ 上仍可独立运行无模糊光学透镜。
         val hasBlur = blurRadiusPx > 0.01f
         val padding = liquidMaterialPaddingPx(blurRadiusPx)
         participating = true
-        if (hasBlur && blurRadiusPx != lastBlurRadius) {
-            lastBlurRadius = blurRadiusPx
-            blur = RenderEffect.createBlurEffect(blurRadiusPx, blurRadiusPx, Shader.TileMode.CLAMP)
-        }
         // A detached native child may lose its display list even though its Java wrapper and
         // geometry cache survive a 0%/fallback interval. Re-establish both list and effect on return.
         val hadDisplayList = material.hasDisplayList()
@@ -155,7 +209,50 @@ private class LiquidBackdropRenderer {
             previousWidth = width; previousHeight = height; previousPadding = padding
             materialRecords++
         }
-        val effect = if (hasBlur) blur else null
+
+        val lensEffect = if (
+            Build.VERSION.SDK_INT >= 33 &&
+            lensEnabled &&
+            lensEngine != null &&
+            LiquidGlassLensEngine.isAvailable()
+        ) {
+            extractGlassCornerRadii(outline)?.let { corners ->
+                resolveGlassLensUniforms(
+                    widthPx = width,
+                    heightPx = height,
+                    density = density,
+                    paddingPx = padding,
+                    blurRadiusPx = blurRadiusPx,
+                    corners = corners,
+                    role = role,
+                    flatEdges = flatEdges,
+                    clarityPercent = clarityPercent,
+                    tintR = surfaceColor.red,
+                    tintG = surfaceColor.green,
+                    tintB = surfaceColor.blue,
+                    tintA = tintAlpha,
+                    press = press,
+                    lightX = lightX,
+                    lightY = lightY,
+                    backdropLuminance = backdropLuminance
+                )?.let { lensEngine.effect(it) }
+            }
+        } else {
+            null
+        }
+
+        val effect = when {
+            lensEffect != null -> lensEffect
+            hasBlur -> {
+                if (blurRadiusPx != lastBlurRadius) {
+                    lastBlurRadius = blurRadiusPx
+                    blur = RenderEffect.createBlurEffect(blurRadiusPx, blurRadiusPx, Shader.TileMode.CLAMP)
+                }
+                blur
+            }
+            else -> null
+        }
+
         if (record || effect !== appliedMaterialEffect) {
             material.setRenderEffect(effect)
             appliedMaterialEffect = effect
@@ -165,6 +262,7 @@ private class LiquidBackdropRenderer {
             canvas.translate(-padding.toFloat(), -padding.toFloat())
             canvas.drawRenderNode(material)
         } finally { canvas.restoreToCount(save) }
+        return lensEffect != null
     }
 
     fun pause() {
@@ -176,5 +274,11 @@ private class LiquidBackdropRenderer {
         appliedMaterialEffect = null
     }
 
-    fun release() { pause(); material.discardDisplayList() }
+    fun release() {
+        pause()
+        material.discardDisplayList()
+        if (Build.VERSION.SDK_INT >= 33) {
+            lensEngine?.clear()
+        }
+    }
 }

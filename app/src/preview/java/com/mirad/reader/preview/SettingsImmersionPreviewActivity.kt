@@ -192,6 +192,7 @@ class SettingsImmersionPreviewActivity : ComponentActivity() {
                     LocalAppAppearanceSaveFailed provides appearanceSaveFailed,
                     LocalGlassAppearance provides glass,
                     LocalGlassForceFallback provides intent.getBooleanExtra("fallback", false),
+                    LocalGlassLensEnabled provides intent.getBooleanExtra("lensEnabled", true),
                     LocalEdgeBounceObserver provides bounceProbe::record,
                     LocalGlassAppearanceController provides glassController,
                     LocalSettingsCommit provides { if (unifiedAppearance) appearanceController.commitReadingConfig() else repo.flushGlobalConfig(scope) }

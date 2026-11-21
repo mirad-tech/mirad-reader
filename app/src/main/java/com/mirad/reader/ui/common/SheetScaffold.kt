@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import com.mirad.reader.ui.common.bouncingVerticalScroll
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
@@ -76,7 +77,7 @@ fun SheetScaffold(
     // 此时 fillMaxHeight(fraction) 不生效，内容会溢出屏幕底部导致尾部操作点不到。
     val shadowSpace = Elevation.modal
     val maxHeight = (LocalConfiguration.current.screenHeightDp.dp * maxHeightFraction - shadowSpace).coerceAtLeast(0.dp)
-    val shape = MaterialTheme.shapes.extraLarge
+    val shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val sheetState = rememberModalBottomSheetState()
     val scope = rememberCoroutineScope()
     val close: () -> Unit = { scope.launch { sheetState.hide(); onDismiss() }; Unit }
@@ -92,13 +93,18 @@ fun SheetScaffold(
         contentWindowInsets = { WindowInsets.systemBarsIgnoringVisibility.union(WindowInsets.displayCutout) }
     ) {
         ApplyReaderDialogWindowPolicy()
-        androidx.compose.runtime.CompositionLocalProvider(LocalEdgeBounceAllowed provides { delta ->
-            delta < 0f && sheetState.currentValue == SheetValue.Expanded && sheetState.targetValue == SheetValue.Expanded
-        }) {
+        val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalOnGlassSurface provides onGlass,
+            LocalEdgeBounceAllowed provides { delta ->
+                delta < 0f && sheetState.currentValue == SheetValue.Expanded && sheetState.targetValue == SheetValue.Expanded
+            }
+        ) {
         // The public ModalBottomSheet modifier precedes its internal offset. Paint
         // inside its content so the background and clip move with the sheet.
         Column(Modifier.fillMaxWidth().padding(top = shadowSpace)
-            .shadow(Elevation.modal, shape, clip = false).glassBackground(GlassStyle.Panel, shape)) {
+            .shadow(Elevation.modal, shape, clip = false)
+            .glassBackground(GlassStyle.Panel, shape, flatEdges = GlassFlatEdges.Bottom)) {
             BottomSheetDefaults.DragHandle(
                 modifier = Modifier.align(Alignment.CenterHorizontally)
                     .clickable {

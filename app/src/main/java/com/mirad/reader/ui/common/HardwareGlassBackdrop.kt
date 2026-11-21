@@ -52,6 +52,10 @@ internal class HardwareGlassBackdrop(
     val renderingActive: Boolean get() = enabled && foregroundActive && attached && percent > 0 && consumers > 0
     internal var metrics by mutableStateOf<LiquidBackdropMetrics?>(null)
         private set
+    internal var backdropLuminance by mutableFloatStateOf(0.5f)
+        private set
+    internal var backdropOverLight by mutableStateOf<Boolean?>(null)
+        private set
 
     private val gate = LiquidAnalysisGate()
     private val requests = Channel<Unit>(Channel.CONFLATED)
@@ -109,12 +113,12 @@ internal class HardwareGlassBackdrop(
     private val attachment = object : View.OnAttachStateChangeListener {
         override fun onViewAttachedToWindow(view: View) {
             attached = view.isHardwareAccelerated
-            invalidateScene("attachment")
+            invalidateScene("attachment", resetLuminance = false)
         }
         override fun onViewDetachedFromWindow(view: View) {
             attached = false
             contentReady = false
-            invalidateScene("attachment")
+            invalidateScene("attachment", resetLuminance = true)
         }
     }
     private val layout = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -140,7 +144,7 @@ internal class HardwareGlassBackdrop(
         attached = host.isAttachedToWindow && host.isHardwareAccelerated
         host.addOnAttachStateChangeListener(attachment)
         host.addOnLayoutChangeListener(layout)
-        invalidateScene("attachment")
+        invalidateScene("attachment", resetLuminance = false)
     }
 
     fun detach(host: View) {
@@ -151,7 +155,7 @@ internal class HardwareGlassBackdrop(
         node = null
         attached = false
         contentReady = false
-        invalidateScene("attachment")
+        invalidateScene("attachment", resetLuminance = true)
     }
 
     /** Safe in a draw callback: marks ordinary state and sends one conflated wakeup only. */
@@ -170,16 +174,19 @@ internal class HardwareGlassBackdrop(
     internal fun setForegroundActive(active: Boolean) {
         if (foregroundActive == active) return
         foregroundState = active
-        invalidateScene("lifecycle")
+        invalidateScene("lifecycle", resetLuminance = !active)
     }
 
     internal fun configure(enabled: Boolean, percent: Int, revision: Any?) {
         val stopped = this.enabled != enabled || (this.percent == 0) != (percent == 0)
         this.enabled = enabled
         this.percent = percent
+        val deactivated = !enabled || percent <= 0
         if (stopped || this.revision != revision) {
             this.revision = revision
-            invalidateScene("config")
+            // 翻页（revision 变化）保留上次 EMA 平滑亮度基准，避免 500ms 采样间隔内高光先跳回 0.5f 再二次跳变闪烁；
+            // 仅在停用（!enabled 或 percent <= 0）时重置亮度。
+            invalidateScene("config", resetLuminance = deactivated)
         }
     }
 
@@ -191,19 +198,26 @@ internal class HardwareGlassBackdrop(
     internal fun removeConsumer(key: Any) {
         materialStates.remove(key)
         consumers = (consumers - 1).coerceAtLeast(0)
-        if (consumers == 0) invalidateScene("consumer")
+        if (consumers == 0) invalidateScene("consumer", resetLuminance = true)
     }
 
-    private fun invalidateScene(origin: String) {
+    private fun invalidateScene(origin: String, resetLuminance: Boolean = false) {
         countDirty(origin)
         gate.invalidate()
         metrics = null
+        if (resetLuminance) {
+            backdropLuminance = 0.5f
+            backdropOverLight = null
+        }
         if (!closed && !wakePosted) { wakePosted = true; mainHandler.post(wake) }
     }
 
     private fun checkDimensions() {
         val current = node?.let { IntSize(it.width, it.height) } ?: IntSize.Zero
-        if (current != dimensions) { dimensions = current; invalidateScene("dimensions") }
+        if (current != dimensions) {
+            dimensions = current
+            invalidateScene("dimensions", resetLuminance = current.width <= 0 || current.height <= 0)
+        }
     }
 
     private fun countDirty(origin: String) {
@@ -271,6 +285,17 @@ internal class HardwareGlassBackdrop(
             if (current && renderingActive && contentReady && result != null) {
                 if (metrics?.fingerprint == result.fingerprint) identicalAnalysisResults++ else changedAnalysisResults++
                 metrics = result
+                val prevOverLight = backdropOverLight
+                val smoothedLum = if (prevOverLight == null) {
+                    result.meanLuminance
+                } else {
+                    (result.meanLuminance * 0.35f + backdropLuminance * 0.65f).coerceIn(0f, 1f)
+                }
+                backdropLuminance = smoothedLum
+                backdropOverLight = resolveOverLightHysteresis(
+                    luminance = smoothedLum,
+                    previousOverLight = prevOverLight ?: (smoothedLum > 0.52f)
+                )
             }
             else if (!current) staleSamples++
         }
@@ -335,9 +360,7 @@ internal class HardwareGlassBackdrop(
 @Composable
 internal fun rememberHardwareGlassBackdrop(revision: Any?, visible: Boolean = true): HardwareGlassBackdrop? {
     if (Build.VERSION.SDK_INT < 31) return null
-    val context = LocalContext.current
-    val power = remember(context) { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
-    var powerSave by remember { mutableStateOf(power.isPowerSaveMode) }
+    val capabilities = rememberGlassSystemCapabilities()
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val scope = rememberCoroutineScope()
     val latestVisible by rememberUpdatedState(visible)
@@ -347,27 +370,27 @@ internal fun rememberHardwareGlassBackdrop(revision: Any?, visible: Boolean = tr
     val legacy = LocalGlassLegacy.current
     val fallback = LocalGlassForceFallback.current
     val percent = LocalGlassAppearance.current.transparencyPercent
-    DisposableEffect(context, power, lifecycle, source) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) { powerSave = power.isPowerSaveMode }
-        }
-        context.registerReceiver(receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
+    DisposableEffect(lifecycle, source) {
         val observer = LifecycleEventObserver { _, _ ->
             val started = lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
             source.setForegroundActive(started && latestVisible)
-            if (started) powerSave = power.isPowerSaveMode
         }
         source.setForegroundActive(visible && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
         lifecycle.addObserver(observer)
         onDispose {
-            context.unregisterReceiver(receiver)
             lifecycle.removeObserver(observer)
             source.close()
         }
     }
     SideEffect {
         source.setForegroundActive(visible && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED))
-        source.configure(!legacy && !fallback && !powerSave, percent, revision)
+        val allowed = glassBlurAllowed(
+            apiLevel = Build.VERSION.SDK_INT,
+            powerSave = capabilities.powerSave,
+            forceFallback = fallback,
+            reducedTransparency = capabilities.reducedTransparency
+        ) && !legacy
+        source.configure(allowed, percent, revision)
     }
     return source
 }

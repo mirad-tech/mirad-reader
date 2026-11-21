@@ -21,6 +21,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.mirad.reader.ui.MiradIcons
 import androidx.compose.ui.unit.dp
@@ -102,23 +103,30 @@ fun SettingSwitchRow(
     label: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
-    subtitle: String? = null
+    subtitle: String? = null,
+    enabled: Boolean = true
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+            )
             if (subtitle != null) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
                 )
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
+        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
@@ -130,14 +138,17 @@ fun StatTile(
     modifier: Modifier = Modifier,
     highlight: Boolean = false
 ) {
+    val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
+    val glassActive = isGlassSurfaceActive()
+    val containerColor = when {
+        highlight -> MaterialTheme.colorScheme.primaryContainer
+        glassActive -> MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) 0.18f else 0.24f)
+        else -> MaterialTheme.colorScheme.surface
+    }
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(
-                if (highlight) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surface,
-                MaterialTheme.shapes.medium
-            )
+            .background(containerColor, MaterialTheme.shapes.medium)
             .padding(Sizes.cardPaddingH, Sizes.cardPaddingV),
         verticalArrangement = Arrangement.spacedBy(Spacing.xs)
     ) {

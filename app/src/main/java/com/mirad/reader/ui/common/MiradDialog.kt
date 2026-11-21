@@ -40,7 +40,11 @@ fun MiradDialog(
     }
     val maxBodyHeight = LocalConfiguration.current.screenHeightDp.dp * .55f
     val shape = MaterialTheme.shapes.extraLarge
-    CompositionLocalProvider(LocalEdgeBounceAllowed provides { true }) {
+    val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
+    CompositionLocalProvider(
+        LocalOnGlassSurface provides onGlass,
+        LocalEdgeBounceAllowed provides { true }
+    ) {
     AlertDialog(
         onDismissRequest = onDismissRequest,
         confirmButton = { ApplyReaderDialogWindowPolicy(); primaryAction() },

@@ -2,6 +2,8 @@ package com.mirad.reader.ui.shelf
 
 import android.os.SystemClock
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -52,6 +54,7 @@ import com.mirad.reader.data.imports.ImportItem
 import com.mirad.reader.data.repo.ShelfBook
 import com.mirad.reader.ui.common.GlassStyle
 import com.mirad.reader.ui.common.GlassSurface
+import com.mirad.reader.ui.common.LocalGlassReducedMotion
 import com.mirad.reader.ui.common.MiradLinearProgress
 import com.mirad.reader.ui.design.Elevation
 import kotlinx.coroutines.delay
@@ -82,6 +85,12 @@ internal fun ShelfFloatingCard(
     }
     var touching by remember { mutableStateOf(false) }
     var focused by remember { mutableStateOf(false) }
+    val reducedMotion = LocalGlassReducedMotion.current
+    val cardPress by animateFloatAsState(
+        targetValue = if (touching && !reducedMotion) 1f else 0f,
+        animationSpec = if (reducedMotion) snap() else tween(if (touching) 160 else 280),
+        label = "shelfCardPress"
+    )
     val content = resolveShelfFloatingContent(available && resumed, importing, resume != null, prompt.consumed)
     val accessibility = LocalAccessibilityManager.current
     val timeout = accessibility?.calculateRecommendedTimeoutMillis(
@@ -130,7 +139,8 @@ internal fun ShelfFloatingCard(
                 },
             style = GlassStyle.Panel,
             shape = MaterialTheme.shapes.large,
-            shadowElevation = Elevation.floatingBar
+            shadowElevation = Elevation.floatingBar,
+            press = cardPress
         ) {
             if (card is ShelfCardPresentation.Import) {
                 val task = card.task

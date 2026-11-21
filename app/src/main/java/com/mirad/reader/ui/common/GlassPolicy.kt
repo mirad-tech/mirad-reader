@@ -11,6 +11,13 @@ import kotlin.math.pow
 internal fun glassBlurAllowed(apiLevel: Int, powerSave: Boolean, forceFallback: Boolean): Boolean =
     apiLevel >= 31 && !powerSave && !forceFallback
 
+internal fun glassBlurAllowed(
+    apiLevel: Int,
+    powerSave: Boolean,
+    forceFallback: Boolean,
+    reducedTransparency: Boolean
+): Boolean = glassBlurAllowed(apiLevel, powerSave, forceFallback) && !reducedTransparency
+
 /** Bound reader sampling cost even on tablet/foldable viewports. */
 internal fun glassSnapshotDimensions(width: Int, height: Int): Pair<Int, Int>? {
     if (width <= 0 || height <= 0) return null

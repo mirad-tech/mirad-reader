@@ -176,6 +176,14 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     val stateHolder = androidx.compose.runtime.saveable.rememberSaveableStateHolder()
     val appearance = appAppearance
     val darkTheme = appearance?.effectiveDark(systemDark) ?: systemDark
+    val glassCapabilities = rememberGlassSystemCapabilities()
+    val dynamicLightActive = glassAppearance.enabled &&
+        glassAppearance.dynamicHighlight &&
+        current !is Screen.Reader &&
+        !glassCapabilities.powerSave &&
+        !glassCapabilities.reducedMotion &&
+        !glassCapabilities.reducedTransparency
+    val lightDirection = rememberGlassLightDirection(dynamicLightActive)
     if (current !is Screen.Reader) {
         ApplyReaderWindowPolicy((LocalContext.current as? Activity)?.window, ReaderWindowPolicy(false, darkTheme))
     }
@@ -203,7 +211,9 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         LocalAppAppearanceController provides appController,
         LocalGlassAppearance provides glassAppearance,
         LocalGlassAppearanceController provides glassController,
-        LocalGlassSaveFailed provides glassSaveFailed
+        LocalGlassSaveFailed provides glassSaveFailed,
+        LocalGlassReducedMotion provides glassCapabilities.reducedMotion,
+        LocalGlassLightDirection provides lightDirection
     ) {
         val renderScreen: @Composable (AppTab, Screen) -> Unit = { tab, screen ->
             CompositionLocalProvider(LocalAppRootPage provides (screen == tab.root), LocalPagerPage provides tab.name, LocalPagerPageIndex provides tab.ordinal) {

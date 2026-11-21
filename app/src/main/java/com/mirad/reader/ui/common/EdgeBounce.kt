@@ -90,6 +90,7 @@ internal fun Modifier.edgeBounce(): Modifier = composed {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val maxOffset = with(LocalDensity.current) { EdgeBounceState.MAX_DP.dp.toPx() }
     val allow by rememberUpdatedState(LocalEdgeBounceAllowed.current)
+    val reducedMotion by rememberUpdatedState(LocalGlassReducedMotion.current)
     val observer by rememberUpdatedState(LocalEdgeBounceObserver.current)
     val generation = LocalEdgeBounceCoordinator.current?.generation
     var job by remember { mutableStateOf<Job?>(null) }
@@ -104,6 +105,10 @@ internal fun Modifier.edgeBounce(): Modifier = composed {
         observer?.invoke(id, state.offsetPx, false)
     }
     fun settle() {
+        if (reducedMotion) {
+            cancel(reset = true)
+            return
+        }
         if (job?.isActive == true || state.offsetPx == 0f) return
         val token = ++animationGeneration
         job = scope.launch {
@@ -121,7 +126,7 @@ internal fun Modifier.edgeBounce(): Modifier = composed {
             }
         }
     }
-    LaunchedEffect(generation, maxOffset) { cancel(reset = true) }
+    LaunchedEffect(generation, maxOffset, reducedMotion) { cancel(reset = true) }
     DisposableEffect(lifecycle, state) {
         val listener = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP) cancel(reset = true)
@@ -132,14 +137,14 @@ internal fun Modifier.edgeBounce(): Modifier = composed {
     val connection = remember(state, maxOffset) {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (source != NestedScrollSource.UserInput) return Offset.Zero
+                if (reducedMotion || source != NestedScrollSource.UserInput) return Offset.Zero
                 cancel(reset = false)
                 val consumed = state.unwind(available.y)
                 observer?.invoke(id, state.offsetPx, false)
                 return Offset(0f, consumed)
             }
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
-                if (source != NestedScrollSource.UserInput || available.y == 0f || !allow(available.y)) return Offset.Zero
+                if (reducedMotion || source != NestedScrollSource.UserInput || available.y == 0f || !allow(available.y)) return Offset.Zero
                 val result = state.pull(available.y, maxOffset)
                 observer?.invoke(id, state.offsetPx, false)
                 return Offset(0f, result)
@@ -149,6 +154,10 @@ internal fun Modifier.edgeBounce(): Modifier = composed {
                 return Velocity.Zero
             }
             override suspend fun onPostFling(consumed: Velocity, available: Velocity): Velocity {
+                if (reducedMotion) {
+                    cancel(reset = true)
+                    return Velocity.Zero
+                }
                 val atBoundary = available.y != 0f && allow(available.y)
                 if (atBoundary && state.offsetPx == 0f && abs(available.y) >= 60f) {
                     // 把边界剩余速度换成一帧的受阻位移；不再启动第二段惯性滚动。

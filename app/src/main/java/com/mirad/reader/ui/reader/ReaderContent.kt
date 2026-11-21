@@ -7,8 +7,11 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -385,14 +388,31 @@ internal fun ReaderContent(
         }) {
         // 阅读器内所有同窗弹层（朗读/自动阅读/设置等）共享的滑块松手提交回调；
         // 不提供时 LabeledSlider 的 onCommit 落到空实现，只能等 400ms 防抖落库。
-        CompositionLocalProvider(LocalSettingsCommit provides { appearanceController?.commitReadingConfig() }) {
+        // 阅读正文页固定默认光源，不启用重力传感器动态高光，避免分散阅读专注力。
+        val reducedMotion = LocalGlassReducedMotion.current
+        CompositionLocalProvider(
+            LocalSettingsCommit provides { appearanceController?.commitReadingConfig() },
+            LocalGlassLightDirection provides com.mirad.reader.ui.common.DefaultGlassLightDirectionState
+        ) {
         Box(Modifier.fillMaxSize()) {
 
         // 顶部/底部工具栏
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn(tween(160)) + slideInVertically(tween(180)) { -with(density) { 8.dp.roundToPx() } },
-            exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { -with(density) { 8.dp.roundToPx() } },
+            enter = if (reducedMotion) {
+                fadeIn(tween(80))
+            } else {
+                fadeIn(tween(180)) +
+                    scaleIn(tween(200), initialScale = 0.96f, transformOrigin = TransformOrigin(0.5f, 0f)) +
+                    slideInVertically(tween(200)) { -with(density) { 10.dp.roundToPx() } }
+            },
+            exit = if (reducedMotion) {
+                fadeOut(tween(80))
+            } else {
+                fadeOut(tween(150)) +
+                    scaleOut(tween(160), targetScale = 0.97f, transformOrigin = TransformOrigin(0.5f, 0f)) +
+                    slideOutVertically(tween(160)) { -with(density) { 8.dp.roundToPx() } }
+            },
             modifier = Modifier.align(Alignment.TopCenter)
         ) {
             ReaderTopBar(
@@ -421,8 +441,20 @@ internal fun ReaderContent(
 
         AnimatedVisibility(
             visible = chromeVisible,
-            enter = fadeIn(tween(160)) + slideInVertically(tween(180)) { with(density) { 8.dp.roundToPx() } },
-            exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { with(density) { 8.dp.roundToPx() } },
+            enter = if (reducedMotion) {
+                fadeIn(tween(80))
+            } else {
+                fadeIn(tween(180)) +
+                    scaleIn(tween(200), initialScale = 0.96f, transformOrigin = TransformOrigin(0.5f, 1f)) +
+                    slideInVertically(tween(200)) { with(density) { 10.dp.roundToPx() } }
+            },
+            exit = if (reducedMotion) {
+                fadeOut(tween(80))
+            } else {
+                fadeOut(tween(150)) +
+                    scaleOut(tween(160), targetScale = 0.97f, transformOrigin = TransformOrigin(0.5f, 1f)) +
+                    slideOutVertically(tween(160)) { with(density) { 8.dp.roundToPx() } }
+            },
             modifier = Modifier.align(Alignment.BottomCenter).onSizeChanged { bottomControlsHeight = it.height }
         ) {
             ReaderBottomBar(

@@ -16,7 +16,8 @@ import androidx.compose.runtime.staticCompositionLocalOf
  */
 data class GlassAppearance(
     val enabled: Boolean = true,
-    val clarityPercent: Int = DEFAULT_CLARITY
+    val clarityPercent: Int = DEFAULT_CLARITY,
+    val dynamicHighlight: Boolean = false
 ) {
     /** 兼容投影：只用于写回旧键，不得反向覆盖新清晰度。 */
     val transparencyPercent: Int
@@ -24,7 +25,11 @@ data class GlassAppearance(
 
     val transparencyFraction: Float get() = transparencyPercent / 100f
 
-    fun normalized(): GlassAppearance = GlassAppearance(enabled, clarityPercent.coerceIn(MIN_CLARITY, MAX_CLARITY))
+    fun normalized(): GlassAppearance = GlassAppearance(
+        enabled = enabled,
+        clarityPercent = clarityPercent.coerceIn(MIN_CLARITY, MAX_CLARITY),
+        dynamicHighlight = dynamicHighlight
+    )
 
     companion object {
         const val MIN_CLARITY = 0
@@ -53,7 +58,8 @@ data class GlassAppearance(
 @kotlinx.serialization.Serializable
 private data class GlassAppearanceRecord(
     val enabled: Boolean = true,
-    val clarityPercent: Int = GlassAppearance.DEFAULT_CLARITY
+    val clarityPercent: Int = GlassAppearance.DEFAULT_CLARITY,
+    val dynamicHighlight: Boolean = false
 )
 
 internal object GlassAppearanceJson {
@@ -66,15 +72,17 @@ internal object GlassAppearanceJson {
         if (raw.isNullOrBlank()) return GlassAppearance.DEFAULT
         return runCatching {
             val record = json.decodeFromString(GlassAppearanceRecord.serializer(), raw)
-            GlassAppearance(record.enabled, record.clarityPercent).normalized()
+            GlassAppearance(record.enabled, record.clarityPercent, record.dynamicHighlight).normalized()
         }.getOrDefault(GlassAppearance.DEFAULT)
     }
 
-    fun encode(appearance: GlassAppearance): String =
-        json.encodeToString(
+    fun encode(appearance: GlassAppearance): String {
+        val norm = appearance.normalized()
+        return json.encodeToString(
             GlassAppearanceRecord.serializer(),
-            GlassAppearanceRecord(appearance.enabled, appearance.normalized().clarityPercent)
+            GlassAppearanceRecord(norm.enabled, norm.clarityPercent, norm.dynamicHighlight)
         )
+    }
 }
 
 interface GlassAppearanceController {

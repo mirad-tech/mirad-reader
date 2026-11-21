@@ -105,6 +105,7 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier, actionEnab
         exit = fadeOut(tween(160)) + slideOutVertically(tween(160)) { distance }
     ) {
         displayed?.let { value ->
+            val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
             Surface(
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                     .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.large)
@@ -113,6 +114,7 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier, actionEnab
                 color = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface
             ) {
+                CompositionLocalProvider(LocalOnGlassSurface provides onGlass) {
                 Row(Modifier.padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -136,6 +138,7 @@ fun FeedbackHost(state: FeedbackState, modifier: Modifier = Modifier, actionEnab
                     IconButton(onClick = { state.dismiss(value.id) }) {
                         Icon(Icons.Default.Close, "关闭提示", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                }
                 }
             }
         }

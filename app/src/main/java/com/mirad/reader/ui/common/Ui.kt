@@ -189,6 +189,10 @@ private fun RowScope.MiradButtonContent(
 
 internal val LocalSettingCardElevation = staticCompositionLocalOf { 0.dp }
 
+/** 当前上下文是否处于激活的半透明玻璃材质容器内部（用于面板内次级控件的半透明层级适配）。 */
+@Composable
+internal fun isGlassSurfaceActive(): Boolean = LocalOnGlassSurface.current
+
 /** 设置项分组卡片：统一的圆角、描边与内边距。 */
 @Composable
 fun SettingCard(
@@ -200,12 +204,9 @@ fun SettingCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
-    val hardwareEnabled = Build.VERSION.SDK_INT >= 31 && LocalHardwareGlassBackdrop.current?.enabled == true
-    val glassActive = LocalGlassAppearance.current.transparencyPercent > 0 &&
-        (hardwareEnabled || LocalGlassBackdrop.current?.enabled == true) &&
-        !LocalGlassLegacy.current
+    val glassInset = isGlassSurfaceActive() && shadowElevation == 0.dp
     // An inset tint inherits the parent's material. It must not sample the list containing itself.
-    val container = if (glassActive && shadowElevation == 0.dp) {
+    val container = if (glassInset) {
         MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) .12f else .08f)
     } else MaterialTheme.colorScheme.surface
     Column(modifier = modifier.fillMaxWidth()) {
@@ -222,7 +223,7 @@ fun SettingCard(
             color = container,
             shadowElevation = shadowElevation,
             border = androidx.compose.foundation.BorderStroke(.5.dp,
-                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (glassActive) .45f else .7f)),
+                MaterialTheme.colorScheme.outlineVariant.copy(alpha = if (glassInset) .45f else .7f)),
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(
@@ -331,14 +332,22 @@ fun ChoiceChip(
     enabled: Boolean = true,
     onLongClick: (() -> Unit)? = null
 ) {
+    val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
+    val glassActive = isGlassSurfaceActive()
+    val unselectedBg = if (glassActive && enabled) {
+        MaterialTheme.colorScheme.surfaceContainer.copy(alpha = if (isDark) 0.14f else 0.18f)
+    } else {
+        Color.Transparent
+    }
     val selectedColor by animateColorAsState(
-        if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+        if (selected) MaterialTheme.colorScheme.primary else unselectedBg,
         tween(120),
         label = "choice"
     )
     val borderColor = when {
         !enabled -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.38f)
         selected -> MaterialTheme.colorScheme.primary
+        glassActive -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.50f)
         else -> MaterialTheme.colorScheme.outlineVariant
     }
     val textColor = when {
@@ -350,7 +359,7 @@ fun ChoiceChip(
         modifier = modifier
             .minimumInteractiveComponentSize()
             .clip(MiradButtonShape)
-            .background(if (selected && enabled) selectedColor else Color.Transparent)
+            .background(if (enabled) selectedColor else Color.Transparent)
             .border(
                 width = 1.dp,
                 color = borderColor,
@@ -384,21 +393,44 @@ fun <T> SegmentedRow(
     selected: T,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
-    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    selectedColor: Color = MaterialTheme.colorScheme.surface
+    trackColor: Color = Color.Unspecified,
+    selectedColor: Color = Color.Unspecified
 ) {
+    val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < .5f)
+    val glassActive = isGlassSurfaceActive()
+    val resolvedTrackColor = when {
+        trackColor != Color.Unspecified -> trackColor
+        glassActive -> MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = if (isDark) 0.34f else 0.42f)
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val resolvedSelectedColor = when {
+        selectedColor != Color.Unspecified -> selectedColor
+        glassActive -> MaterialTheme.colorScheme.surface.copy(alpha = if (isDark) 0.72f else 0.84f)
+        else -> MaterialTheme.colorScheme.surface
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(MiradButtonShape)
-            .background(trackColor)
+            .background(resolvedTrackColor)
+            .then(
+                if (glassActive && trackColor == Color.Unspecified) {
+                    Modifier.border(
+                        width = 0.5.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.42f),
+                        shape = MiradButtonShape
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .padding(3.dp),
         horizontalArrangement = Arrangement.spacedBy(3.dp)
     ) {
         options.forEach { (value, text) ->
             val isSelected = value == selected
             val segmentColor by animateColorAsState(
-                if (isSelected) selectedColor else Color.Transparent,
+                if (isSelected) resolvedSelectedColor else Color.Transparent,
                 tween(120),
                 label = "segment"
             )

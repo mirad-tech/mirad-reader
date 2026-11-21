@@ -21,7 +21,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.ui.common.GlassLensRole
 import com.mirad.reader.ui.common.GlassSurface
+import com.mirad.reader.ui.common.LocalGlassReducedMotion
 import com.mirad.reader.ui.common.LocalPageSafeInsets
 import com.mirad.reader.ui.common.glassSafeInsets
 import com.mirad.reader.ui.design.Elevation
@@ -34,12 +36,39 @@ internal fun AppNavigationBar(
     onSelect: (AppTab) -> Unit
 ) {
     val safeInsets = LocalPageSafeInsets.current ?: glassSafeInsets()
+    val reducedMotion = LocalGlassReducedMotion.current
     val progress = motion?.progress ?: selected.ordinal.toFloat()
     val dragging = motion?.isDragging == true
+    val rawStretch = if (reducedMotion) 0f else (motion?.liquidStretch ?: 0f)
     val stretch by androidx.compose.animation.core.animateFloatAsState(
-        if (dragging) motion?.dragStretch ?: 0f else 0f, label = "navigationStretch")
+        targetValue = rawStretch,
+        animationSpec = if (reducedMotion) androidx.compose.animation.core.snap()
+        else androidx.compose.animation.core.tween(90),
+        label = "navigationStretch"
+    )
+    val targetHeightScale = when {
+        reducedMotion -> 1f
+        dragging -> 1.04f
+        rawStretch > 0.01f -> 1f - 0.05f * rawStretch.coerceIn(0f, 1f)
+        else -> 1f
+    }
     val heightScale by androidx.compose.animation.core.animateFloatAsState(
-        if (dragging) 1.04f else 1f, label = "navigationPress")
+        targetValue = targetHeightScale,
+        animationSpec = if (reducedMotion) androidx.compose.animation.core.snap()
+        else androidx.compose.animation.core.tween(120),
+        label = "navigationPress"
+    )
+    val targetPress = when {
+        reducedMotion -> 0f
+        dragging -> 1f
+        else -> (rawStretch * 0.75f).coerceIn(0f, 1f)
+    }
+    val capsulePress by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = targetPress,
+        animationSpec = if (reducedMotion) androidx.compose.animation.core.snap()
+        else androidx.compose.animation.core.tween(if (dragging) 180 else 280),
+        label = "navigationCapsulePress"
+    )
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
     val latestMotion by rememberUpdatedState(motion)
     val latestEnabled by rememberUpdatedState(enabled)
@@ -101,8 +130,8 @@ internal fun AppNavigationBar(
                 if (innerSize.width > 0 && innerSize.height > 0) {
                     val slot = innerSize.width / AppTab.entries.size.toFloat()
                     val inset = with(density) { 2.dp.toPx() }
-                    val width = (slot - inset * 2) * (1f + .12f * stretch.coerceIn(0f, 1f))
-                    val height = innerSize.height * heightScale.coerceIn(1f, 1.04f)
+                    val width = (slot - inset * 2) * (1f + .16f * stretch.coerceIn(0f, 1f))
+                    val height = innerSize.height * heightScale.coerceIn(.94f, 1.04f)
                     val visualProgress = if (rtl) AppTab.entries.lastIndex - progress else progress
                     val left = ((visualProgress + .5f) * slot - width / 2f)
                         .coerceIn(0f, (innerSize.width - width).coerceAtLeast(0f))
@@ -112,7 +141,10 @@ internal fun AppNavigationBar(
                     GlassSurface(
                         Modifier.offset { androidx.compose.ui.unit.IntOffset(left.roundToInt(), ((innerSize.height-height)/2).roundToInt()) }
                             .width(with(density) { width.toDp() }).requiredHeight(with(density) { height.toDp() }),
-                        shape = RoundedCornerShape(50)) {
+                        shape = RoundedCornerShape(50),
+                        role = GlassLensRole.Capsule,
+                        press = capsulePress
+                    ) {
                         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.primary.copy(alpha = .12f)))
                     }
                 }

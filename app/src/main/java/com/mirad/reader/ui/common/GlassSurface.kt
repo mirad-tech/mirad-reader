@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.BlurEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TileMode
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.layer.GraphicsLayer
@@ -48,14 +49,89 @@ import com.mirad.reader.ui.design.Elevation
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.annotation.RequiresApi
 import kotlinx.coroutines.delay
+import kotlin.math.ceil
 import kotlin.math.max
 
 /** Preview overrides only: neither value is persisted or exposed in the product. */
 val LocalGlassLegacy = staticCompositionLocalOf { false }
 val LocalGlassForceFallback = staticCompositionLocalOf { false }
+val LocalGlassLensEnabled = staticCompositionLocalOf { true }
 
 val LocalGlassBackdrop = staticCompositionLocalOf<GlassBackdropState?> { null }
+
+/**
+ * 显式标记当前子树是否位于真正激活且处于半透明渲染态的玻璃容器（GlassSurface、玻璃 Sheet / Dialog / Menu）内部。
+ * 普通实色正文页保持默认 false，避免实色页面上的次级控件误用玻璃半透明样式。
+ */
+internal val LocalOnGlassSurface = staticCompositionLocalOf { false }
+
+/**
+ * 校验当前玻璃容器是否满足：硬件加速已开启、背景源渲染就绪且当前材质不透明度 < 0.95f（非实心）。
+ */
+@Composable
+internal fun rememberIsTranslucentGlassContainer(style: GlassStyle): Boolean {
+    if (LocalGlassLegacy.current) return false
+    val appearance = LocalGlassAppearance.current
+    if (!appearance.enabled || appearance.transparencyPercent <= 0) return false
+    val view = LocalView.current
+    if (!view.isHardwareAccelerated) return false
+
+    val hardware = LocalHardwareGlassBackdrop.current
+    val backdropReady = if (hardware != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        hardware.renderingActive && hardware.contentReady
+    } else {
+        val source = LocalGlassBackdrop.current
+        source?.enabled == true && (
+            source.recorded ||
+                source.image != null ||
+                source.sharedSnapshot != null
+        )
+    }
+    if (!backdropReady) return false
+
+    val isDark = LocalAppDarkTheme.current ?: (MaterialTheme.colorScheme.surface.luminance() < 0.5f)
+    val opacity = uniformGlassOpacity(appearance, isDark, available = true, style = style)
+    return opacity < 0.95f
+}
+
+private class ComposeRenderEffectCache {
+    var lastPlatformEffect: android.graphics.RenderEffect? = null
+    var lastBlurPx: Float = -1f
+    var cachedComposeEffect: androidx.compose.ui.graphics.RenderEffect? = null
+
+    fun resolve(
+        platformEffect: android.graphics.RenderEffect?,
+        blurPx: Float
+    ): androidx.compose.ui.graphics.RenderEffect? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && platformEffect != null) {
+            if (platformEffect !== lastPlatformEffect || cachedComposeEffect == null) {
+                lastPlatformEffect = platformEffect
+                lastBlurPx = -1f
+                cachedComposeEffect = wrapPlatformRenderEffect(platformEffect)
+            }
+            return cachedComposeEffect
+        }
+        if (blurPx > 0f) {
+            if (lastPlatformEffect != null || blurPx != lastBlurPx || cachedComposeEffect == null) {
+                lastPlatformEffect = null
+                lastBlurPx = blurPx
+                cachedComposeEffect = BlurEffect(blurPx, blurPx, TileMode.Clamp)
+            }
+            return cachedComposeEffect
+        }
+        lastPlatformEffect = null
+        lastBlurPx = -1f
+        cachedComposeEffect = null
+        return null
+    }
+}
+
+@RequiresApi(Build.VERSION_CODES.S)
+private fun wrapPlatformRenderEffect(
+    effect: android.graphics.RenderEffect
+): androidx.compose.ui.graphics.RenderEffect = effect.asComposeRenderEffect()
 
 enum class GlassStyle { Toolbar, Panel }
 
@@ -63,26 +139,19 @@ enum class GlassStyle { Toolbar, Panel }
 fun GlassBackdropHost(content: @Composable () -> Unit) {
     val source = remember { GlassBackdropState() }
     val hostScope = rememberCoroutineScope()
-    val context = LocalContext.current
     val view = LocalView.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val appearance = LocalGlassAppearance.current
     val legacy = LocalGlassLegacy.current
-    val power = remember(context) { context.getSystemService(Context.POWER_SERVICE) as PowerManager }
-    var powerSave by remember { mutableStateOf(power.isPowerSaveMode) }
+    val capabilities = rememberGlassSystemCapabilities()
     val forceFallback = LocalGlassForceFallback.current
 
-    DisposableEffect(context, power) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context?, intent: Intent?) {
-                powerSave = power.isPowerSaveMode
-            }
-        }
-        context.registerReceiver(receiver, IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED))
-        onDispose { context.unregisterReceiver(receiver) }
-    }
-
-    val blurAllowed = glassBlurAllowed(Build.VERSION.SDK_INT, powerSave, forceFallback) && !legacy
+    val blurAllowed = glassBlurAllowed(
+        apiLevel = Build.VERSION.SDK_INT,
+        powerSave = capabilities.powerSave,
+        forceFallback = forceFallback,
+        reducedTransparency = capabilities.reducedTransparency
+    ) && !legacy
     val activePercent = appearance.transparencyPercent
 
     SideEffect {
@@ -123,7 +192,11 @@ fun GlassBackdropHost(content: @Composable () -> Unit) {
         }
     }
 
-    CompositionLocalProvider(LocalGlassBackdrop provides source, content = content)
+    CompositionLocalProvider(
+        LocalGlassBackdrop provides source,
+        LocalGlassReducedMotion provides capabilities.reducedMotion,
+        content = content
+    )
 }
 
 /** Apply only to the content plane, never to a parent containing glass controls. */
@@ -197,99 +270,63 @@ fun Modifier.glassBackdropSource(): Modifier = composed {
 /** The effect belongs exclusively to a background layer; children are drawn afterwards. */
 fun Modifier.glassBackground(
     style: GlassStyle = GlassStyle.Toolbar,
-    shape: Shape = RoundedCornerShape(22.dp)
+    shape: Shape = RoundedCornerShape(22.dp),
+    role: GlassLensRole = style.defaultLensRole(),
+    flatEdges: GlassFlatEdges = GlassFlatEdges.None,
+    press: Float = 0f
 ): Modifier = composed {
     val hardware = LocalHardwareGlassBackdrop.current
     if (hardware != null && Build.VERSION.SDK_INT >= 31) {
-        return@composed this.hardwareGlassBackground(hardware, style, shape)
+        return@composed this.hardwareGlassBackground(hardware, style, shape, role, flatEdges, press)
     }
     val source = LocalGlassBackdrop.current
     val view = LocalView.current
     val legacy = LocalGlassLegacy.current
+    val lensEnabled = LocalGlassLensEnabled.current
     val appearance = LocalGlassAppearance.current
     val color = MaterialTheme.colorScheme.surface
     val dark = color.luminance() < .5f
     val background = rememberGraphicsLayer()
+    val effectCache = remember { ComposeRenderEffectCache() }
+    val lensEngine = remember { if (Build.VERSION.SDK_INT >= 33) LiquidGlassLensEngine() else null }
+    DisposableEffect(lensEngine) {
+        onDispose {
+            if (Build.VERSION.SDK_INT >= 33) {
+                lensEngine?.clear()
+            }
+        }
+    }
     var origin by remember { mutableStateOf(Offset.Zero) }
     var glassSize by remember { mutableStateOf(IntSize.Zero) }
     var separateWindow by remember { mutableStateOf(false) }
     val enabled = source?.enabled == true && !legacy
     val percent = appearance.transparencyPercent
-
-    // 局部背景特征分析：最多 5 次/秒（200ms 节流），仅在采样位图或组件几何实际变化后执行并缓存
-    var cachedMetrics by remember { mutableStateOf<BackdropMetrics?>(null) }
-    var lastAnalysisNanos by remember { mutableLongStateOf(0L) }
-    var lastAnalyzedBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var lastAnalyzedOrigin by remember { mutableStateOf(Offset.Unspecified) }
-    var lastAnalyzedSize by remember { mutableStateOf(IntSize.Zero) }
-
-    val currentAnalysisBitmap = if (enabled && percent > 0) source?.analysisBitmap else null
-
-    LaunchedEffect(currentAnalysisBitmap, origin, glassSize, percent, enabled) {
-        if (!enabled || percent <= 0) {
-            cachedMetrics = BackdropMetrics.NEUTRAL
-            lastAnalyzedBitmap = null
-            return@LaunchedEffect
-        }
-        val bmp = currentAnalysisBitmap
-        if (bmp != null && !bmp.isRecycled && source.size.width > 0 && source.size.height > 0 && glassSize.width > 0 && glassSize.height > 0) {
-            if (bmp === lastAnalyzedBitmap && origin == lastAnalyzedOrigin && glassSize == lastAnalyzedSize && cachedMetrics != null) {
-                return@LaunchedEffect
-            }
-            val now = System.nanoTime()
-            val elapsed = now - lastAnalysisNanos
-            if (lastAnalysisNanos != 0L && elapsed < 200_000_000L) {
-                delay(max(1L, (200_000_000L - elapsed + 999_999L) / 1_000_000L))
-            }
-            if (bmp.isRecycled || source.size.width <= 0 || source.size.height <= 0) return@LaunchedEffect
-            val delta = origin - source.origin
-            val scaleX = bmp.width.toFloat() / source.size.width
-            val scaleY = bmp.height.toFloat() / source.size.height
-            val rect = Rect(
-                delta.x * scaleX,
-                delta.y * scaleY,
-                (delta.x + glassSize.width) * scaleX,
-                (delta.y + glassSize.height) * scaleY
-            )
-            cachedMetrics = analyzeLocalBackdrop(bmp, rect)
-            source.analysisCount++
-            lastAnalysisNanos = System.nanoTime()
-            lastAnalyzedBitmap = bmp
-            lastAnalyzedOrigin = origin
-            lastAnalyzedSize = glassSize
-        }
-    }
+    val reducedMotion = LocalGlassReducedMotion.current
+    val lightDirState = LocalGlassLightDirection.current
 
     val canBlur = enabled && view.isHardwareAccelerated && percent > 0
     val clarity = appearance.clarityPercent
-    val rawParams = remember(percent, clarity, style, dark, canBlur, cachedMetrics) {
-        computeGlassParams(
-            transparencyPercent = percent,
-            style = style,
-            isDark = dark,
-            canBlur = canBlur,
-            metrics = cachedMetrics,
-            clarityPercent = clarity
-        )
+    val targetBlurValue = remember(style, clarity, canBlur) {
+        if (!canBlur) 0f else liquidBlurDp(style, clarity)
     }
 
     // 背景内容与是否模糊独立；同一容器始终只使用一层统一底色，由公共角色策略决定浓度。
     val targetOpacity = if (legacy) 1f else uniformGlassOpacity(appearance, dark, canBlur, style)
     val animatedOpacity by animateFloatAsState(
         targetValue = targetOpacity,
-        animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
+        animationSpec = if (!appearance.enabled || !canBlur || reducedMotion) snap() else tween(180),
         label = "glassUniformTint"
     )
     val animatedBlur by animateDpAsState(
-        targetValue = if (legacy || !appearance.enabled || !canBlur) 0.dp else rawParams.blurRadius,
-        animationSpec = if (!appearance.enabled || !canBlur) snap() else tween(180),
+        targetValue = if (legacy || !appearance.enabled || !canBlur) 0.dp else targetBlurValue.dp,
+        animationSpec = if (!appearance.enabled || !canBlur || reducedMotion) snap() else tween(180),
         label = "glassBlur"
     )
     SideEffect {
         source?.apply {
             lastComputedAmbientOpacity = targetOpacity
             lastComputedPeakOpacity = targetOpacity
-            lastComputedBlurDp = rawParams.blurRadius.value
+            lastComputedBlurDp = targetBlurValue
             lastProtectedCellCount = 0
         }
     }
@@ -306,25 +343,75 @@ fun Modifier.glassBackground(
             val live = source?.layer?.takeIf { !separateWindow && source.sampleLayerReady }
             val blurPx = animatedBlur.toPx()
             val hasBackdrop = canBlur && (bitmap != null || live != null)
+            val outline = shape.createOutline(size, layoutDirection, this)
+            val opacity = if (hasBackdrop) animatedOpacity else if (!appearance.enabled || legacy) 1f else .94f
+            var lensApplied = false
 
-            if (hasBackdrop && source.size.width > 0 && source.size.height > 0) {
+            if (hasBackdrop &&
+                source.size.width > 0 &&
+                source.size.height > 0 &&
+                size.width > 0f &&
+                size.height > 0f
+            ) {
                 val padding = liquidMaterialPaddingPx(blurPx)
-                val delta = origin - source.origin
-                background.renderEffect = if (blurPx > 0f) BlurEffect(blurPx, blurPx, TileMode.Clamp) else null
-                background.record(size = IntSize(size.width.toInt() + padding * 2, size.height.toInt() + padding * 2)) {
-                    translate(padding - delta.x, padding - delta.y) {
-                        if (bitmap != null) {
-                            drawImage(bitmap, dstOffset = IntOffset.Zero, dstSize = source.size)
-                        } else if (live != null) {
-                            drawLayer(live)
+                val recordW = ceil(size.width).toInt() + padding * 2
+                val recordH = ceil(size.height).toInt() + padding * 2
+                if (recordW > 0 && recordH > 0) {
+                    val delta = origin - source.origin
+                    val lightDir = lightDirState.value
+                    val lensEffect = if (
+                        Build.VERSION.SDK_INT >= 33 &&
+                        lensEnabled &&
+                        lensEngine != null &&
+                        LiquidGlassLensEngine.isAvailable()
+                    ) {
+                        extractGlassCornerRadii(outline)?.let { corners ->
+                            resolveGlassLensUniforms(
+                                widthPx = size.width,
+                                heightPx = size.height,
+                                density = density,
+                                paddingPx = padding,
+                                blurRadiusPx = blurPx,
+                                corners = corners,
+                                role = role,
+                                flatEdges = flatEdges,
+                                clarityPercent = clarity,
+                                tintR = color.red,
+                                tintG = color.green,
+                                tintB = color.blue,
+                                tintA = opacity,
+                                press = press,
+                                lightX = lightDir.x,
+                                lightY = lightDir.y
+                            )?.let { lensEngine.effect(it) }
+                        }
+                    } else {
+                        null
+                    }
+                    lensApplied = lensEffect != null
+                    val targetEffect = effectCache.resolve(lensEffect, blurPx)
+                    if (background.renderEffect !== targetEffect) {
+                        background.renderEffect = targetEffect
+                    }
+                    background.record(size = IntSize(recordW, recordH)) {
+                        translate(padding - delta.x, padding - delta.y) {
+                            if (bitmap != null) {
+                                drawImage(bitmap, dstOffset = IntOffset.Zero, dstSize = source.size)
+                            } else if (live != null) {
+                                drawLayer(live)
+                            }
                         }
                     }
+                    translate(-padding.toFloat(), -padding.toFloat()) { drawLayer(background) }
                 }
-                translate(-padding.toFloat(), -padding.toFloat()) { drawLayer(background) }
             }
 
-            val opacity = if (hasBackdrop) animatedOpacity else if (!appearance.enabled || legacy) 1f else .94f
-            drawRect(color.copy(alpha = opacity))
+            if (!lensApplied) {
+                drawRect(color.copy(alpha = opacity))
+                if (hasBackdrop && appearance.enabled && !legacy) {
+                    drawFallbackDualLobeRim(outline, dark, opacity, flatEdges)
+                }
+            }
             drawContent()
         }
 }
@@ -335,17 +422,23 @@ fun GlassSurface(
     style: GlassStyle = GlassStyle.Toolbar,
     shape: Shape = MaterialTheme.shapes.large,
     shadowElevation: Dp = 0.dp,
+    role: GlassLensRole = style.defaultLensRole(),
+    flatEdges: GlassFlatEdges = GlassFlatEdges.None,
+    press: Float = 0f,
     content: @Composable BoxScope.() -> Unit
 ) {
+    val onGlass = rememberIsTranslucentGlassContainer(style)
     Surface(
-        modifier = modifier.shadow(shadowElevation, shape, clip = false).glassBackground(style, shape),
+        modifier = modifier.shadow(shadowElevation, shape, clip = false).glassBackground(style, shape, role, flatEdges, press),
         shape = shape,
         color = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
     ) {
-        Box(content = content)
+        CompositionLocalProvider(LocalOnGlassSurface provides onGlass) {
+            Box(content = content)
+        }
     }
 }
 
@@ -362,6 +455,7 @@ fun GlassDropdownMenu(
         return
     }
     val shape = MaterialTheme.shapes.large
+    val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
     DropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismissRequest,
@@ -370,6 +464,10 @@ fun GlassDropdownMenu(
         containerColor = Color.Transparent,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
-        content = content
+        content = {
+            CompositionLocalProvider(LocalOnGlassSurface provides onGlass) {
+                content()
+            }
+        }
     )
 }

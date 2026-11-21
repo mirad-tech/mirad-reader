@@ -74,7 +74,7 @@ fun ScreenHeader(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         if (onBack != null && !root) {
-            GlassSurface(shape = CircleShape) {
+            GlassSurface(shape = CircleShape, role = GlassLensRole.Capsule) {
                 IconButton(onClick = onBack) { Icon(MiradIcons.Back, "返回") }
             }
         }
@@ -87,7 +87,7 @@ fun ScreenHeader(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
-        GlassSurface(shape = RoundedCornerShape(26.dp)) {
+        GlassSurface(shape = RoundedCornerShape(26.dp), role = GlassLensRole.Capsule) {
             Row(verticalAlignment = Alignment.CenterVertically, content = actions)
         }
     }

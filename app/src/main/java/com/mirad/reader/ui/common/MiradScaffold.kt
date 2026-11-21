@@ -147,6 +147,24 @@ fun MiradScaffold(
             val chromeContent: @Composable () -> Unit = {
                 // 控制平面的空白区域必须允许事件穿透到正文，不能放全屏 Material Surface。
                 Box(Modifier.fillMaxSize()) {
+                    GlassScrollEdgeBlur(
+                        edge = GlassScrollEdge.Top,
+                        height = if (topHeight > 0) {
+                            with(density) { maxOf(topHeight, safeInsets.getTop(density)).toDp() }
+                        } else {
+                            0.dp
+                        },
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.TopCenter)
+                    )
+                    GlassScrollEdgeBlur(
+                        edge = GlassScrollEdge.Bottom,
+                        height = if (!keyboard && pager == null && bottomHeight > 0) {
+                            with(density) { maxOf(bottomHeight, safeInsets.getBottom(density)).toDp() }
+                        } else {
+                            0.dp
+                        },
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                    )
                     Box(Modifier.align(androidx.compose.ui.Alignment.TopCenter)
                         .onSizeChangedForChrome { topHeight = it }) { topBar() }
                     Box(Modifier.align(androidx.compose.ui.Alignment.BottomCenter)

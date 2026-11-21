@@ -75,6 +75,15 @@ internal fun PagerChromeHost(
             SideEffect { onAvailability(available) }
             overlays.Render(Modifier.fillMaxSize(), {}) {
                 Box(Modifier.fillMaxSize()) {
+                    GlassScrollEdgeBlur(
+                        edge = GlassScrollEdge.Bottom,
+                        height = if (!keyboard && state.bottomHeight > 0) {
+                            with(androidx.compose.ui.platform.LocalDensity.current) { state.bottomHeight.toDp() }
+                        } else {
+                            0.dp
+                        },
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
                     Box(Modifier.align(Alignment.BottomCenter).onSizeChangedForChrome { state.bottomHeight = it }) {
                         if (!keyboard) navigation(available)
                     }

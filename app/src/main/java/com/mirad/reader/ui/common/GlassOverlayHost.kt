@@ -12,6 +12,7 @@ import androidx.compose.foundation.onFocusedBoundsChanged
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import com.mirad.reader.ui.common.bouncingVerticalScroll
@@ -322,12 +323,13 @@ internal fun GlassInWindowSheet(
             LaunchedEffect(imeVisible, shown, state.hasExpandedState) {
                 if (imeVisible && shown && !closing && state.hasExpandedState) state.expand()
             }
+            val sheetShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
             BottomSheetScaffold(
                 modifier = Modifier.fillMaxSize(),
                 scaffoldState = scaffold,
                 sheetPeekHeight = peek,
                 sheetMaxWidth = 720.dp,
-                sheetShape = MaterialTheme.shapes.extraLarge,
+                sheetShape = sheetShape,
                 sheetContainerColor = androidx.compose.ui.graphics.Color.Transparent,
                 sheetContentColor = MaterialTheme.colorScheme.onSurface,
                 sheetTonalElevation = 0.dp,
@@ -337,11 +339,15 @@ internal fun GlassInWindowSheet(
                 containerColor = androidx.compose.ui.graphics.Color.Transparent,
                 snackbarHost = {},
                 sheetContent = {
-                    CompositionLocalProvider(com.mirad.reader.ui.common.LocalEdgeBounceAllowed provides { delta ->
-                        delta < 0f && state.currentValue == SheetValue.Expanded && state.targetValue == SheetValue.Expanded && !closing
-                    }) {
+                    val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
+                    CompositionLocalProvider(
+                        LocalOnGlassSurface provides onGlass,
+                        com.mirad.reader.ui.common.LocalEdgeBounceAllowed provides { delta ->
+                            delta < 0f && state.currentValue == SheetValue.Expanded && state.targetValue == SheetValue.Expanded && !closing
+                        }
+                    ) {
                     Column(Modifier.fillMaxWidth().onSizeChanged { contentHeight = it.height }
-                        .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.extraLarge)
+                        .glassBackground(GlassStyle.Panel, sheetShape, flatEdges = GlassFlatEdges.Bottom)
                         .semantics { paneTitle = title; isTraversalGroup = true }) {
                         BottomSheetDefaults.DragHandle(Modifier.align(Alignment.CenterHorizontally)
                             .clickable(enabled = !closing) {
@@ -423,6 +429,7 @@ internal fun GlassInWindowDialog(
                     if (!target.isEmpty) bodyBringIntoView.bringIntoView(target)
                 }
             }
+            val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
             Surface(modifier.padding(horizontal = 24.dp, vertical = outerVertical)
                 .widthIn(max = 560.dp).fillMaxWidth().heightIn(max = availableHeight)
                 .shadow(Elevation.modal, MaterialTheme.shapes.extraLarge, clip = false)
@@ -431,6 +438,7 @@ internal fun GlassInWindowDialog(
                 color = androidx.compose.ui.graphics.Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = MaterialTheme.shapes.extraLarge) {
+                CompositionLocalProvider(LocalOnGlassSurface provides onGlass) {
                 // One scroll container owns caret visibility in a short IME viewport.
                 // Keep the body call at the same composition position while insets change.
                 Column(Modifier.padding(horizontal = innerPadding, vertical = verticalPadding).bouncingVerticalScroll(outerScroll),
@@ -460,6 +468,7 @@ internal fun GlassInWindowDialog(
                         dismissButton?.invoke()
                         confirmButton()
                     }
+                }
                 }
             }
         }
@@ -497,13 +506,16 @@ internal fun GlassPortalMenu(
         val right = safeInsets.getRight(density, direction) + margin
         val bottom = safeInsets.getBottom(density) + margin
         Layout(modifier = Modifier.fillMaxSize().clipToBounds(), content = {
+            val onGlass = rememberIsTranslucentGlassContainer(GlassStyle.Panel)
             Surface(modifier.width(IntrinsicSize.Max).widthIn(min = 160.dp, max = 280.dp)
                 .shadow(Elevation.menu, MaterialTheme.shapes.large, clip = false)
                 .glassBackground(GlassStyle.Panel, MaterialTheme.shapes.large)
                 .semantics { paneTitle = "更多"; isTraversalGroup = true },
                 color = androidx.compose.ui.graphics.Color.Transparent, contentColor = MaterialTheme.colorScheme.onSurface,
                 shape = MaterialTheme.shapes.large) {
-                Column(Modifier.padding(vertical = 8.dp).bouncingVerticalScroll(rememberScrollState()), content = content)
+                CompositionLocalProvider(LocalOnGlassSurface provides onGlass) {
+                    Column(Modifier.padding(vertical = 8.dp).bouncingVerticalScroll(rememberScrollState()), content = content)
+                }
             }
         }) { measurables, constraints ->
             val safe = IntRect(left, top, max(left, constraints.maxWidth - right), max(top, constraints.maxHeight - bottom))

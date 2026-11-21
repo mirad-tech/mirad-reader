@@ -35,20 +35,23 @@ import com.mirad.reader.ui.common.LocalGlassSaveFailed
 import com.mirad.reader.ui.common.MiradTextButton
 import com.mirad.reader.ui.common.SettingCard
 import com.mirad.reader.ui.common.SettingSwitchRow
+import com.mirad.reader.ui.common.rememberGlassSystemCapabilities
 
 /** 「界面外观」应用级设置页：日夜模式与玻璃质感。 */
 @Composable
 fun AppearanceSettings() {
-    val context = LocalContext.current
     val view = LocalView.current
-    val powerManager = remember(context) { context.getSystemService(Context.POWER_SERVICE) as? PowerManager }
-    val isPowerSave = powerManager?.isPowerSaveMode == true
+    val capabilities = rememberGlassSystemCapabilities()
+    val isPowerSave = capabilities.powerSave
+    val isReducedTransparency = capabilities.reducedTransparency
+    val isReducedMotion = capabilities.reducedMotion
     val apiLevel = Build.VERSION.SDK_INT
     val isHardwareAccelerated = view.isHardwareAccelerated
-    val isSimplified = apiLevel < 31 || isPowerSave || !isHardwareAccelerated
+    val isSimplified = apiLevel < 31 || isPowerSave || isReducedTransparency || !isHardwareAccelerated
     val simplifiedReason = when {
         apiLevel < 31 -> "系统版本低于 Android 12"
         isPowerSave -> "系统开启了省电模式"
+        isReducedTransparency -> "系统开启了高对比度文字"
         !isHardwareAccelerated -> "硬件加速未启用"
         else -> ""
     }
@@ -119,7 +122,7 @@ fun AppearanceSettings() {
             label = "磨砂玻璃",
             checked = appearance.enabled,
             onCheckedChange = { enabled ->
-                controller.update(GlassAppearance(enabled = enabled, clarityPercent = appearance.clarityPercent))
+                controller.update(appearance.copy(enabled = enabled))
                 controller.commit()
             }
         )
@@ -138,9 +141,19 @@ fun AppearanceSettings() {
             enabled = appearance.enabled && !isSimplified,
             onChange = { value ->
                 previewClarity = value
-                controller.update(GlassAppearance(enabled = true, clarityPercent = value.toInt()))
+                controller.update(appearance.copy(enabled = true, clarityPercent = value.toInt()))
             },
             onCommit = {
+                controller.commit()
+            }
+        )
+
+        SettingSwitchRow(
+            label = "动态高光",
+            checked = appearance.dynamicHighlight,
+            enabled = appearance.enabled && !isSimplified && apiLevel >= 33 && !isReducedMotion,
+            onCheckedChange = { dynamic ->
+                controller.update(appearance.copy(dynamicHighlight = dynamic))
                 controller.commit()
             }
         )

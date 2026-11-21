@@ -60,6 +60,10 @@ internal fun liquidBarOpacity(percent: Int, isDark: Boolean = false): Float {
 internal fun liquidSurfaceOpacity(percent: Int, isDark: Boolean, style: GlassStyle): Float =
     if (style == GlassStyle.Panel) liquidPanelOpacity(percent, isDark) else liquidBarOpacity(percent, isDark)
 
+/** 按材质样式映射默认光学透镜角色。 */
+internal fun GlassStyle.defaultLensRole(): GlassLensRole =
+    if (this == GlassStyle.Panel) GlassLensRole.Panel else GlassLensRole.Bar
+
 /**
  * 清晰度的有效档位。
  *
@@ -105,7 +109,16 @@ internal fun liquidBlurDp(style: GlassStyle, clarityPercent: Int = 50): Float {
     return (base * scale).coerceIn(1f, 26f)
 }
 
-internal data class LiquidBackdropMetrics(val darkest: Int, val lightest: Int, val fingerprint: Long)
+internal data class LiquidBackdropMetrics(
+    val darkest: Int,
+    val lightest: Int,
+    val fingerprint: Long,
+    val meanLuminance: Float = 0.5f
+)
+
+/** 背景明暗滞回判定（0.60 切亮 / 0.45 切暗，参考 BackdropLuminanceMeter）。 */
+internal fun resolveOverLightHysteresis(luminance: Float, previousOverLight: Boolean): Boolean =
+    if (previousOverLight) luminance >= 0.45f else luminance > 0.60f
 
 /** Called only by the analysis worker; no image or array is retained in UI state. */
 internal fun analyzeLiquidPixels(pixels: IntArray): LiquidBackdropMetrics? {
@@ -114,14 +127,17 @@ internal fun analyzeLiquidPixels(pixels: IntArray): LiquidBackdropMetrics? {
     var lightest = pixels[0]
     var minLum = Float.POSITIVE_INFINITY
     var maxLum = Float.NEGATIVE_INFINITY
+    var lumSum = 0.0
     var hash = -3750763034362895579L
     for (pixel in pixels) {
         val lum = liquidColorLuminance(pixel)
         if (lum < minLum) { minLum = lum; darkest = pixel }
         if (lum > maxLum) { maxLum = lum; lightest = pixel }
+        lumSum += lum
         hash = (hash xor pixel.toLong()) * 1099511628211L
     }
-    return LiquidBackdropMetrics(darkest, lightest, hash)
+    val meanLum = (lumSum / pixels.size).toFloat().coerceIn(0f, 1f)
+    return LiquidBackdropMetrics(darkest, lightest, hash, meanLum)
 }
 
 internal fun liquidColorLuminance(color: Int): Float = relativeLuminanceFromSrgb(
