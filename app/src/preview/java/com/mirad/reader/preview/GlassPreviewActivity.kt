@@ -35,6 +35,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.io.ByteArrayInputStream
 import androidx.compose.ui.viewinterop.AndroidView
 import com.mirad.reader.core.model.*
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import com.mirad.reader.core.reader.ReaderCss
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.BookEntity

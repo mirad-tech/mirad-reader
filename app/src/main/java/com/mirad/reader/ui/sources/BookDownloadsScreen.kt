@@ -14,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.core.sources.BookDownloadStatus
 import com.mirad.reader.core.sources.BookDownloadTask
 import com.mirad.reader.core.sources.BookDownloads
@@ -31,8 +32,8 @@ fun BookDownloadsScreen(
     onSearch: () -> Unit,
     onOpenBook: (Long) -> Unit
 ) {
-    val tasks by downloads.tasks.collectAsState()
-    val loadError by downloads.loadError.collectAsState()
+    val tasks by downloads.tasks.collectAsStateWithLifecycle()
+    val loadError by downloads.loadError.collectAsStateWithLifecycle()
     var busyIds by remember { mutableStateOf(emptySet<String>()) }
     var actionErrors by remember { mutableStateOf(emptyMap<String, String>()) }
     var cancelTarget by remember { mutableStateOf<BookDownloadTask?>(null) }

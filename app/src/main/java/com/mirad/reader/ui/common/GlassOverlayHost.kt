@@ -306,17 +306,22 @@ internal fun GlassInWindowSheet(
         val density = LocalDensity.current
         val imeVisible = WindowInsets.ime.getBottom(density) > 0
         val safe = glassSafeInsets().union(WindowInsets.ime)
-        // A partially expanded sheet extends below its visible anchor. Keep its scroll content
-        // inside the safe viewport instead of painting controls under the gesture bar or IME.
-        BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(safe).clipToBounds()) {
-            val available = with(density) { maxHeight.roundToPx() }
-            val peek = with(density) { glassSheetPeekHeight(contentHeight, available).toDp() }
+        // 遮罩和面板都铺满整个窗口。全屏阅读时系统栏虽已隐藏，systemBarsIgnoringVisibility 仍保留其高度；
+        // 若整体缩进安全区，顶部那条不会变暗，面板下方也会露出一条正文。安全区只作用于面板内部：
+        // 顶部限制面板最大高度；底部内容可以延伸到手势条下方，只为键盘让位。
+        BoxWithConstraints(Modifier.fillMaxSize().clipToBounds()) {
+            val topInset = safe.getTop(density)
+            val bottomInset = WindowInsets.ime.getBottom(density)
+            val fullHeight = with(density) { maxHeight.roundToPx() }
+            val safeHeight = (fullHeight - topInset - bottomInset).coerceAtLeast(0)
+            // 测得的面板高度包含键盘垫高；峰值按可用高度计算后再加回垫高。
+            val peek = with(density) {
+                (if (contentHeight > 0) glassSheetPeekHeight(contentHeight - bottomInset, safeHeight) + bottomInset else 0).toDp()
+            }
             // The fraction belongs to the reading viewport, not to the reduced IME
             // area. Otherwise opening the keyboard shrinks the sheet a second time.
-            val sceneHeight = maxHeight + with(density) {
-                (safe.getTop(density) + safe.getBottom(density)).toDp()
-            }
-            val maxBodyHeight = minOf(sceneHeight * maxHeightFraction.coerceIn(.1f, 1f), maxHeight)
+            val maxBodyHeight = minOf(maxHeight * maxHeightFraction.coerceIn(.1f, 1f), with(density) { safeHeight.toDp() })
+            val maxSheetHeight = with(density) { (fullHeight - topInset).coerceAtLeast(0).toDp() }
             LaunchedEffect(contentHeight) {
                 if (contentHeight > 0 && !shown && !closing) state.show()
             }
@@ -346,7 +351,7 @@ internal fun GlassInWindowSheet(
                             delta < 0f && state.currentValue == SheetValue.Expanded && state.targetValue == SheetValue.Expanded && !closing
                         }
                     ) {
-                    Column(Modifier.fillMaxWidth().onSizeChanged { contentHeight = it.height }
+                    Column(Modifier.fillMaxWidth().heightIn(max = maxSheetHeight).onSizeChanged { contentHeight = it.height }
                         .glassBackground(GlassStyle.Panel, sheetShape, flatEdges = GlassFlatEdges.Bottom)
                         .semantics { paneTitle = title; isTraversalGroup = true }) {
                         BottomSheetDefaults.DragHandle(Modifier.align(Alignment.CenterHorizontally)
@@ -360,7 +365,9 @@ internal fun GlassInWindowSheet(
                                     else if (state.hasPartiallyExpandedState) collapse { collapseSheet() }
                                 }
                             })
-                        Column(modifier.fillMaxWidth().heightIn(max = maxBodyHeight)) {
+                        // weight(fill = false)：标题和正文先让出拖动条与键盘垫高的空间，垫高永远不会被挤掉。
+                        Column(modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = maxBodyHeight)
+                            .windowInsetsPadding(safe.only(WindowInsetsSides.Horizontal))) {
                             Row(Modifier.fillMaxWidth().padding(start = Spacing.xl, end = Spacing.md, bottom = Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(title, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -373,6 +380,7 @@ internal fun GlassInWindowSheet(
                                 verticalArrangement = Arrangement.spacedBy(Spacing.sm), content = content)
                             Spacer(Modifier.height(Spacing.md))
                         }
+                        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.ime))
                     }
                     }
                 }

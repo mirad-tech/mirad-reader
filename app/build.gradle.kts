@@ -58,8 +58,8 @@ android {
         applicationId = "com.mirad.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 45
-        versionName = "1.4.0"
+        versionCode = 46
+        versionName = "1.4.1"
     }
 
     buildTypes {
@@ -122,6 +122,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.webkit)
@@ -136,4 +137,14 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+}
+
+// Compose 编译器稳定性报告，按需开启：
+// .\gradlew.bat :app:assembleRelease -PcomposeReports=true --console=plain
+// 输出到 app/build/compose_compiler/（*-classes.txt、*-composables.txt、*-module.json）。
+if (providers.gradleProperty("composeReports").orNull == "true") {
+    composeCompiler {
+        reportsDestination = layout.buildDirectory.dir("compose_compiler")
+        metricsDestination = layout.buildDirectory.dir("compose_compiler")
+    }
 }

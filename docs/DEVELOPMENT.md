@@ -20,6 +20,8 @@
 
 macOS / Linux 将 `.\gradlew.bat` 换成 `./gradlew`。
 
+也可以运行 `.\tools\verify.ps1`：默认依次执行单测、preview 编译和 Debug 构建（带 `--continue`，一次报告全部失败），完整输出与摘要保存在 `build/verification/verify-<时间戳>/`，最近一次的目录记在 `build/verification/verify-latest.txt`。`-Lint` 追加 Lint，`-ComposeReports` 追加带 Compose 稳定性报告的未签名 Release 构建，`-Rerun` 忽略增量缓存。
+
 报告位置：
 
 - 单测：`app/build/reports/tests/testDebugUnitTest/` 与 `app/build/test-results/testDebugUnitTest/`。

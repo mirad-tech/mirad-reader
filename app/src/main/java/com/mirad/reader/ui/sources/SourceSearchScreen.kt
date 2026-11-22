@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.R
 import com.mirad.reader.core.sources.*
 import com.mirad.reader.ui.common.*
@@ -59,10 +60,10 @@ fun SourceSearchScreen(
     onSources: () -> Unit,
     onDownloads: () -> Unit
 ) {
-    val state by search.state.collectAsState()
-    val comparison by search.comparison.collectAsState()
-    val sources by repository.sources.collectAsState()
-    val loadError by repository.loadError.collectAsState()
+    val state by search.state.collectAsStateWithLifecycle()
+    val comparison by search.comparison.collectAsStateWithLifecycle()
+    val sources by repository.sources.collectAsStateWithLifecycle()
+    val loadError by repository.loadError.collectAsStateWithLifecycle()
     val availableSourceIds = remember(sources) {
         sources.filter { it.enabled && it.unsupportedReason == null }.mapTo(hashSetOf()) { it.id }
     }

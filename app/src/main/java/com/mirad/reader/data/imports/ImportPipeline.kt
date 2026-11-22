@@ -1,36 +1,24 @@
 package com.mirad.reader.data.imports
 
 import android.content.Context
-import android.net.Uri
-import android.provider.OpenableColumns
 import android.util.Log
 import androidx.room.withTransaction
-import com.mirad.reader.core.epub.EpubParser
-import com.mirad.reader.core.epub.ZipEntryReader
-import com.mirad.reader.core.html.Html
-import com.mirad.reader.core.model.TocJson
-import com.mirad.reader.core.text.StreamingTxtProcessor
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
-import com.mirad.reader.data.db.entity.ChapterEntity
 import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.repo.BookRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.InputStream
 import java.util.UUID
 
 class ImportException(message: String) : Exception(message)
@@ -43,6 +31,8 @@ interface BookImporter {
  * 导入管线：
  * - 具备持久读取权限的手机本地文件（SAF）：零拷贝记录原文件 URI，直接流式/随机解析章节；
  * - 临时分享流、网址下载与书源下载：仅保留单份原始文件，TXT 不再生成第二份 `content.utf8.txt`。
+ *
+ * 格式解析在 [BookPreparer]，来源读取在 [ImportSourceIo]，同书新版的核对与替换在 [EditionReviewCoordinator]。
  */
 class ImportPipeline internal constructor(
     private val context: Context,
@@ -86,7 +76,22 @@ class ImportPipeline internal constructor(
         BookEditionUpdater(books, bookmarkDao, highlightDao, appDatabase, contentAccess)
     } else null
     private val staging = LocalImportStaging(paths)
-    private val pending = mutableMapOf<String, PendingEdition>()
+    private val io = ImportSourceIo(context, contentAccess)
+    private val preparer = BookPreparer(paths, contentAccess)
+    private val editionReview = EditionReviewCoordinator(
+        scope = scope,
+        mutex = mutex,
+        paths = paths,
+        books = books,
+        contentAccess = contentAccess,
+        editions = editions,
+        staging = staging,
+        downloadReceipts = downloadReceipts,
+        updateItem = this::updateItem,
+        insertPrepared = { prepared -> insertPrepared(prepared) },
+        cleanStaging = { token -> cleanStaging(token) },
+        skipDuplicate = this::skipDuplicate
+    )
     private var recovered = false
 
     init {
@@ -96,12 +101,7 @@ class ImportPipeline internal constructor(
     fun clearSummary(batchId: String? = lastSummary.value?.batchId) {
         scope.launch {
             mutex.withLock {
-                batches.acknowledge(batchId).forEach { id ->
-                    pending.remove(id)?.let {
-                        it.waiter?.cancel()
-                        cleanStaging(it.token)
-                    }
-                }
+                batches.acknowledge(batchId).forEach { id -> editionReview.discard(id) }
             }
         }
     }
@@ -199,8 +199,8 @@ class ImportPipeline internal constructor(
                     return
                 }
             }
-            val extension = withContext(Dispatchers.IO) { guessExtension(source) }
-            val declaredSize = withContext(Dispatchers.IO) { runCatching { sizeOf(source) }.getOrDefault(-1L) }
+            val extension = withContext(Dispatchers.IO) { io.guessExtension(source) }
+            val declaredSize = withContext(Dispatchers.IO) { runCatching { io.sizeOf(source) }.getOrDefault(-1L) }
             if (declaredSize > MAX_TXT_BYTES) {
                 updateItem(itemId) {
                     it.copy(
@@ -223,12 +223,12 @@ class ImportPipeline internal constructor(
             if (directReference) {
                 updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
                 bookFilePath = source.uriString
-                size = withContext(Dispatchers.IO) { verifyReadableSize(bookFilePath, declaredSize) }
+                size = withContext(Dispatchers.IO) { io.verifyReadableSize(bookFilePath, declaredSize) }
             } else {
                 updateItem(itemId) { it.copy(stage = ImportStage.COPYING, progress = 0f) }
                 val target = paths.originalFile(token, extension)
                 size = withContext(Dispatchers.IO) {
-                    copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
+                    io.copyTo(source, target) { progress -> updateItem(itemId) { it.copy(progress = progress) } }
                 }
                 bookFilePath = target.absolutePath
                 updateItem(itemId) { it.copy(stage = ImportStage.PARSING, progress = 0f) }
@@ -266,8 +266,7 @@ class ImportPipeline internal constructor(
             }
 
             val prepared = withContext(Dispatchers.IO) {
-                val result = if (extension == EPUB_EXT) prepareEpub(source, token, bookFilePath, displayTitle, size, local, sourceVersion)
-                else prepareTxt(source, token, bookFilePath, displayTitle, size, local, sourceVersion)
+                val result = preparer.prepare(extension, source, token, bookFilePath, displayTitle, size, local, sourceVersion)
                 sourceVersion.verify(contentAccess, bookFilePath)
                 result
             }
@@ -293,7 +292,7 @@ class ImportPipeline internal constructor(
                                     prepared.book.sourceUri == it.book.sourceUri
                             }
                         if (autoCandidate != null) {
-                            val updatedId = tryBackgroundAutoUpdate(
+                            val updatedId = editionReview.tryBackgroundAutoUpdate(
                                 token = token,
                                 prepared = prepared,
                                 candidate = autoCandidate,
@@ -314,14 +313,10 @@ class ImportPipeline internal constructor(
                         }
                     } else {
                         // 同批次多版本去重：若同一批次已有待确认项指向相同候选旧书，只保留较新的那一版
-                        if (dedupIntraBatchPending(itemId, batchItemIds, prepared, match.candidates, matcher)) {
+                        if (editionReview.dedupIntraBatchPending(itemId, batchItemIds, prepared, match.candidates, matcher)) {
                             return
                         }
-                        val entry = PendingEdition(token, displayTitle, prepared, match.candidates, batchItemIds)
-                        pending[itemId] = entry
-                        val automatic = match.automatic
-                        if (automatic == null) presentReview(itemId, entry)
-                        else attemptUpdate(itemId, entry, automatic, agreed = null, batchInserted = batchInserted)
+                        editionReview.startReview(itemId, token, displayTitle, prepared, match.candidates, match.automatic, batchItemIds, batchInserted)
                         return
                     }
                 }
@@ -342,7 +337,7 @@ class ImportPipeline internal constructor(
             if (!local) withContext(NonCancellable + Dispatchers.IO) {
                 paths.deleteBookFiles(token, paths.coverFile(token).absolutePath)
             }
-            pending.remove(itemId)?.waiter?.cancel()
+            editionReview.cancel(itemId)
             if (t is CancellationException) throw t
             updateItem(itemId) {
                 it.copy(
@@ -352,97 +347,7 @@ class ImportPipeline internal constructor(
                 )
             }
         } finally {
-            if (local && itemId !in pending) cleanStaging(token)
-        }
-    }
-
-    private suspend fun dedupIntraBatchPending(
-        currentItemId: String,
-        batchItemIds: Set<String>,
-        incoming: PreparedBook,
-        candidates: List<EditionCandidate>,
-        matcher: EditionMatcher
-    ): Boolean {
-        val candidateIds = candidates.map { it.book.id }
-        val sameTargetEntries = pending.entries
-            .filter { (id, entry) ->
-                id in batchItemIds && entry.candidates.map { it.book.id } == candidateIds
-            }
-            .map { it.key to it.value }
-        for ((prevItemId, prevEntry) in sameTargetEntries) {
-            val rel = matcher.compareIncoming(
-                first = prevEntry.prepared.book,
-                firstChapters = prevEntry.prepared.chapters,
-                firstEpub = prevEntry.prepared.epub,
-                second = incoming.book,
-                secondEpub = incoming.epub
-            )
-            when (rel) {
-                EditionRelation.SAME, EditionRelation.OLDER -> {
-                    updateItem(currentItemId) {
-                        it.copy(
-                            stage = ImportStage.SKIPPED,
-                            progress = 1f,
-                            message = "同批次已包含相同或较新版本《${prevEntry.displayTitle}》"
-                        )
-                    }
-                    return true
-                }
-                EditionRelation.EXTENDS -> {
-                    prevEntry.waiter?.cancel()
-                    prevEntry.waiter = null
-                    finishPending(
-                        prevItemId,
-                        prevEntry,
-                        ImportStage.SKIPPED,
-                        message = "已被同批次较新版本《${incoming.book.title}》替代"
-                    )
-                }
-                EditionRelation.UNKNOWN -> Unit
-            }
-        }
-        return false
-    }
-
-    private suspend fun tryBackgroundAutoUpdate(
-        token: String,
-        prepared: PreparedBook,
-        candidate: EditionCandidate,
-        downloadTaskId: String
-    ): BookEntity? {
-        val updater = editions ?: return null
-        val lock = books.contentLock(candidate.book.id)
-        if (!lock.tryLock()) return null
-        try {
-            prepared.sourceVersion.verify(contentAccess, prepared.book.filePath)
-            val update = updater.inspect(candidate, prepared.book, prepared.chapters, prepared.sourceVersion)
-            val preview = update.preview
-            val needsConfirmation = preview.resume == ResumeImpact.UNAVAILABLE ||
-                preview.resume == ResumeImpact.CHAPTER_START ||
-                preview.lostLocations > 0
-            if (needsConfirmation) return null
-            currentCoroutineContext().ensureActive()
-            return withContext(NonCancellable + Dispatchers.IO) {
-                staging.beforeReplacement(token, update.old.book)
-                updater.publish(
-                    update = update,
-                    incoming = prepared.book,
-                    chapters = prepared.chapters,
-                    sourceVersion = prepared.sourceVersion,
-                    sourceStamp = prepared.sourceStamp,
-                    downloadTaskId = downloadTaskId,
-                    downloadReceipts = downloadReceipts,
-                    stagedCoverFile = paths.coverFile(token)
-                )
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: IncomingSourceChanged) {
-            throw e
-        } catch (_: Exception) {
-            return null
-        } finally {
-            lock.unlock()
+            if (local && !editionReview.isPending(itemId)) cleanStaging(token)
         }
     }
 
@@ -461,243 +366,17 @@ class ImportPipeline internal constructor(
         return appDatabase?.withTransaction { block() } ?: block()
     }
 
-    private data class PreparedBook(
-        val book: BookEntity,
-        val chapters: List<ChapterEntity>,
-        val encoding: String?,
-        val ruleId: String?,
-        val regex: String?,
-        val totalChars: Long,
-        val sourceVersion: SourceVersion,
-        val epub: List<EpubChapterSignature>? = null,
-        val sourceStamp: BookSourceStampStore.SourceStamp? = null
-    )
-
-    private class PendingEdition(
-        val token: String,
-        val displayTitle: String,
-        val prepared: PreparedBook,
-        var candidates: List<EditionCandidate>,
-        val batchItemIds: Set<String> = emptySet(),
-        var preview: ImportUpdatePreview? = null,
-        var waiter: Job? = null
-    )
-
+    /** 待确认的同书新版：核对续读位置、确认替换或放弃，具体流程见 [EditionReviewCoordinator]。 */
     fun previewUpdate(itemId: String, bookId: Long) {
-        scope.launch {
-            mutex.withLock {
-                val entry = pending[itemId] ?: return@withLock
-                if (entry.waiter != null) return@withLock
-                val candidate = entry.candidates.firstOrNull { it.book.id == bookId } ?: return@withLock
-                try {
-                    showReview(itemId, entry, inspect(entry, candidate).preview)
-                } catch (e: IncomingSourceChanged) {
-                    finishPending(itemId, entry, ImportStage.FAILED, message = e.message)
-                } catch (_: EditionChanged) {
-                    refreshReview(itemId, entry)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    showReview(itemId, entry, message = e.message ?: "无法核对续读位置")
-                }
-            }
-        }
+        editionReview.previewUpdate(itemId, bookId)
     }
 
     fun confirmUpdate(itemId: String, preview: ImportUpdatePreview) {
-        scope.launch {
-            mutex.withLock {
-                val entry = pending[itemId] ?: return@withLock
-                if (entry.waiter != null || entry.preview != preview || preview.resume == ResumeImpact.UNAVAILABLE) return@withLock
-                val candidate = entry.candidates.firstOrNull { it.book.id == preview.bookId } ?: return@withLock
-                attemptUpdate(itemId, entry, candidate, agreed = preview, batchInserted = null)
-            }
-        }
+        editionReview.confirmUpdate(itemId, preview)
     }
 
     fun resolveWithoutUpdate(itemId: String, keepNew: Boolean) {
-        scope.launch {
-            mutex.withLock {
-                val entry = pending[itemId] ?: return@withLock
-                if (entry.waiter != null && keepNew) return@withLock
-                entry.waiter?.cancel()
-                try {
-                    withContext(NonCancellable + Dispatchers.IO) {
-                        val id = if (keepNew) insertPrepared(entry.prepared) else null
-                        finishPending(itemId, entry, if (keepNew) ImportStage.DONE else ImportStage.SKIPPED, id,
-                            if (keepNew) null else "已跳过")
-                    }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "无法保存新书")
-                }
-            }
-        }
-    }
-
-    private suspend fun attemptUpdate(
-        itemId: String,
-        entry: PendingEdition,
-        candidate: EditionCandidate,
-        agreed: ImportUpdatePreview?,
-        batchInserted: MutableMap<Long, String>?
-    ) {
-        val lock = books.contentLock(candidate.book.id)
-        if (lock.tryLock()) {
-            try {
-                applyOrReview(itemId, entry, candidate, agreed, batchInserted)
-            } finally {
-                lock.unlock()
-            }
-            return
-        }
-        updateItem(itemId) { it.copy(stage = ImportStage.WAITING_READER, progress = 1f, review = null, message = null) }
-        entry.waiter = scope.launch {
-            while (isActive) {
-                lock.withLock { }
-                val done = mutex.withLock {
-                    if (pending[itemId] !== entry) return@withLock true
-                    if (!lock.tryLock()) return@withLock false
-                    try {
-                        entry.waiter = null
-                        applyOrReview(itemId, entry, candidate, agreed, batchInserted = null)
-                        true
-                    } finally {
-                        lock.unlock()
-                    }
-                }
-                if (done) break
-            }
-        }
-    }
-
-    private suspend fun applyOrReview(
-        itemId: String,
-        entry: PendingEdition,
-        candidate: EditionCandidate,
-        agreed: ImportUpdatePreview?,
-        batchInserted: MutableMap<Long, String>?
-    ) {
-        try {
-            val update = inspect(entry, candidate)
-            val preview = update.preview
-            val needsConfirmation = preview.resume == ResumeImpact.CHAPTER_START || preview.lostLocations > 0
-            if (preview.resume == ResumeImpact.UNAVAILABLE ||
-                (agreed == null && needsConfirmation) || (agreed != null && agreed != preview)) {
-                showReview(itemId, entry, preview)
-                return
-            }
-            currentCoroutineContext().ensureActive()
-            withContext(NonCancellable + Dispatchers.IO) {
-                staging.beforeReplacement(entry.token, update.old.book)
-                val savedBook = checkNotNull(editions).publish(
-                    update = update,
-                    incoming = entry.prepared.book,
-                    chapters = entry.prepared.chapters,
-                    sourceVersion = entry.prepared.sourceVersion,
-                    sourceStamp = entry.prepared.sourceStamp,
-                    stagedCoverFile = paths.coverFile(entry.token)
-                )
-                val supersededInSameBatch = batchInserted?.remove(savedBook.id)
-                if (supersededInSameBatch != null) {
-                    updateItem(supersededInSameBatch) {
-                        it.copy(
-                            stage = ImportStage.SKIPPED,
-                            bookId = savedBook.id,
-                            message = "已被同批次较新版本《${savedBook.title}》替代"
-                        )
-                    }
-                    batchInserted[savedBook.id] = itemId
-                    finishPending(itemId, entry, ImportStage.DONE, savedBook.id, message = null)
-                } else {
-                    finishPending(
-                        itemId = itemId,
-                        entry = entry,
-                        stage = ImportStage.UPDATED,
-                        id = savedBook.id,
-                        message = formatUpdateMessage(update.old.book, savedBook)
-                    )
-                }
-            }
-        } catch (_: EditionChanged) {
-            refreshReview(itemId, entry)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "更新失败")
-        }
-    }
-
-    private suspend fun inspect(entry: PendingEdition, candidate: EditionCandidate): BookEditionUpdater.Update {
-        entry.prepared.sourceVersion.verify(contentAccess, entry.prepared.book.filePath)
-        return checkNotNull(editions).inspect(candidate, entry.prepared.book, entry.prepared.chapters, entry.prepared.sourceVersion)
-    }
-
-    private suspend fun refreshReview(itemId: String, entry: PendingEdition) {
-        val match = try {
-            EditionMatcher(contentAccess, books::getChapters, books.sourceVersionStore)
-                .match(entry.prepared.book, entry.displayTitle, entry.prepared.epub, books.getAllBooks(), entry.prepared.sourceVersion)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            finishPending(itemId, entry, ImportStage.FAILED, message = e.message ?: "无法重新核对旧书")
-            return
-        }
-        if (match.duplicate != null) {
-            pending.remove(itemId)
-            skipDuplicate(itemId, match.duplicate)
-            cleanStaging(entry.token)
-        } else {
-            entry.candidates = match.candidates
-            presentReview(itemId, entry, message = "旧书或阅读记录已变化，请重新核对")
-        }
-    }
-
-    /** 唯一候选旧书进入待确认时自动预计算续读影响，免去用户多点一次「核对」。 */
-    private suspend fun presentReview(
-        itemId: String,
-        entry: PendingEdition,
-        preview: ImportUpdatePreview? = null,
-        message: String? = null
-    ) {
-        val effectivePreview = preview ?: if (entry.candidates.size == 1) {
-            try {
-                inspect(entry, entry.candidates.single()).preview
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: IncomingSourceChanged) {
-                finishPending(itemId, entry, ImportStage.FAILED, message = e.message)
-                return
-            } catch (_: Exception) {
-                null
-            }
-        } else null
-        showReview(itemId, entry, effectivePreview, message)
-    }
-
-    private fun showReview(
-        itemId: String, entry: PendingEdition, preview: ImportUpdatePreview? = null, message: String? = null
-    ) {
-        entry.preview = preview
-        val candidates = entry.candidates.map {
-            val book = it.book
-            ImportReviewCandidate(book.id, book.title, book.author, book.totalChapters, book.addedAt)
-        }
-        updateItem(itemId) {
-            it.copy(stage = ImportStage.REVIEW, progress = 1f, message = message,
-                review = ImportReview(entry.prepared.chapters.size, candidates, preview))
-        }
-    }
-
-    private fun hiddenSuffix(book: BookEntity): String =
-        if (book.isHidden) "（位于隐藏书籍）" else ""
-
-    private fun formatUpdateMessage(oldBook: BookEntity, updatedBook: BookEntity): String {
-        val chapterChange = if (oldBook.totalChapters != updatedBook.totalChapters) {
-            "（${oldBook.totalChapters} 章 → ${updatedBook.totalChapters} 章）"
-        } else ""
-        return "已更新《${updatedBook.title}》$chapterChange${hiddenSuffix(updatedBook)}"
+        editionReview.resolveWithoutUpdate(itemId, keepNew)
     }
 
     private fun skipExistingBook(itemId: String, book: BookEntity, prefix: String) {
@@ -715,14 +394,6 @@ class ImportPipeline internal constructor(
     private fun skipDuplicate(itemId: String, candidate: EditionCandidate) {
         val prefix = if (candidate.relation == EditionRelation.OLDER) "书架已保存较新的版本" else "书架中已有同一本书"
         skipExistingBook(itemId, candidate.book, prefix)
-    }
-
-    private suspend fun finishPending(
-        itemId: String, entry: PendingEdition, stage: ImportStage, id: Long? = null, message: String? = null
-    ) {
-        pending.remove(itemId)
-        updateItem(itemId) { it.copy(stage = stage, progress = 1f, bookId = id, review = null, message = message) }
-        cleanStaging(entry.token)
     }
 
     private suspend fun recoverLocalImports() {
@@ -745,273 +416,10 @@ class ImportPipeline internal constructor(
         }
     }
 
-    private fun prepareTxt(
-        source: ImportSource,
-        token: String,
-        bookFilePath: String,
-        displayTitle: String,
-        size: Long,
-        local: Boolean,
-        sourceVersion: SourceVersion
-    ): PreparedBook {
-        if (size > MAX_TXT_BYTES) {
-            throw ImportException("TXT 文件过大（${size / 1024 / 1024} MB，上限 80 MB）")
-        }
-        if (size <= 0L || !contentAccess.isReadable(bookFilePath)) {
-            throw ImportException("文件内容为空")
-        }
-
-        val streamResult = try {
-            StreamingTxtProcessor.indexRaw(
-                openStream = { contentAccess.openStream(bookFilePath) },
-                declaredBytes = size,
-                manualEncoding = null
-            )
-        } catch (e: Throwable) {
-            throw ImportException("TXT 解析失败: ${e.message ?: "未知错误"}")
-        }
-
-        val slices = streamResult.slices
-        if (slices.isEmpty()) throw ImportException("无法切分正文")
-
-        val chapters = slices.mapIndexed { index, slice ->
-            ChapterEntity(
-                bookId = 0L,
-                index = index,
-                title = slice.title,
-                startByte = slice.startByte,
-                endByte = slice.endByte,
-                charCount = slice.charCount.toLong(),
-                titleLineChars = slice.titleLineChars,
-                isVolume = slice.isVolume
-            )
-        }
-
-        val coverFile = paths.coverFile(token)
-        val hasCover = CoverGenerator.generatePlaceholder(displayTitle, null, coverFile)
-        val effectiveSize = streamResult.totalBytes.takeIf { it > 0L } ?: size
-        val stamp = if (local) BookSourceStampStore.capture(contentAccess, bookFilePath, effectiveSize) else null
-
-        val book = BookEntity(
-            title = displayTitle,
-            author = null,
-            format = BookFormat.TXT,
-            filePath = bookFilePath,
-            contentPath = null,
-            coverPath = if (hasCover) coverFile.absolutePath else null,
-            sourceUri = sourceUriOf(source),
-            fileSize = effectiveSize,
-            encoding = streamResult.charset,
-            chapterRuleId = streamResult.ruleId,
-            chapterRegex = streamResult.regex,
-            totalChapters = chapters.size,
-            totalChars = streamResult.totalChars,
-            addedAt = System.currentTimeMillis()
-        )
-        return PreparedBook(
-            book = book,
-            chapters = chapters,
-            encoding = streamResult.charset,
-            ruleId = streamResult.ruleId,
-            regex = streamResult.regex,
-            totalChars = streamResult.totalChars,
-            sourceVersion = sourceVersion,
-            sourceStamp = stamp
-        )
-    }
-
-    private fun prepareEpub(
-        source: ImportSource,
-        token: String,
-        bookFilePath: String,
-        displayTitle: String,
-        size: Long,
-        local: Boolean,
-        sourceVersion: SourceVersion
-    ): PreparedBook {
-        val reader = runCatching { contentAccess.openZip(bookFilePath) }
-            .getOrElse { throw ImportException("EPUB 解析失败：${it.message ?: "文件可能已损坏"}") }
-
-        val info: com.mirad.reader.core.epub.EpubBookInfo
-        val chapters: ArrayList<ChapterEntity>
-        val signatures: ArrayList<EpubChapterSignature>?
-        var totalChars = 0L
-        var hasCover = false
-        val coverFile = paths.coverFile(token)
-
-        try {
-            info = runCatching { EpubParser(reader).parse() }
-                .getOrElse { throw ImportException("EPUB 解析失败：${it.message ?: "文件可能已损坏"}") }
-            chapters = ArrayList(info.spine.size)
-            signatures = if (local) ArrayList(info.spine.size) else null
-            for (item in info.spine) {
-                val html = reader.readText(item.href, maxBytes = ZipEntryReader.MAX_CHAPTER_BYTES)
-                if (local && html == null) throw ImportException("EPUB 有章节无法读取，未完成导入")
-                val text = html?.let { Html.toPlainText(it) }.orEmpty()
-                signatures?.add(EpubChapterSignature.of(text))
-                totalChars += text.length
-                chapters.add(
-                    ChapterEntity(
-                        bookId = 0L,
-                        index = item.index,
-                        title = info.chapterTitles[item.index] ?: "第 ${item.index + 1} 节",
-                        href = item.href,
-                        charCount = text.length.toLong()
-                    )
-                )
-            }
-            val coverHref = info.coverHref
-            if (coverHref != null) {
-                runCatching {
-                    if (reader.sizeOf(coverHref) in 1..ZipEntryReader.MAX_COVER_BYTES.toLong()) {
-                        reader.openStream(coverHref)?.use { input ->
-                            hasCover = CoverGenerator.saveCover(input, coverFile)
-                        }
-                    }
-                }
-            }
-        } finally {
-            reader.close()
-        }
-
-        val title = info.title?.takeIf { it.isNotBlank() } ?: displayTitle
-        val stamp = if (local) BookSourceStampStore.capture(contentAccess, bookFilePath, size) else null
-        val book = BookEntity(
-            title = title,
-            author = info.author,
-            format = BookFormat.EPUB,
-            filePath = bookFilePath,
-            contentPath = null,
-            coverPath = if (hasCover) coverFile.absolutePath else null,
-            sourceUri = sourceUriOf(source),
-            fileSize = size,
-            tocJson = if (info.toc.isEmpty()) null else TocJson.encode(info.toc),
-            language = info.language,
-            publisher = info.publisher,
-            description = info.description,
-            totalChapters = chapters.size,
-            totalChars = totalChars,
-            addedAt = System.currentTimeMillis()
-        )
-        return PreparedBook(
-            book = book,
-            chapters = chapters,
-            encoding = null,
-            ruleId = null,
-            regex = null,
-            totalChars = totalChars,
-            sourceVersion = sourceVersion,
-            epub = signatures,
-            sourceStamp = stamp
-        )
-    }
-
     // ------------------------------------------------------------------ 工具
 
     private fun updateItem(id: String, transform: (ImportItem) -> ImportItem) {
         batches.update(id, transform)
-    }
-
-    private fun sourceUriOf(source: ImportSource): String = when (source) {
-        is ImportSource.FromUri -> source.uriString
-        is ImportSource.FromFile -> source.originUrl ?: source.file.absolutePath
-    }
-
-    private fun guessExtension(source: ImportSource): String {
-        val isZipHeader = runCatching {
-            openInput(source).use { input ->
-                val head = ByteArray(4)
-                val read = input.read(head)
-                read == 4 &&
-                    head[0] == 0x50.toByte() &&
-                    head[1] == 0x4B.toByte() &&
-                    head[2] == 0x03.toByte() &&
-                    head[3] == 0x04.toByte()
-            }
-        }.getOrDefault(false)
-
-        return detectExtension(source.displayName, isZipHeader)
-    }
-
-    private fun verifyReadableSize(path: String, declaredSize: Long): Long {
-        val known = if (declaredSize > 0L) declaredSize else contentAccess.size(path)
-        if (known > MAX_TXT_BYTES) {
-            throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
-        }
-        if (known > 0L) {
-            if (!contentAccess.isReadable(path)) throw ImportException("无法读取所选文件")
-            return known
-        }
-        var counted = 0L
-        contentAccess.openStream(path).use { input ->
-            val buf = ByteArray(64 * 1024)
-            while (true) {
-                val n = input.read(buf)
-                if (n <= 0) break
-                counted += n
-                if (counted > MAX_TXT_BYTES) {
-                    throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
-                }
-            }
-        }
-        if (counted == 0L) throw ImportException("文件内容为空")
-        return counted
-    }
-
-    private fun copyTo(source: ImportSource, target: File, onProgress: (Float) -> Unit): Long {
-        target.parentFile?.mkdirs()
-        val total = sizeOf(source)
-        var copied = 0L
-        openInput(source).use { input ->
-            target.outputStream().use { output ->
-                val buffer = ByteArray(64 * 1024)
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read <= 0) break
-                    output.write(buffer, 0, read)
-                    copied += read
-                    if (copied > MAX_TXT_BYTES) {
-                        runCatching { target.delete() }
-                        throw ImportException("文件超过 ${MAX_TXT_BYTES / 1024 / 1024}MB 上限，已中止导入")
-                    }
-                    if (total > 0) onProgress((copied.toFloat() / total).coerceIn(0f, 1f))
-                }
-            }
-        }
-        if (copied == 0L) throw ImportException("无法读取文件内容")
-        return copied
-    }
-
-    private fun openInput(source: ImportSource): InputStream = when (source) {
-        is ImportSource.FromUri -> {
-            val uriStr = source.uriString
-            if (contentAccess.isReadable(uriStr)) contentAccess.openStream(uriStr)
-            else source.uri?.let { context.contentResolver.openInputStream(it) } ?: throw ImportException("无法打开所选文件")
-        }
-        is ImportSource.FromFile -> source.file.inputStream()
-    }
-
-    private fun sizeOf(source: ImportSource): Long = when (source) {
-        is ImportSource.FromFile -> source.file.length()
-        is ImportSource.FromUri -> {
-            val viaAccess = contentAccess.size(source.uriString)
-            if (viaAccess >= 0L) viaAccess else source.uri?.let { querySize(it) } ?: -1L
-        }
-    }
-
-    private fun querySize(uri: Uri): Long {
-        runCatching {
-            context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { afd ->
-                if (afd.length > 0) return afd.length
-            }
-        }
-        runCatching {
-            context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
-                val index = cursor.getColumnIndex(OpenableColumns.SIZE)
-                if (index >= 0 && cursor.moveToFirst() && !cursor.isNull(index)) return cursor.getLong(index)
-            }
-        }
-        return -1L
     }
 
     companion object {

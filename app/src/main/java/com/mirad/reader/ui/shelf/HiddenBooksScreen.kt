@@ -19,11 +19,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.AppContainer
 import com.mirad.reader.ui.common.glassBackdropSource
 import com.mirad.reader.ui.common.EmptyState
@@ -42,7 +42,7 @@ fun HiddenBooksScreen(container: AppContainer, onBack: () -> Unit, onOpenBook: (
     val scope = rememberCoroutineScope()
     val feedback = com.mirad.reader.ui.common.rememberFeedbackState("hidden")
     var deleteTarget by remember { mutableStateOf<com.mirad.reader.data.db.entity.BookEntity?>(null) }
-    val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    val shelf by container.books.observeShelf().collectAsStateWithLifecycle(initialValue = emptyList())
     val hidden = shelf.filter { it.book.isHidden }
 
     Scaffold(

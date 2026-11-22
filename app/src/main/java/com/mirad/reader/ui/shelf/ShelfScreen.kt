@@ -24,7 +24,6 @@ import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.imports.ImportSource
@@ -69,7 +69,7 @@ fun ShelfScreen(
     val scope = rememberCoroutineScope()
 
     val shelfFlow = remember(container) { container.books.observeShelf() }
-    val loadedShelf by shelfFlow.collectAsState(initial = null)
+    val loadedShelf by shelfFlow.collectAsStateWithLifecycle(initialValue = null)
     val shelf = loadedShelf
     // 等到真实数据首帧再挂载列表，避免空集合把恢复的滚动索引裁成0。
     if (shelf == null) {
@@ -82,13 +82,13 @@ fun ShelfScreen(
         }
         return
     }
-    val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
-    val importState by container.importer.state.collectAsState()
-    val summary by container.importer.lastSummary.collectAsState()
+    val groups by container.groups.observeGroups().collectAsStateWithLifecycle(initialValue = emptyList())
+    val importState by container.importer.state.collectAsStateWithLifecycle()
+    val summary by container.importer.lastSummary.collectAsStateWithLifecycle()
 
     var sort by rememberSaveable { mutableStateOf(ShelfSort.RECENT) }
     // 网格/列表选择持久化：离开书架再回来保持用户上次的选择（此前每次都重置为网格）
-    val shelfLayoutGrid by container.settings.shelfLayoutGrid.collectAsState(initial = true)
+    val shelfLayoutGrid by container.settings.shelfLayoutGrid.collectAsStateWithLifecycle(initialValue = true)
     val layout = if (shelfLayoutGrid) ShelfLayout.GRID else ShelfLayout.LIST
     var groupFilter by rememberSaveable { mutableStateOf<Long?>(null) }
     // 旧版「未分组」胶囊已移除，恢复时视为未筛选。

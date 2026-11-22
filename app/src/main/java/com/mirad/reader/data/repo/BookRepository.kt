@@ -18,7 +18,7 @@ import com.mirad.reader.data.imports.BookCustomMetaStore
 import com.mirad.reader.data.imports.BookSourceStampStore
 import com.mirad.reader.data.imports.BookSourceVersionStore
 import com.mirad.reader.data.imports.CoverGenerator
-import com.mirad.reader.ui.shelf.CoverCache
+import com.mirad.reader.data.CoverInvalidation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
@@ -44,7 +44,7 @@ class BookRepository(
     private val chapterDao: ChapterDao,
     private val progressDao: ProgressDao,
     private val paths: AppPaths,
-    private val searchFtsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null,
+    private val searchCacheDao: com.mirad.reader.data.db.dao.SearchCacheDao? = null,
     private val appDatabase: AppDatabase? = null,
     private val sessionDao: SessionDao? = null,
     private val preferenceDao: PreferenceDao? = appDatabase?.preferenceDao()
@@ -138,7 +138,7 @@ class BookRepository(
             if (!committed && stagedCoverPath != null) {
                 withContext(NonCancellable + Dispatchers.IO) {
                     paths.deleteBookFiles(null, stagedCoverPath)
-                    CoverCache.evict(stagedCoverPath)
+                    CoverInvalidation.evict(stagedCoverPath)
                 }
             }
         }
@@ -147,12 +147,12 @@ class BookRepository(
         if (oldCover != null && oldCover != stagedCoverPath) {
             withContext(NonCancellable + Dispatchers.IO) {
                 paths.deleteBookFiles(null, oldCover)
-                CoverCache.evict(oldCover)
+                CoverInvalidation.evict(oldCover)
             }
         } else if (stagedCoverPath != null && oldCover == null) {
             withContext(NonCancellable + Dispatchers.IO) {
                 paths.deleteBookFiles(null, stagedCoverPath)
-                CoverCache.evict(stagedCoverPath)
+                CoverInvalidation.evict(stagedCoverPath)
             }
         }
     }
@@ -175,7 +175,7 @@ class BookRepository(
         // 删-插-更新必须同事务：中途崩溃会把一本正常书的章节全部删光。
         val block: suspend () -> Unit = {
             chapterDao.deleteForBook(bookId)
-            searchFtsDao?.deleteForBook(bookId)
+            searchCacheDao?.deleteForBook(bookId)
             if (chapters.isNotEmpty()) chapterDao.insertAll(chapters)
             bookDao.updateCounts(bookId, chapters.size, chapters.sumOf { it.charCount })
             preferenceDao?.put(PreferenceEntity(
@@ -210,7 +210,7 @@ class BookRepository(
         // 先删数据库行（外键 CASCADE 清理章节/进度/划线/书签；另清 FTS、阅读会话与关联偏好标记），
         // 文件删除放最后：仅清理应用内部 books/<uuid> 托管副本与封面小图，绝不触碰用户手机原文件。
         val block: suspend () -> Unit = {
-            searchFtsDao?.deleteForBook(book.id)
+            searchCacheDao?.deleteForBook(book.id)
             sessionDao?.deleteForBook(book.id)
             customMetaStore.remove(book.id)
             sourceStampStore.remove(book.id)
@@ -221,7 +221,7 @@ class BookRepository(
         val db = appDatabase
         if (db != null) db.withTransaction { block() } else block()
         paths.deleteManagedBookStorage(book.filePath, book.contentPath, book.coverPath)
-        CoverCache.evict(book.coverPath)
+        CoverInvalidation.evict(book.coverPath)
     }
 
     fun tokenOf(book: BookEntity): String =

@@ -37,7 +37,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import com.mirad.reader.ui.common.MiradLinearProgress
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.reader.AutoReadState
 import com.mirad.reader.tts.TtsBus
 import com.mirad.reader.tts.TtsController
@@ -169,7 +169,7 @@ fun TtsSheet(
     onStart: (resume: Boolean, fromBeginning: Boolean) -> Unit,
     onClose: () -> Unit
 ) {
-    val state by TtsBus.state.collectAsState()
+    val state by TtsBus.state.collectAsStateWithLifecycle()
     SheetScaffold(
         title = "朗读",
         subtitle = when {

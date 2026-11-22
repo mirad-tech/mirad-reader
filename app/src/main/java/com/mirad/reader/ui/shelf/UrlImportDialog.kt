@@ -20,7 +20,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.data.imports.DownloadProgress
 import com.mirad.reader.ui.design.Spacing
 import kotlinx.coroutines.launch
@@ -54,7 +54,7 @@ internal fun UrlImportDialog(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var urlText by remember { mutableStateOf("") }
-    val downloadProgress by progress.collectAsState()
+    val downloadProgress by progress.collectAsStateWithLifecycle()
 
     // 弹窗打开时尝试自动读取剪贴板中的 http(s) 链接
     LaunchedEffect(Unit) {

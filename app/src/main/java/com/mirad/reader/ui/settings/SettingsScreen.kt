@@ -16,7 +16,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,6 +39,7 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.ui.common.CardDivider
 import com.mirad.reader.ui.common.FeedbackHost
 import com.mirad.reader.ui.common.LocalAppAppearance
@@ -76,14 +76,14 @@ fun SettingsScreen(
     onOpenStats: () -> Unit = {}
 ) {
     val scope = rememberCoroutineScope()
-    val baseConfig by container.settings.global.collectAsState(initial = null)
+    val baseConfig by container.settings.global.collectAsStateWithLifecycle(initialValue = null)
     val appearance = LocalAppAppearance.current
     val appearanceController = LocalAppAppearanceController.current
     val systemDark = LocalAppSystemDark.current
     val isDark = LocalAppDarkTheme.current ?: systemDark
     val config = baseConfig?.let { appearance?.resolveReaderConfig(it, systemDark) ?: it }
-    val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
-    val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    val groups by container.groups.observeGroups().collectAsStateWithLifecycle(initialValue = emptyList())
+    val shelf by container.books.observeShelf().collectAsStateWithLifecycle(initialValue = emptyList())
     var showGroupManager by remember { mutableStateOf(false) }
     var showResetDialog by remember { mutableStateOf(false) }
     val feedback = rememberFeedbackState("settings")

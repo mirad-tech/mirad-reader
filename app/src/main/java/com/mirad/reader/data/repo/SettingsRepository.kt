@@ -9,8 +9,8 @@ import com.mirad.reader.core.model.ReaderConfigJson
 import com.mirad.reader.core.model.ReadingStyle
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.PreferenceEntity
-import com.mirad.reader.ui.common.GlassAppearance
-import com.mirad.reader.ui.common.GlassAppearanceJson
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll

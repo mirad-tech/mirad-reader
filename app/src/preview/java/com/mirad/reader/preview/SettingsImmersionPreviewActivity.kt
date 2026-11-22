@@ -33,6 +33,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.webkit.WebViewAssetLoader
 import com.mirad.reader.core.model.*
+import com.mirad.reader.core.model.GlassAppearance
 import com.mirad.reader.core.reader.ReaderCss
 import com.mirad.reader.data.repo.SettingsRepository
 import com.mirad.reader.reader.AutoReadState

@@ -11,12 +11,12 @@ import com.mirad.reader.data.db.dao.GroupDao
 import com.mirad.reader.data.db.dao.HighlightDao
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.dao.ProgressDao
-import com.mirad.reader.data.db.dao.SearchFtsDao
+import com.mirad.reader.data.db.dao.SearchCacheDao
 import com.mirad.reader.data.db.dao.SessionDao
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookmarkEntity
 import com.mirad.reader.data.db.entity.ChapterEntity
-import com.mirad.reader.data.db.entity.ChapterFtsEntity
+import com.mirad.reader.data.db.entity.ChapterSearchEntity
 import com.mirad.reader.data.db.entity.GroupEntity
 import com.mirad.reader.data.db.entity.HighlightEntity
 import com.mirad.reader.data.db.entity.PreferenceEntity
@@ -33,9 +33,9 @@ import com.mirad.reader.data.db.entity.ReadingSessionEntity
         ReadingSessionEntity::class,
         GroupEntity::class,
         PreferenceEntity::class,
-        ChapterFtsEntity::class
+        ChapterSearchEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -47,7 +47,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
     abstract fun groupDao(): GroupDao
     abstract fun preferenceDao(): PreferenceDao
-    abstract fun searchFtsDao(): SearchFtsDao
+    abstract fun searchCacheDao(): SearchCacheDao
 
     companion object {
         val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -74,6 +74,25 @@ abstract class AppDatabase : RoomDatabase() {
                         "`chapterTitle` TEXT NOT NULL, " +
                         "`content` TEXT NOT NULL, " +
                         "`contentLower` TEXT NOT NULL)"
+                )
+            }
+        }
+
+        /**
+         * 搜索缓存从 FTS4 虚拟表改为普通表：旧表只是可重建的缓存，直接删除，各书下次搜索时重新建立。
+         * 删除后的空闲页由 [SearchCacheVacuum] 在启动后单独回收（VACUUM 不能在迁移事务内执行）。
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS `chapters_fts`")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `chapter_search` (" +
+                        "`bookId` INTEGER NOT NULL, " +
+                        "`chapterIndex` INTEGER NOT NULL, " +
+                        "`chapterTitle` TEXT NOT NULL, " +
+                        "`content` TEXT NOT NULL, " +
+                        "`contentLower` TEXT, " +
+                        "PRIMARY KEY(`bookId`, `chapterIndex`))"
                 )
             }
         }

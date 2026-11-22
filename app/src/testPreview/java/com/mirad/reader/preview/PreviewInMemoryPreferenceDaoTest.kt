@@ -1,8 +1,8 @@
 package com.mirad.reader.preview
 
 import com.mirad.reader.data.repo.SettingsRepository
-import com.mirad.reader.ui.common.GlassAppearance
-import com.mirad.reader.ui.common.GlassAppearanceJson
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals

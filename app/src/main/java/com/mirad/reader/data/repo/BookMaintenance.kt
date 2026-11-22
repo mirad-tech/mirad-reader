@@ -17,7 +17,7 @@ import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.AppDatabase
 import com.mirad.reader.data.db.dao.BookmarkDao
 import com.mirad.reader.data.db.dao.HighlightDao
-import com.mirad.reader.data.db.dao.SearchFtsDao
+import com.mirad.reader.data.db.dao.SearchCacheDao
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
@@ -33,7 +33,7 @@ import com.mirad.reader.data.imports.ResumeImpact
 import com.mirad.reader.data.imports.SourceVersion
 import com.mirad.reader.data.io.BookContentAccess
 import com.mirad.reader.data.io.MissingBookSourceException
-import com.mirad.reader.ui.shelf.CoverCache
+import com.mirad.reader.data.CoverInvalidation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
@@ -55,7 +55,7 @@ class BookMaintenance internal constructor(
     private val paths: AppPaths,
     private val bookmarkDao: BookmarkDao,
     private val highlightDao: HighlightDao,
-    private val searchFtsDao: SearchFtsDao? = null,
+    private val searchCacheDao: SearchCacheDao? = null,
     private val database: AppDatabase? = null,
     private val contentAccess: BookContentAccess = BookContentAccess()
 ) {
@@ -69,7 +69,7 @@ class BookMaintenance internal constructor(
         paths = paths,
         bookmarkDao = database.bookmarkDao(),
         highlightDao = database.highlightDao(),
-        searchFtsDao = database.searchFtsDao(),
+        searchCacheDao = database.searchCacheDao(),
         database = database,
         contentAccess = contentAccess
     )
@@ -361,7 +361,7 @@ class BookMaintenance internal constructor(
                 isVolume = slice.isVolume
             )
         }
-        searchFtsDao?.deleteForBook(current.id)
+        searchCacheDao?.deleteForBook(current.id)
         books.saveChapters(current.id, chapters)
         books.updateIndexInfo(current.id, chapters.size, totalChars, ruleId, null, current.encoding)
         bookmarks.forEach { bookmark ->
@@ -469,7 +469,7 @@ class BookMaintenance internal constructor(
                     }
                     currentCoroutineContext().ensureActive()
                     val indexed = runInTransaction {
-                        searchFtsDao?.deleteForBook(book.id)
+                        searchCacheDao?.deleteForBook(book.id)
                         val result = persistChapters(book, streamResult.slices)
                         books.updateIndexInfo(
                             book.id,
@@ -509,7 +509,7 @@ class BookMaintenance internal constructor(
                     ReindexCoordinator(
                         commitNewIndex = {
                             indexed = runInTransaction {
-                                searchFtsDao?.deleteForBook(book.id)
+                                searchCacheDao?.deleteForBook(book.id)
                                 val result = persistChapters(book, slices)
                                 books.updateIndexInfo(
                                     book.id,
@@ -779,11 +779,11 @@ class BookMaintenance internal constructor(
                         oldTokens.filter { it != newToken }.forEach { paths.deleteBookFiles(it, null) }
                         if (old.coverPath != saved.coverPath && old.coverPath != null) {
                             paths.deleteBookFiles(null, old.coverPath)
-                            CoverCache.evict(old.coverPath)
+                            CoverInvalidation.evict(old.coverPath)
                         }
                         if (stagedCoverPath != null && stagedCoverPath != saved.coverPath) {
                             paths.deleteBookFiles(null, stagedCoverPath)
-                            CoverCache.evict(stagedCoverPath)
+                            CoverInvalidation.evict(stagedCoverPath)
                         }
                         saved
                     }
@@ -792,7 +792,7 @@ class BookMaintenance internal constructor(
                 if (!committed) {
                     withContext(NonCancellable) {
                         paths.deleteBookFiles(stagedFallbackToken, stagedCoverPath)
-                        CoverCache.evict(stagedCoverPath)
+                        CoverInvalidation.evict(stagedCoverPath)
                     }
                 }
             }

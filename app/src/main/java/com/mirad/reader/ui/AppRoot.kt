@@ -26,7 +26,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -39,6 +38,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.AppThemeMode
 import com.mirad.reader.core.model.AppAppearance
@@ -54,7 +54,7 @@ import com.mirad.reader.ui.common.LocalAppAppearanceSaveFailed
 import com.mirad.reader.ui.common.LocalAppDarkTheme
 import com.mirad.reader.ui.common.LocalAppSystemDark
 import com.mirad.reader.ui.common.MiradTextButton
-import com.mirad.reader.ui.common.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearance
 import com.mirad.reader.ui.common.GlassAppearanceController
 import com.mirad.reader.ui.common.LocalGlassAppearance
 import com.mirad.reader.ui.common.LocalGlassAppearanceController
@@ -81,7 +81,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
     val navigation = rememberSaveable(saver = AppNavigationState.StateSaver) { AppNavigationState() }
     val current = navigation.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val openDownloads by container.openDownloads.collectAsState()
+    val openDownloads by container.openDownloads.collectAsStateWithLifecycle()
 
     var loadGeneration by remember { mutableIntStateOf(0) }
     var loadFailed by remember { mutableStateOf(false) }
@@ -91,8 +91,8 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
             loadFailed = true
         }
     }
-    val appAppearance by appearanceFlow.collectAsState(initial = null)
-    val appSaveFailed by container.settings.appAppearanceSaveFailed.collectAsState(initial = false)
+    val appAppearance by appearanceFlow.collectAsStateWithLifecycle(initialValue = null)
+    val appSaveFailed by container.settings.appAppearanceSaveFailed.collectAsStateWithLifecycle(initialValue = false)
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val configEditor = remember(container) {
         ReadingConfigEditor(container.settings, container.appScope, onFailure = {
@@ -136,8 +136,8 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
         }
     }
 
-    val glassAppearance by container.settings.glassAppearance.collectAsState(initial = GlassAppearance.DEFAULT)
-    val glassSaveFailed by container.settings.glassSaveFailed.collectAsState(initial = false)
+    val glassAppearance by container.settings.glassAppearance.collectAsStateWithLifecycle(initialValue = GlassAppearance.DEFAULT)
+    val glassSaveFailed by container.settings.glassSaveFailed.collectAsStateWithLifecycle(initialValue = false)
     val glassController = remember(container) {
         object : GlassAppearanceController {
             override val saveFailed: Boolean
@@ -300,7 +300,7 @@ fun AppRoot(container: AppContainer, systemDark: Boolean) {
             previousRoutes = routes
         }
         val chrome = remember { PagerChrome() }
-        val importSummary by container.importer.lastSummary.collectAsState()
+        val importSummary by container.importer.lastSummary.collectAsStateWithLifecycle()
         var notifiedReaderImportKey by rememberSaveable { mutableStateOf("") }
         if (current is Screen.Reader) {
             LaunchedEffect(current) { motion.cancelDrag() }

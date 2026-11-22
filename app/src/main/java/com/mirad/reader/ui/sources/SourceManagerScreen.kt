@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.core.sources.BookSource
 import com.mirad.reader.core.sources.SourceImportReport
 import com.mirad.reader.core.sources.SourceRepository
@@ -40,9 +41,9 @@ private enum class SourceFilter(val label: String) {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SourceManagerScreen(repository: SourceRepository, onBack: () -> Unit, onSearch: () -> Unit) {
-    val sources by repository.sources.collectAsState()
-    val subscriptions by repository.subscriptions.collectAsState()
-    val loadError by repository.loadError.collectAsState()
+    val sources by repository.sources.collectAsStateWithLifecycle()
+    val subscriptions by repository.subscriptions.collectAsStateWithLifecycle()
+    val loadError by repository.loadError.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val feedback = rememberFeedbackState("sources")
     var showSubscriptions by rememberSaveable { mutableStateOf(false) }

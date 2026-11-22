@@ -1,12 +1,12 @@
 package com.mirad.reader.data.repo
 
 import com.mirad.reader.data.db.dao.IndexedChapterBrief
-import com.mirad.reader.data.db.dao.SearchFtsDao
+import com.mirad.reader.data.db.dao.SearchCacheDao
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.db.entity.BookFormat
 import com.mirad.reader.data.db.entity.ChapterEntity
-import com.mirad.reader.data.db.entity.ChapterFtsEntity
+import com.mirad.reader.data.db.entity.ChapterSearchEntity
 import com.mirad.reader.data.db.entity.PreferenceEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.toList
@@ -17,12 +17,12 @@ import org.junit.Test
 
 /** 每一个查询拥有独立的冷缓存，避免第一个查询建库后对照也意外走热缓存。 */
 class SearchCacheContractTest {
-    private class MemoryFts : SearchFtsDao {
-        val rows = mutableListOf<ChapterFtsEntity>()
+    private class MemoryFts : SearchCacheDao {
+        val rows = mutableListOf<ChapterSearchEntity>()
         var inserts = 0
         var clears = 0
         var failNextClear = false
-        override suspend fun insertAll(entities: List<ChapterFtsEntity>) { inserts++; rows += entities }
+        override suspend fun insertAll(entities: List<ChapterSearchEntity>) { inserts++; rows += entities }
         override suspend fun countForBook(bookId: Long) = rows.count { it.bookId == bookId }
         override suspend fun deleteForBook(bookId: Long) { rows.removeAll { it.bookId == bookId } }
         override suspend fun deleteAll() {
@@ -34,17 +34,10 @@ class SearchCacheContractTest {
             .sortedBy { it.chapterIndex }.map { IndexedChapterBrief(it.chapterIndex, it.chapterTitle) }
         override suspend fun getChapterContent(bookId: Long, chapterIndex: Int) =
             rows.firstOrNull { it.bookId == bookId && it.chapterIndex == chapterIndex }?.content
-        override suspend fun search(bookId: Long, escapedQuery: String, caseSensitive: Boolean, limit: Int): List<ChapterFtsEntity> {
-            val literal = buildString {
-                var i = 0
-                while (i < escapedQuery.length) {
-                    if (escapedQuery[i] == '\\' && i + 1 < escapedQuery.length) i++
-                    append(escapedQuery[i++])
-                }
-            }
-            return rows.filter { it.bookId == bookId &&
-                (if (caseSensitive) it.content else it.contentLower).contains(literal) }.take(limit)
-        }
+        override suspend fun search(bookId: Long, needle: String, caseSensitive: Boolean, limit: Int): List<ChapterSearchEntity> =
+            rows.filter { it.bookId == bookId &&
+                (if (caseSensitive) it.content else (it.contentLower ?: it.content)).contains(needle) }
+                .sortedBy { it.chapterIndex }.take(limit)
     }
 
     private class Text(private val value: String) : ChapterTextProvider() {
@@ -115,7 +108,7 @@ class SearchCacheContractTest {
 
     @Test fun legacyFoldedCacheIsRebuiltOnceAndItsVersionSurvivesRepositoryRecreation() = runBlocking {
         val dao = MemoryFts().apply {
-            rows += ChapterFtsEntity(bookId = 1, chapterIndex = 0, chapterTitle = chapter.title, content = "ς", contentLower = "ς")
+            rows += ChapterSearchEntity(bookId = 1, chapterIndex = 0, chapterTitle = chapter.title, content = "ς", contentLower = "ς")
         }
         val preferences = Preferences()
         val repository = SearchRepository(Text("ς"), dao, preferences)
@@ -134,7 +127,7 @@ class SearchCacheContractTest {
 
     @Test fun failedCacheInvalidationUsesScanningAndRetriesWithoutTrustingOldRows() = runBlocking {
         val dao = MemoryFts().apply {
-            rows += ChapterFtsEntity(bookId = 1, chapterIndex = 0, chapterTitle = chapter.title, content = "ς", contentLower = "ς")
+            rows += ChapterSearchEntity(bookId = 1, chapterIndex = 0, chapterTitle = chapter.title, content = "ς", contentLower = "ς")
             failNextClear = true
         }
         val repository = SearchRepository(Text("ς"), dao, Preferences())
@@ -150,7 +143,7 @@ class SearchCacheContractTest {
         val corrected = "a".repeat(8190) + "  "
         val stale = "a".repeat(8190) + "\n"
         val dao = MemoryFts().apply {
-            rows += ChapterFtsEntity(
+            rows += ChapterSearchEntity(
                 bookId = 1, chapterIndex = 0, chapterTitle = chapter.title,
                 content = stale, contentLower = stale
             )

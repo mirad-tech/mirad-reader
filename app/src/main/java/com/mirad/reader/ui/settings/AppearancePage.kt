@@ -25,7 +25,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import com.mirad.reader.ui.common.AppThemeModeSettings
-import com.mirad.reader.ui.common.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearance
 import com.mirad.reader.ui.common.LabeledSlider
 import com.mirad.reader.ui.common.LocalAppAppearanceController
 import com.mirad.reader.ui.common.LocalAppAppearanceSaveFailed

@@ -11,7 +11,6 @@ import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.AppContainer
 import com.mirad.reader.core.model.NoteAnchor
 import com.mirad.reader.core.model.NoteExporter
@@ -49,8 +49,8 @@ fun NotesSheet(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val highlights by container.notes.observeHighlights(book.id).collectAsState(initial = emptyList())
-    val bookmarks by container.notes.observeBookmarks(book.id).collectAsState(initial = emptyList())
+    val highlights by container.notes.observeHighlights(book.id).collectAsStateWithLifecycle(initialValue = emptyList())
+    val bookmarks by container.notes.observeBookmarks(book.id).collectAsStateWithLifecycle(initialValue = emptyList())
     var tab by remember { mutableStateOf(0) }
     var message by remember { mutableStateOf<String?>(null) }
     // 删除划线/书签是破坏性操作，先确认再执行（保留动作供确认后调用）

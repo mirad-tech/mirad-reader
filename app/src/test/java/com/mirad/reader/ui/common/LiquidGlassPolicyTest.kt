@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.common
 
+import com.mirad.reader.core.model.GlassAppearance
 import org.junit.Assert.*
 import org.junit.Test
 

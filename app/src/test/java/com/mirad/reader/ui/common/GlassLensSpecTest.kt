@@ -1,6 +1,8 @@
 package com.mirad.reader.ui.common
 
 import android.view.Surface
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import com.mirad.reader.ui.computeTapLiquidStretch
 import org.junit.Assert.*
 import org.junit.Test

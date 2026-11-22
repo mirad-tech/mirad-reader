@@ -106,12 +106,12 @@ class SearchMatcherTest {
 
 class SearchRepositoryFlowTest {
 
-    private class TestSearchFtsDao : com.mirad.reader.data.db.dao.SearchFtsDao {
-        val storage = mutableListOf<com.mirad.reader.data.db.entity.ChapterFtsEntity>()
+    private class TestSearchFtsDao : com.mirad.reader.data.db.dao.SearchCacheDao {
+        val storage = mutableListOf<com.mirad.reader.data.db.entity.ChapterSearchEntity>()
         var insertCount = 0
         var deleteCount = 0
 
-        override suspend fun insertAll(entities: List<com.mirad.reader.data.db.entity.ChapterFtsEntity>) {
+        override suspend fun insertAll(entities: List<com.mirad.reader.data.db.entity.ChapterSearchEntity>) {
             insertCount++
             storage.addAll(entities)
         }
@@ -128,19 +128,14 @@ class SearchRepositoryFlowTest {
 
         override suspend fun search(
             bookId: Long,
-            escapedQuery: String,
+            needle: String,
             caseSensitive: Boolean,
             limit: Int
-        ): List<com.mirad.reader.data.db.entity.ChapterFtsEntity> {
-            val literal = escapedQuery.replace("\\%", "%").replace("\\_", "_").replace("\\\\", "\\")
+        ): List<com.mirad.reader.data.db.entity.ChapterSearchEntity> {
             return storage.filter {
                 if (it.bookId != bookId) return@filter false
-                if (caseSensitive) {
-                    it.content.contains(literal)
-                } else {
-                    it.contentLower.contains(literal)
-                }
-            }.take(limit)
+                if (caseSensitive) it.content.contains(needle) else (it.contentLower ?: it.content).contains(needle)
+            }.sortedBy { it.chapterIndex }.take(limit)
         }
 
         override suspend fun getIndexedChapters(bookId: Long): List<com.mirad.reader.data.db.dao.IndexedChapterBrief> {

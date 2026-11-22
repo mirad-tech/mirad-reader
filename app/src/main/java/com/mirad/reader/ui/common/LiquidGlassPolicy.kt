@@ -1,5 +1,6 @@
 package com.mirad.reader.ui.common
 
+import com.mirad.reader.core.model.GlassAppearance
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt

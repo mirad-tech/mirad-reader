@@ -7,8 +7,8 @@ import com.mirad.reader.core.model.ReadingStyle
 import com.mirad.reader.core.model.ThemeKey
 import com.mirad.reader.data.db.dao.PreferenceDao
 import com.mirad.reader.data.db.entity.PreferenceEntity
-import com.mirad.reader.ui.common.GlassAppearance
-import com.mirad.reader.ui.common.GlassAppearanceJson
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope

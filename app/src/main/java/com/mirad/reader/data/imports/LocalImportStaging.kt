@@ -4,7 +4,7 @@ import android.util.Log
 import com.mirad.reader.data.AppPaths
 import com.mirad.reader.data.db.entity.BookEntity
 import com.mirad.reader.data.io.BookContentAccess
-import com.mirad.reader.ui.shelf.CoverCache
+import com.mirad.reader.data.CoverInvalidation
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -74,7 +74,7 @@ internal class LocalImportStaging(private val paths: AppPaths) {
                 }
                 if (cover !in covers && cover.exists()) {
                     if (!cover.delete()) throw IOException("无法清理导入封面")
-                    CoverCache.evict(cover.absolutePath)
+                    CoverInvalidation.evict(cover.absolutePath)
                 }
             }
             if (!marker.delete()) throw IOException("无法清理导入标记")

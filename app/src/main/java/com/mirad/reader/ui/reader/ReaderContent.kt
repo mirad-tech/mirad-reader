@@ -36,7 +36,6 @@ import com.mirad.reader.tts.ReaderTtsActions
 import com.mirad.reader.ui.common.ReaderSystemBarProtection
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -67,6 +66,7 @@ import com.mirad.reader.ui.common.LocalSettingsCommit
 import androidx.compose.foundation.layout.asPaddingValues
 import com.mirad.reader.core.reader.ReaderCss
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import com.mirad.reader.core.model.ThemePaletteResolver
 import com.mirad.reader.data.db.entity.BookEntity
@@ -97,7 +97,7 @@ internal fun ReaderContent(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
-    val stateHolder = session.state.collectAsState()
+    val stateHolder = session.state.collectAsStateWithLifecycle()
     val state by stateHolder
     val appearance = LocalAppAppearance.current
     val appearanceController = LocalAppAppearanceController.current
@@ -133,8 +133,8 @@ internal fun ReaderContent(
     var pendingNote by remember { mutableStateOf<PendingNote?>(null) }
     var noteDraft by remember { mutableStateOf("") }
 
-    val autoReadState by session.autoReadState.collectAsState()
-    val autoReadNotice by session.autoReadNotice.collectAsState()
+    val autoReadState by session.autoReadState.collectAsStateWithLifecycle()
+    val autoReadNotice by session.autoReadNotice.collectAsStateWithLifecycle()
     LaunchedEffect(autoReadNotice) {
         val message = autoReadNotice ?: return@LaunchedEffect
         toast = message
@@ -144,7 +144,7 @@ internal fun ReaderContent(
     val tts = remember { TtsController(container.context) }
     DisposableEffect(Unit) { onDispose { tts.stop() } }
 
-    val ttsStateHolder = TtsBus.state.collectAsState()
+    val ttsStateHolder = TtsBus.state.collectAsStateWithLifecycle()
     val ttsState by ttsStateHolder
     // 落库防抖：阅读设置全书通用，拖滑杆时停顿 400ms 再落库全局配置。
     val onConfigApplied: (ReaderConfig, AppAppearance) -> Unit = { updated, currentAppearance ->

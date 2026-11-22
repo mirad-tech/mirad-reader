@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.mirad.reader.data.CoverInvalidation
 import com.mirad.reader.ui.design.LocalMiradColors
 import com.mirad.reader.ui.design.Sizes
 import com.mirad.reader.ui.theme.MiradSerif
@@ -48,6 +49,10 @@ import java.io.File
 /** 封面位图缓存（按路径，LRU）。 */
 object CoverCache {
     private val cache = LruCache<String, ImageBitmap>(48)
+
+    init {
+        CoverInvalidation.register { path -> evict(path) }
+    }
 
     suspend fun load(path: String, targetWidth: Int = 360): ImageBitmap? {
         cache.get(path)?.let { return it }

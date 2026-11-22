@@ -98,7 +98,7 @@ object SearchMatcher {
  */
 class SearchRepository(
     private val textProvider: ChapterTextProvider,
-    private val ftsDao: com.mirad.reader.data.db.dao.SearchFtsDao? = null,
+    private val ftsDao: com.mirad.reader.data.db.dao.SearchCacheDao? = null,
     private val preferences: PreferenceDao? = null,
     private val database: com.mirad.reader.data.db.AppDatabase? = null
 ) {
@@ -176,12 +176,8 @@ class SearchRepository(
         if (ftsDao != null && isFullyIndexed) {
             emit(SearchProgress.Scanning(0, chapters.size, 0))
             val baseNeedle = if (options.caseSensitive) needle else normalizeCase(needle)
-            val escapedNeedle = baseNeedle
-                .replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_")
             val ftsResults = runCatching {
-                ftsDao.search(book.id, escapedNeedle, options.caseSensitive, options.maxResults)
+                ftsDao.search(book.id, baseNeedle, options.caseSensitive, options.maxResults)
             }.getOrNull()
 
             if (ftsResults != null) {
@@ -257,12 +253,12 @@ class SearchRepository(
             runCatching {
                 val fullBatch = chapters.map { ch ->
                     val content = ftsCache[ch.index].orEmpty()
-                    com.mirad.reader.data.db.entity.ChapterFtsEntity(
+                    com.mirad.reader.data.db.entity.ChapterSearchEntity(
                         bookId = book.id,
                         chapterIndex = ch.index,
                         chapterTitle = ch.title,
                         content = content,
-                        contentLower = normalizeCase(content)
+                        contentLower = normalizeCase(content).takeIf { it != content }
                     )
                 }
                 val publish: suspend () -> Unit = {

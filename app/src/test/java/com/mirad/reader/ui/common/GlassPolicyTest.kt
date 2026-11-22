@@ -2,6 +2,7 @@ package com.mirad.reader.ui.common
 
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.core.model.GlassAppearance
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import org.junit.Assert.*

@@ -11,7 +11,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import com.mirad.reader.ui.common.MiradTextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -19,6 +18,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.mirad.reader.AppContainer
 import com.mirad.reader.data.db.entity.GroupEntity
 import com.mirad.reader.ui.common.EmptyState
@@ -42,8 +42,8 @@ fun GroupManagerSheet(
     val scope = rememberCoroutineScope()
     val selectedGroupNow by rememberUpdatedState(currentSelectedGroupId)
     val selectionChanged by rememberUpdatedState(onSelectedGroupChange)
-    val groups by container.groups.observeGroups().collectAsState(initial = emptyList())
-    val shelf by container.books.observeShelf().collectAsState(initial = emptyList())
+    val groups by container.groups.observeGroups().collectAsStateWithLifecycle(initialValue = emptyList())
+    val shelf by container.books.observeShelf().collectAsStateWithLifecycle(initialValue = emptyList())
     GroupManagerContent(
         groups = groups,
         bookCounts = groups.associate { group -> group.id to shelf.count { it.book.groupId == group.id } },

@@ -1,6 +1,8 @@
 package com.mirad.reader.ui.common
 
 import androidx.compose.ui.unit.dp
+import com.mirad.reader.core.model.GlassAppearance
+import com.mirad.reader.core.model.GlassAppearanceJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

@@ -20,6 +20,7 @@ import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.mirad.reader.core.model.*
+import com.mirad.reader.core.model.GlassAppearance
 import com.mirad.reader.ui.common.*
 import com.mirad.reader.ui.reader.*
 import com.mirad.reader.ui.shelf.*

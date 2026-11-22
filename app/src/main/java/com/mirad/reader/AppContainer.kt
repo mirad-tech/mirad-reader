@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import com.mirad.reader.core.sources.BookDownloads
 import com.mirad.reader.core.sources.SourceRepository
 import com.mirad.reader.core.sources.SourceSearch
+import com.mirad.reader.data.db.SearchCacheVacuum
 import com.mirad.reader.data.downloads.BookDownloadManager
 import com.mirad.reader.data.downloads.BookDownloadScheduler
 import com.mirad.reader.data.imports.DownloadImportReceipts
@@ -39,6 +40,7 @@ import com.mirad.reader.data.sources.SourceHttpClient
 import com.mirad.reader.data.sources.SourceSearchCoordinator
 import com.mirad.reader.data.sources.sandbox.SandboxRuleExecutor
 import java.io.File
+import kotlinx.coroutines.delay
 
 /**
  * 手动依赖注入容器：数据库、仓库、导入管线与全局协程作用域。
@@ -62,7 +64,7 @@ class AppContainer(app: Application) {
         app,
         AppDatabase::class.java,
         "mirad-reader.db"
-    ).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3).build()
+    ).addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4).build()
 
     val settings: SettingsRepository = SettingsRepository(
         dao = database.preferenceDao(),
@@ -80,7 +82,7 @@ class AppContainer(app: Application) {
         chapterDao = database.chapterDao(),
         progressDao = database.progressDao(),
         paths = paths,
-        searchFtsDao = database.searchFtsDao(),
+        searchCacheDao = database.searchCacheDao(),
         appDatabase = database,
         sessionDao = database.sessionDao()
     )
@@ -105,7 +107,15 @@ class AppContainer(app: Application) {
         appScope.launch { removeRetiredPreviewFonts(paths.fontsDir) }
     }
 
-    val search: SearchRepository = SearchRepository(textProvider, database.searchFtsDao(), database.preferenceDao(), database)
+    init {
+        // 3→4 迁移删除了旧搜索缓存表；启动稍后回收一次空间，避开首屏加载。
+        appScope.launch {
+            delay(SearchCacheVacuum.START_DELAY_MS)
+            SearchCacheVacuum.runOnce(database)
+        }
+    }
+
+    val search: SearchRepository = SearchRepository(textProvider, database.searchCacheDao(), database.preferenceDao(), database)
 
     val importer: ImportPipeline = ImportPipeline(
         context = app,
